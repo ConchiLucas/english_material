@@ -1,0 +1,83 @@
+package com.aitaskcenter.controller;
+
+import com.aitaskcenter.dto.ApiResponse;
+import com.aitaskcenter.dto.BatchProcessTaskResultRequest;
+import com.aitaskcenter.dto.DeleteByIdRequest;
+import com.aitaskcenter.dto.PageResult;
+import com.aitaskcenter.model.TaskRecordType;
+import com.aitaskcenter.model.TaskResult;
+import com.aitaskcenter.service.TaskResultService;
+import java.util.List;
+import java.util.Map;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/api/task-result")
+public class TaskResultController {
+    private final TaskResultService service;
+
+    // 方法：TaskResultController
+    public TaskResultController(TaskResultService service) {
+        this.service = service;
+    }
+
+    @GetMapping("/list")
+    public ApiResponse<PageResult<TaskResult>> list(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "10") int pageSize,
+            @RequestParam(required = false) String resultName,
+            @RequestParam(required = false) Long projectId,
+            @RequestParam(required = false) Long taskConfigId,
+            @RequestParam(required = false) String status,
+            @RequestParam(defaultValue = TaskRecordType.FORMAL) String recordType) {
+        return ApiResponse.ok(service.list(
+                page, pageSize, resultName, projectId, taskConfigId, status, recordType));
+    }
+
+    @GetMapping("/{id}")
+    // 方法：get
+    public ApiResponse<TaskResult> get(@PathVariable Long id) {
+        return ApiResponse.ok(service.get(id));
+    }
+
+    @PostMapping("/{id}/process")
+    // 方法：process
+    public ApiResponse<Map<String, Object>> process(
+            @PathVariable Long id,
+            @RequestParam(required = false) String cliId) {
+        return ApiResponse.ok(service.process(id, cliId), "任务结果处理完成");
+    }
+
+    @PostMapping("/batch-process")
+    // 方法：batchProcess
+    public ApiResponse<Map<String, Object>> batchProcess(@RequestBody BatchProcessTaskResultRequest request) {
+        return ApiResponse.ok(service.processBatch(request), "任务结果批量处理完成");
+    }
+
+    @PostMapping("/create")
+    // 方法：create
+    public ApiResponse<TaskResult> create(@RequestBody TaskResult input) {
+        return ApiResponse.ok(service.create(input), "任务结果创建成功");
+    }
+
+    @PutMapping("/update")
+    // 方法：update
+    public ApiResponse<TaskResult> update(@RequestBody TaskResult input) {
+        return ApiResponse.ok(service.update(input.getId(), input), "任务结果更新成功");
+    }
+
+    @DeleteMapping("/delete")
+    // 方法：delete
+    public ApiResponse<Void> delete(@RequestBody DeleteByIdRequest request) {
+        service.delete(request.getId());
+        return ApiResponse.ok(null, "任务结果删除成功");
+    }
+}

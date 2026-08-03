@@ -1,0 +1,30 @@
+.DS_Store
+
+# Java
+backend/target/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo
+
+# Environment
+.env
+*.local
+.DS_Store
+target/
+node_modules/
+dist/
+.vite/
+.idea/
+*.iml
+.env
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Runtime
+.runtime/

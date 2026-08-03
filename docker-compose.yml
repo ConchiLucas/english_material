@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ai-task-center-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${TASK_CENTER_DB_NAME:-english_material}
+      POSTGRES_USER: ${TASK_CENTER_DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${TASK_CENTER_DB_PASSWORD:?Set TASK_CENTER_DB_PASSWORD before starting PostgreSQL}
+      TZ: Asia/Shanghai
+    ports:
+      - "55432:5432"
+    network_mode: bridge
+    volumes:
+      - ai_task_center_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TASK_CENTER_DB_USER:-postgres} -d ${TASK_CENTER_DB_NAME:-english_material}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  ai_task_center_pgdata:
