@@ -296,7 +296,7 @@ export interface GenerateTaskRunBatchesResponse {
 }
 
 const request = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE || 'http://127.0.0.1:18743/api',
+  baseURL: import.meta.env.VITE_API_BASE || 'http://127.0.0.1:18744/api',
   timeout: 120000,
 });
 

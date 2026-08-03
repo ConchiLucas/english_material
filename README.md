@@ -37,7 +37,7 @@ mvn spring-boot:run
 后端默认端口：
 
 ```text
-http://localhost:18743
+http://localhost:18744
 ```
 
 ## 启动前端
@@ -53,7 +53,7 @@ npm run dev
 打开：
 
 ```text
-http://localhost:19637
+http://localhost:19638
 ```
 
 Spring Boot 会通过 JPA 自动创建本地表：

@@ -40,7 +40,7 @@ HANDLER_SCORE = RESULT_MODE_SCORE
 HANDLER_TTS = RESULT_MODE_TTS
 PYTHON_WORKER_PUBLIC_BASE_URL = os.getenv(
     "PYTHON_WORKER_PUBLIC_BASE_URL",
-    "http://127.0.0.1:19186",
+    "http://127.0.0.1:19187",
 ).rstrip("/")
 TTS_OUTPUT_DIR = Path(
     os.getenv("PYTHON_WORKER_TTS_OUTPUT_DIR", str(PROJECT_ROOT / "data" / "tts_audio"))

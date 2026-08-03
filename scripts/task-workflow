@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_URL="${TASK_CENTER_BASE_URL:-http://127.0.0.1:18743}"
+BASE_URL="${TASK_CENTER_BASE_URL:-http://127.0.0.1:18744}"
 
 if [ "${1:-}" != "report" ]; then
   printf 'Usage: %s report --task-config-id ID --stage result|batch --token TOKEN --status CODE_READY\n' "$0" >&2
