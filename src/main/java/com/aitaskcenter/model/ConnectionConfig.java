@@ -20,8 +20,8 @@ public class ConnectionConfig extends BaseEntity {
     private String connectionUrl;
 
     @Column(nullable = false)
-    // 字段：所属项目分组 ID
-    private String connectionGroup;
+    // 字段：配置中心固定分组，保留以兼容已有表结构
+    private String connectionGroup = "default";
 
     @Column(nullable = false)
     // 字段：数据库名称

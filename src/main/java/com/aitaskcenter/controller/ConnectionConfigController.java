@@ -29,9 +29,8 @@ public class ConnectionConfigController {
     public ApiResponse<PageResult<ConnectionConfig>> list(
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "999") int pageSize,
-            @RequestParam(required = false) String connectionGroup,
             @RequestParam(required = false) String envName) {
-        return ApiResponse.ok(service.list(page, pageSize, connectionGroup, envName));
+        return ApiResponse.ok(service.list(page, pageSize, envName));
     }
 
     @PostMapping("/createTbConnection")

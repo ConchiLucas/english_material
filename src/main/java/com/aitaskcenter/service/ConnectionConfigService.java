@@ -28,11 +28,8 @@ public class ConnectionConfigService {
     }
 
     // 方法：list
-    public PageResult<ConnectionConfig> list(int page, int pageSize, String connectionGroup, String envName) {
-        List<ConnectionConfig> all = StringUtils.hasText(connectionGroup)
-                ? repository.findByConnectionGroupOrderByCreatedAtDesc(connectionGroup.trim())
-                : repository.findAll();
-        List<ConnectionConfig> filtered = all.stream()
+    public PageResult<ConnectionConfig> list(int page, int pageSize, String envName) {
+        List<ConnectionConfig> filtered = repository.findAll().stream()
                 .filter(item -> !StringUtils.hasText(envName) || envName.trim().equals(item.getEnvName()))
                 .toList();
         int safePage = Math.max(page, 1);
@@ -118,7 +115,7 @@ public class ConnectionConfigService {
         target.setConnectionName(require(input.getConnectionName(), "请填写连接名称"));
         target.setConnectionType(defaultText(input.getConnectionType(), "mysql").toLowerCase(Locale.ROOT));
         target.setConnectionUrl(require(input.getConnectionUrl(), "请填写 Host 地址"));
-        target.setConnectionGroup(require(input.getConnectionGroup(), "请先选择项目"));
+        target.setConnectionGroup("default");
         target.setDatabaseName(require(input.getDatabaseName(), "请填写数据库名"));
         target.setPort(input.getPort() == null ? defaultPort(target.getConnectionType()) : input.getPort());
         target.setDbLoginName(require(input.getDbLoginName(), "请填写用户名"));

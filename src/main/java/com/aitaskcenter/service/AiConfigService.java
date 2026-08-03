@@ -2,7 +2,6 @@ package com.aitaskcenter.service;
 
 import com.aitaskcenter.dto.AiConfigRequest;
 import com.aitaskcenter.dto.AiProviderConfigItem;
-import com.aitaskcenter.dto.ExecutionTargetItem;
 import com.aitaskcenter.dto.LocalCliConfigItem;
 import com.aitaskcenter.dto.LocalCliConfigRequest;
 import com.aitaskcenter.model.AiConfig;
@@ -59,30 +58,6 @@ public class AiConfigService {
         return repository.findByConfigKey(DEFAULT_KEY)
                 .map(this::toLocalCliConfig)
                 .orElseGet(this::defaultLocalCliConfig);
-    }
-
-    public List<ExecutionTargetItem> getExecutionTargets() {
-        List<ExecutionTargetItem> targets = new ArrayList<>();
-        for (AiProviderConfigItem provider : getConfig().getProviders()) {
-            String protocol = effectiveProviderProtocol(provider);
-            targets.add(new ExecutionTargetItem(
-                    "AI_PROVIDER",
-                    provider.getId(),
-                    defaultText(provider.getLabel(), provider.getId()),
-                    protocol,
-                    providerCapabilities(provider, protocol),
-                    provider.isEnabled()));
-        }
-        for (LocalCliConfigItem cli : getLocalCliConfig().getConfigs()) {
-            targets.add(new ExecutionTargetItem(
-                    "CLI",
-                    cli.getId(),
-                    defaultText(cli.getLabel(), cli.getId()),
-                    "local-cli",
-                    cliCapabilities(cli),
-                    cli.isEnabled()));
-        }
-        return targets;
     }
 
     @Transactional

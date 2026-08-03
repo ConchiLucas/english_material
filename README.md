@@ -26,7 +26,7 @@ password: （由 TASK_CENTER_DB_PASSWORD 提供）
 ./scripts/start-dev.sh
 ```
 
-脚本会启动 Java 后端、Python Worker 和 React 前端。PostgreSQL 只检查本地已有服务，不会新启动 Docker 容器。
+脚本会启动 Java 后端和 React 前端。PostgreSQL 只检查本地已有服务，不会新启动 Docker 容器。
 
 ## 启动后端
 
