@@ -53,11 +53,39 @@ public class AiConfigService {
         return request;
     }
 
+    public AiProviderConfigItem getProviderForExecution(String providerId) {
+        if (!StringUtils.hasText(providerId)) {
+            throw new IllegalArgumentException("请为 Agent 选择 AI 配置");
+        }
+        return getConfig().getProviders().stream()
+                .filter(provider -> providerId.trim().equals(provider.getId()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("AI 配置「" + providerId.trim() + "」不存在"));
+    }
+
     // 方法：getLocalCliConfig
     public LocalCliConfigRequest getLocalCliConfig() {
         return repository.findByConfigKey(DEFAULT_KEY)
                 .map(this::toLocalCliConfig)
                 .orElseGet(this::defaultLocalCliConfig);
+    }
+
+    public LocalCliConfigItem getDefaultLocalCliForExecution() {
+        LocalCliConfigRequest config = getLocalCliConfig();
+        String active = clean(config.getActive());
+        LocalCliConfigItem cli = config.getConfigs().stream()
+                .filter(item -> active.equals(item.getId()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("默认本地 CLI 配置不存在"));
+        if (!cli.isEnabled()) {
+            throw new IllegalArgumentException("默认本地 CLI「" + defaultText(cli.getLabel(), cli.getId()) + "」未启用");
+        }
+        if (cli.getCapabilities() != null
+                && !cli.getCapabilities().isEmpty()
+                && !cli.getCapabilities().contains("TEXT_GENERATION")) {
+            throw new IllegalArgumentException("默认本地 CLI 不支持文本生成");
+        }
+        return cli;
     }
 
     @Transactional

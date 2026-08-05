@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Properties;
 import java.util.Set;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -21,10 +22,14 @@ import org.springframework.util.StringUtils;
 @Service
 public class ConnectionConfigService {
     private final ConnectionConfigRepository repository;
+    private final String loopbackHostAlias;
 
     // 方法：ConnectionConfigService
-    public ConnectionConfigService(ConnectionConfigRepository repository) {
+    public ConnectionConfigService(
+            ConnectionConfigRepository repository,
+            @Value("${TASK_CENTER_EXTERNAL_HOST_ALIAS:}") String loopbackHostAlias) {
         this.repository = repository;
+        this.loopbackHostAlias = clean(loopbackHostAlias);
     }
 
     // 方法：list
@@ -84,6 +89,27 @@ public class ConnectionConfigService {
         test(config);
     }
 
+    /**
+     * Opens a caller-owned JDBC connection for a saved database configuration.
+     * The caller must close the returned connection. This method never changes
+     * the target schema and is shared by read-only feature services.
+     */
+    public Connection openConfiguredConnection(Long id) {
+        ConnectionConfig config = repository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("数据库配置不存在"));
+        Properties properties = new Properties();
+        properties.put("user", clean(config.getDbLoginName()));
+        properties.put("password", config.getDbLoginPassword() == null ? "" : config.getDbLoginPassword());
+        DriverManager.setLoginTimeout((int) Duration.ofSeconds(5).toSeconds());
+        try {
+            Connection connection = DriverManager.getConnection(jdbcUrl(config), properties);
+            connection.setReadOnly(true);
+            return connection;
+        } catch (Exception ex) {
+            throw new IllegalArgumentException("连接数据源失败: " + ex.getMessage());
+        }
+    }
+
     // 方法：listTables
     public List<String> listTables(Long id) {
         ConnectionConfig config = repository.findById(id)
@@ -125,9 +151,9 @@ public class ConnectionConfigService {
     }
 
     // 方法：jdbcUrl
-    private static String jdbcUrl(ConnectionConfig input) {
+    String jdbcUrl(ConnectionConfig input) {
         String type = defaultText(input.getConnectionType(), "mysql").toLowerCase(Locale.ROOT);
-        String host = require(input.getConnectionUrl(), "请填写 Host 地址");
+        String host = effectiveHost(require(input.getConnectionUrl(), "请填写 Host 地址"));
         int port = input.getPort() == null ? defaultPort(type) : input.getPort();
         String database = require(input.getDatabaseName(), "请填写数据库名");
         return switch (type) {
@@ -138,6 +164,18 @@ public class ConnectionConfigService {
             case "sqlite" -> "jdbc:sqlite:" + database;
             default -> throw new IllegalArgumentException("暂不支持该数据库类型: " + type);
         };
+    }
+
+    private String effectiveHost(String configuredHost) {
+        if (!StringUtils.hasText(loopbackHostAlias)) {
+            return configuredHost;
+        }
+        String normalized = configuredHost.toLowerCase(Locale.ROOT);
+        return normalized.equals("127.0.0.1")
+                || normalized.equals("localhost")
+                || normalized.equals("::1")
+                ? loopbackHostAlias
+                : configuredHost;
     }
 
     // 方法：defaultPort

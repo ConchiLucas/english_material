@@ -1,0 +1,5 @@
+*
+!web-react/**
+!deploy/frontend/web_react/local_full/**
+web-react/node_modules
+web-react/dist

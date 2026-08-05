@@ -1,0 +1,17 @@
+services:
+  ai-task-center-web:
+    build:
+      context: ../../../..
+      dockerfile: deploy/frontend/web_react/local_full/Dockerfile
+      args:
+        VITE_API_BASE: /api
+    image: ai-task-center-web:1.0.0
+    container_name: ai-task-center-web
+    restart: "no"
+    ports:
+      - "6051:80"
+
+networks:
+  default:
+    name: vibedeploy-shared
+    external: true
