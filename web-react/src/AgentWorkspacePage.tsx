@@ -119,9 +119,11 @@ export default function AgentWorkspacePage({ cliConfig }: AgentWorkspacePageProp
     [agents, category],
   );
 
-  const load = async () => {
-    setLoading(true);
-    setLoadError('');
+  const load = async (initial = true) => {
+    if (initial) {
+      setLoading(true);
+      setLoadError('');
+    }
     try {
       const [definitions, history] = await Promise.all([getAgents(), getAgentRuns()]);
       setAgents(definitions);
@@ -131,13 +133,17 @@ export default function AgentWorkspacePage({ cliConfig }: AgentWorkspacePageProp
         return definitions.some((item) => item.ID === current) ? current : null;
       });
     } catch {
-      setLoadError('无法读取 Agent 工作台数据，请确认后端服务和本项目数据库可用。');
+      if (initial) {
+        setLoadError('无法读取 Agent 工作台数据，请确认后端服务和本项目数据库可用。');
+      } else {
+        message.warning('Agent 已保存，但列表刷新失败，请稍后重新进入工作台。');
+      }
     } finally {
-      setLoading(false);
+      if (initial) setLoading(false);
     }
   };
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(true); }, []);
 
   useEffect(() => {
     if (selectedId === 'new') return;
@@ -199,7 +205,7 @@ export default function AgentWorkspacePage({ cliConfig }: AgentWorkspacePageProp
       message.success(`Agent“${saved.name}”已保存`);
       setSelectedId(saved.ID || null);
       setDirty(false);
-      await load();
+      await load(false);
     } catch (error) {
       message.error(error instanceof Error ? error.message : 'Agent 保存失败，请检查字段。');
     } finally {

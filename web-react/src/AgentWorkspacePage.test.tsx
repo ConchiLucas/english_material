@@ -1,5 +1,5 @@
 import { App as AntApp } from 'antd';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentDefinition, AgentTestResult, LocalCliConfig } from './api';
@@ -161,5 +161,23 @@ describe('AgentWorkspacePage list and detail workflow', () => {
     const drawer = await screen.findByRole('dialog');
     expect(within(drawer).getAllByText('新增 Agent').length).toBeGreaterThan(0);
     expect(within(drawer).getByLabelText('Agent Key')).toHaveValue('agent-30');
+  });
+
+  it('keeps the detail drawer mounted while saved data refreshes', async () => {
+    const user = userEvent.setup();
+    let finishRefresh: ((value: AgentDefinition[]) => void) | undefined;
+    const pendingRefresh = new Promise<AgentDefinition[]>((resolve) => { finishRefresh = resolve; });
+    apiMocks.getAgents
+      .mockResolvedValueOnce(agents)
+      .mockReturnValueOnce(pendingRefresh);
+    renderPage();
+
+    await user.click((await screen.findAllByRole('button', { name: '详情' }))[0]);
+    const drawer = await screen.findByRole('dialog');
+    await user.click(within(drawer).getByRole('button', { name: /保存 Agent/ }));
+    await waitFor(() => expect(apiMocks.updateAgent).toHaveBeenCalledTimes(1));
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    finishRefresh?.(agents);
   });
 });
