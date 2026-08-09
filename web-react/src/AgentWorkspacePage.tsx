@@ -1,12 +1,8 @@
 import {
-  ApartmentOutlined,
   CheckCircleFilled,
-  ClockCircleOutlined,
   ExperimentOutlined,
-  FileTextOutlined,
   PlusOutlined,
   ReloadOutlined,
-  RobotOutlined,
   SaveOutlined,
   WarningFilled,
 } from '@ant-design/icons';
@@ -16,6 +12,7 @@ import {
   Button,
   Card,
   Col,
+  Drawer,
   Empty,
   Form,
   Input,
@@ -91,12 +88,13 @@ interface AgentWorkspacePageProps {
 }
 
 export default function AgentWorkspacePage({ cliConfig }: AgentWorkspacePageProps) {
-  const { message } = AntApp.useApp();
+  const { message, modal } = AntApp.useApp();
   const [form] = Form.useForm<AgentDefinition>();
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
   const [runs, setRuns] = useState<AgentTestResult[]>([]);
   const [selectedId, setSelectedId] = useState<number | 'new' | null>(null);
-  const [view, setView] = useState<'agents' | 'workflow' | 'runs'>('agents');
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [detailTab, setDetailTab] = useState<'config' | 'test' | 'runs'>('config');
   const [category, setCategory] = useState<AgentCategory | 'all'>('all');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -112,8 +110,8 @@ export default function AgentWorkspacePage({ cliConfig }: AgentWorkspacePageProp
   );
 
   const selected = useMemo(
-    () => selectedId === 'new' ? form.getFieldsValue() : agents.find((item) => item.ID === selectedId),
-    [agents, selectedId, form],
+    () => agents.find((item) => item.ID === selectedId),
+    [agents, selectedId],
   );
 
   const filteredAgents = useMemo(
@@ -130,7 +128,7 @@ export default function AgentWorkspacePage({ cliConfig }: AgentWorkspacePageProp
       setRuns(history);
       setSelectedId((current) => {
         if (current === 'new') return current;
-        return definitions.some((item) => item.ID === current) ? current : definitions[0]?.ID || null;
+        return definitions.some((item) => item.ID === current) ? current : null;
       });
     } catch {
       setLoadError('无法读取 Agent 工作台数据，请确认后端服务和本项目数据库可用。');
@@ -151,19 +149,46 @@ export default function AgentWorkspacePage({ cliConfig }: AgentWorkspacePageProp
     }
   }, [agents, selectedId, form]);
 
-  const selectAgent = (item: AgentDefinition) => {
+  const openAgent = (item: AgentDefinition) => {
     setSelectedId(item.ID || null);
+    form.setFieldsValue(item);
     setDirty(false);
     setTestResult(null);
-    window.setTimeout(() => document.querySelector<HTMLElement>('.agent-editor-title')?.focus(), 0);
+    setDetailTab('config');
+    setDrawerOpen(true);
   };
 
   const addAgent = () => {
-    const draft = blankAgent((agents[agents.length - 1]?.sortOrder || 0) + 10, defaultCli?.id || '');
+    const nextSortOrder = Math.max(0, ...agents.map((item) => item.sortOrder || 0)) + 10;
+    const draft = blankAgent(nextSortOrder, defaultCli?.id || '');
     setSelectedId('new');
     form.setFieldsValue(draft);
     setDirty(true);
     setTestResult(null);
+    setDetailTab('config');
+    setDrawerOpen(true);
+  };
+
+  const closeDrawer = () => {
+    setDrawerOpen(false);
+    setSelectedId(null);
+    setDirty(false);
+    setTestResult(null);
+  };
+
+  const requestCloseDrawer = () => {
+    if (!dirty) {
+      closeDrawer();
+      return;
+    }
+    modal.confirm({
+      title: '放弃未保存的更改？',
+      content: '关闭详情后，本次编辑内容将不会保留。',
+      okText: '放弃更改',
+      cancelText: '继续编辑',
+      okButtonProps: { danger: true },
+      onOk: closeDrawer,
+    });
   };
 
   const save = async () => {
@@ -201,57 +226,73 @@ export default function AgentWorkspacePage({ cliConfig }: AgentWorkspacePageProp
     }
   };
 
+  const defaultCliLabel = defaultCli
+    ? `${defaultCli.label || defaultCli.id}${defaultCli.model ? ` · ${defaultCli.model}` : ''}`
+    : '未配置';
+
+  const agentColumns: ColumnsType<AgentDefinition> = [
+    {
+      title: 'Agent',
+      dataIndex: 'name',
+      width: 260,
+      render: (value: string, record) => (
+        <div className="agent-list-name">
+          <strong>{value}</strong>
+          <small>{record.agentKey}</small>
+        </div>
+      ),
+    },
+    {
+      title: '职责分类',
+      dataIndex: 'category',
+      width: 120,
+      render: (value: AgentCategory) => <Tag>{categoryMeta[value].label}</Tag>,
+    },
+    { title: '职责说明', dataIndex: 'description', ellipsis: true, render: (value: string) => value || '—' },
+    { title: '执行 CLI', width: 240, render: () => <Text type="secondary">{defaultCliLabel}</Text> },
+    {
+      title: '更新时间',
+      dataIndex: 'UpdatedAt',
+      width: 176,
+      render: (value?: string) => value
+        ? new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value))
+        : '—',
+    },
+    {
+      title: '操作',
+      key: 'actions',
+      width: 96,
+      fixed: 'right',
+      render: (_, record) => <Button type="link" onClick={() => openAgent(record)}>详情</Button>,
+    },
+  ];
+
   const renderAgentList = () => (
-    <aside className="agent-catalog" aria-label="Agent 列表">
-      <div className="agent-catalog-head">
-        <div><Text strong>Agent 目录</Text><Text type="secondary">{filteredAgents.length} 个</Text></div>
-        <Button type="text" icon={<PlusOutlined />} aria-label="新增 Agent" onClick={addAgent} />
-      </div>
-      <Segmented
-        block
-        className="agent-category-filter"
-        value={category}
-        onChange={(value) => setCategory(value as AgentCategory | 'all')}
-        options={[{ value: 'all', label: '全部' }, ...categoryOptions]}
+    <Card
+      className="agent-list-card"
+      title={<Space size={10}><span>Agent 列表</span><Tag>{filteredAgents.length} 个</Tag></Space>}
+      extra={(
+        <Segmented
+          className="agent-category-filter"
+          value={category}
+          onChange={(value) => setCategory(value as AgentCategory | 'all')}
+          options={[{ value: 'all', label: '全部' }, ...categoryOptions]}
+        />
+      )}
+    >
+      <Table
+        rowKey={(record) => record.ID || record.agentKey}
+        columns={agentColumns}
+        dataSource={filteredAgents}
+        pagination={false}
+        scroll={{ x: 1120 }}
+        locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="该分类暂无 Agent" /> }}
       />
-      <div className="agent-catalog-list">
-        {filteredAgents.map((item) => (
-          <button
-            type="button"
-            key={item.ID}
-            className={`agent-catalog-item ${selectedId === item.ID ? 'active' : ''}`}
-            aria-pressed={selectedId === item.ID}
-            onClick={() => selectAgent(item)}
-          >
-            <span className="agent-catalog-icon" aria-hidden="true"><RobotOutlined /></span>
-            <span className="agent-catalog-copy">
-              <span>{item.name}</span>
-              <small title={item.agentKey}>{item.agentKey}</small>
-            </span>
-            <Tag>{categoryMeta[item.category].label}</Tag>
-          </button>
-        ))}
-        {!filteredAgents.length && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="该分类暂无 Agent" />}
-      </div>
-    </aside>
+    </Card>
   );
 
   const renderEditor = () => (
-    <Card className="agent-editor-card">
-      <div className="agent-editor-head">
-        <div>
-          <Text className="editor-kicker">AGENT DEFINITION</Text>
-          <Title className="agent-editor-title" tabIndex={-1} level={3}>
-            {selectedId === 'new' ? '新增 Agent' : selected?.name || '选择 Agent'}
-          </Title>
-        </div>
-        <Space>
-          {dirty && <Tag color="warning">有未保存更改</Tag>}
-          <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={() => void save()}>
-            保存 Agent
-          </Button>
-        </Space>
-      </div>
+    <div className="agent-detail-form">
       <Form
         form={form}
         layout="vertical"
@@ -329,13 +370,13 @@ export default function AgentWorkspacePage({ cliConfig }: AgentWorkspacePageProp
           </Col>
         </Row>
       </Form>
-    </Card>
+    </div>
   );
 
   const renderTestPanel = () => {
     const meta = testResult ? statusMeta[testResult.status] : null;
     return (
-      <aside className="agent-test-panel" aria-label="Agent 在线测试">
+      <section className="agent-detail-test" aria-label="Agent 在线测试">
         <div className="agent-test-head">
           <div><Text strong>在线测试</Text><Text type="secondary">真实调用并记录结果</Text></div>
           <ExperimentOutlined aria-hidden="true" />
@@ -367,45 +408,37 @@ export default function AgentWorkspacePage({ cliConfig }: AgentWorkspacePageProp
             />
           </div>
         )}
-      </aside>
+      </section>
     );
   };
 
-  const renderWorkflow = () => (
-    <section className="agent-flow-card" aria-labelledby="agent-flow-title">
-      <div className="agent-flow-head">
-        <div><Title id="agent-flow-title" level={3}>Agent 生产链路</Title><Text type="secondary">只读视图，按职责阶段展示当前定义。</Text></div>
-        <Tag icon={<ApartmentOutlined />}>{agents.length} 个节点</Tag>
-      </div>
-      <div className="agent-flow-scroll" tabIndex={0} aria-label="Agent 流程阶段，可横向滚动">
-        <div className="agent-flow-lanes">
-          {(Object.keys(categoryMeta) as AgentCategory[]).map((key, index) => (
-            <section className="agent-flow-lane" key={key}>
-              <div className="agent-flow-lane-head"><span>{index + 1}</span><div><strong>{categoryMeta[key].label}</strong><small>{categoryMeta[key].description}</small></div></div>
-              <div className="agent-flow-nodes">
-                {agents.filter((agent) => agent.category === key).map((agent) => (
-                  <button key={agent.ID} type="button" onClick={() => { selectAgent(agent); setView('agents'); }}>
-                    <RobotOutlined aria-hidden="true" />
-                    <span><strong>{agent.name}</strong><small>{agent.agentKey}</small></span>
-                  </button>
-                ))}
-              </div>
-            </section>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-
   const runColumns: ColumnsType<AgentTestResult> = [
     { title: '时间', dataIndex: 'createdAt', width: 176, render: (value?: string) => value ? new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'medium' }).format(new Date(value)) : '—' },
-    { title: 'Agent', dataIndex: 'agentName', width: 200, render: (value, record) => <div className="run-agent-cell"><strong>{value}</strong><small>{record.agentKey}</small></div> },
     { title: '状态', dataIndex: 'status', width: 120, render: (value: AgentTestResult['status']) => <Tag color={statusMeta[value].color}>{statusMeta[value].label}</Tag> },
     { title: '结构校验', dataIndex: 'schemaValid', width: 112, render: (value: boolean) => value ? <Text type="success">通过</Text> : <Text type="danger">失败</Text> },
     { title: '评分', dataIndex: 'overallScore', width: 88, render: (value?: number) => value == null ? '—' : value },
     { title: '耗时', dataIndex: 'durationMs', width: 110, render: (value: number) => `${value} ms` },
     { title: '诊断', dataIndex: 'errorMessage', ellipsis: true, render: (value: string, record) => value || record.issues[0] || '无' },
   ];
+
+  const selectedRuns = typeof selectedId === 'number'
+    ? runs.filter((run) => run.agentId === selectedId)
+    : [];
+
+  const renderAgentRuns = () => selectedId === 'new' ? (
+    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="请先保存 Agent，再查看运行记录" />
+  ) : (
+    <div className="agent-detail-runs">
+      <Table
+        rowKey="runId"
+        columns={runColumns}
+        dataSource={selectedRuns}
+        pagination={{ pageSize: 10, showSizeChanger: false }}
+        scroll={{ x: 760 }}
+        locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="该 Agent 暂无运行记录" /> }}
+      />
+    </div>
+  );
 
   if (loading) return <section className="agent-workspace-page"><Skeleton active paragraph={{ rows: 12 }} /></section>;
   if (loadError) return <section className="agent-workspace-page"><Alert type="error" showIcon message="Agent 工作台加载失败" description={loadError} action={<Button icon={<ReloadOutlined />} onClick={() => void load()}>重新加载</Button>} /></section>;
@@ -416,37 +449,36 @@ export default function AgentWorkspacePage({ cliConfig }: AgentWorkspacePageProp
         <div className="page-title-block">
           <Text className="page-eyebrow">AGENT WORKBENCH</Text>
           <Title id="agent-workspace-title" level={2}>Agent 工作台</Title>
-          <Text type="secondary">集中编辑提示词与契约，运行真实测试并追踪质量结果。</Text>
+          <Text type="secondary">从列表进入详情，集中编辑、测试并追踪每个 Agent 的质量结果。</Text>
         </div>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => { addAgent(); setView('agents'); }}>新增 Agent</Button>
+        <Button type="primary" icon={<PlusOutlined />} onClick={addAgent}>新增 Agent</Button>
       </div>
-      <Tabs
-        className="agent-workspace-tabs"
-        activeKey={view}
-        onChange={(key) => setView(key as typeof view)}
-        items={[
-          { key: 'agents', label: <span><RobotOutlined />Agent 配置</span> },
-          { key: 'workflow', label: <span><ApartmentOutlined />流程视图</span> },
-          { key: 'runs', label: <span><ClockCircleOutlined />运行记录</span> },
-        ]}
-      />
-      {view === 'agents' && (
-        agents.length || selectedId === 'new' ? (
-          <div className="agent-workbench-grid">
-            {renderAgentList()}
-            {renderEditor()}
-            {renderTestPanel()}
-          </div>
-        ) : (
-          <Card className="empty-panel"><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无 Agent 定义"><Button type="primary" icon={<PlusOutlined />} onClick={addAgent}>新增第一个 Agent</Button></Empty></Card>
-        )
-      )}
-      {view === 'workflow' && renderWorkflow()}
-      {view === 'runs' && (
-        <Card className="agent-runs-card" title={<Space><FileTextOutlined /><span>最近 100 次单 Agent 测试</span></Space>} extra={<Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button>}>
-          <Table rowKey="runId" columns={runColumns} dataSource={runs} pagination={{ pageSize: 20, showSizeChanger: false }} scroll={{ x: 980 }} locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="运行测试后将在这里保留记录" /> }} />
-        </Card>
-      )}
+      {renderAgentList()}
+      <Drawer
+        className="agent-detail-drawer"
+        title={selectedId === 'new' ? '新增 Agent' : selected?.name || 'Agent 详情'}
+        width="min(1040px, 96vw)"
+        open={drawerOpen}
+        onClose={requestCloseDrawer}
+        extra={(
+          <Space>
+            {dirty && <Tag color="warning">有未保存更改</Tag>}
+            <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={() => void save()}>
+              保存 Agent
+            </Button>
+          </Space>
+        )}
+      >
+        <Tabs
+          activeKey={detailTab}
+          onChange={(key) => setDetailTab(key as typeof detailTab)}
+          items={[
+            { key: 'config', label: '配置编辑', children: renderEditor() },
+            { key: 'test', label: '在线测试', children: renderTestPanel() },
+            { key: 'runs', label: '运行记录', children: renderAgentRuns() },
+          ]}
+        />
+      </Drawer>
     </section>
   );
 }

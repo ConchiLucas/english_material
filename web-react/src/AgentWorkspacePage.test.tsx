@@ -157,7 +157,7 @@ describe('AgentWorkspacePage list and detail workflow', () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: '新增 Agent' }));
+    await user.click(await screen.findByRole('button', { name: /新增 Agent/ }));
     const drawer = await screen.findByRole('dialog');
     expect(within(drawer).getAllByText('新增 Agent').length).toBeGreaterThan(0);
     expect(within(drawer).getByLabelText('Agent Key')).toHaveValue('agent-30');

@@ -33,3 +33,6 @@ Object.defineProperty(window, 'scrollTo', {
   writable: true,
   value: vi.fn(),
 });
+
+const originalGetComputedStyle = window.getComputedStyle;
+window.getComputedStyle = (element: Element) => originalGetComputedStyle(element);
