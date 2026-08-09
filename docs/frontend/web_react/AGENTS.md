@@ -28,6 +28,7 @@ summary: 提供数据库、AI、本地 CLI 配置和去重单词浏览页面。
 
 ## 部署
 
-- Context Router fast 和 full 都使用 Docker 层缓存构建当前前端。
-- full 模式拉取基础镜像并强制替换容器；fast 模式不拉取基础镜像。
+- Context Router fast 使用 Node/Vite 开发容器、当前源码挂载和锁文件哈希隔离的 `node_modules` Volume。
+- full 模式使用 Node 22 执行 `npm ci` 与生产构建，再生成只读 Nginx 镜像。
+- Fast/Full 共用 `english-material-frontend` 容器、宿主机端口 `19638` 和 `vibedeploy-shared` 网络；前端通过 `/api` 代理访问 `english-material-backend:18744`。
 - Context Router 入口位于 `web-react/deploy/context-router/{fast|full}/deploy.sh`。

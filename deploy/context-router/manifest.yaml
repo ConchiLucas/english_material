@@ -1,12 +1,6 @@
 schema_version: 1
 workspace:
-  workspace_paths:
-    - deploy/context-router/deploy.sh
-    - deploy/context-router/compose.yaml
-    - deploy/context-router/backend.Dockerfile
-    - deploy/context-router/frontend.Dockerfile
-    - deploy/context-router/nginx.conf
-    - docker-compose.yml
+  workspace_paths: []
 project_order:
   - "."
   - web-react

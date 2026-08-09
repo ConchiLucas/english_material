@@ -55,5 +55,7 @@ summary: 维护数据库连接、AI 与本地 CLI 配置，并参数化只读查
 - 本地开发：`./scripts/start-dev.sh`。
 - Context Router fast：`deploy/context-router/fast/deploy.sh`。
 - Context Router full：`deploy/context-router/full/deploy.sh`。
-- fast 复用 Docker/Maven 缓存；full 额外拉取基础镜像，两者都执行健康检查并以非零状态报告失败。
+- full 建立 Java 17、Codex CLI、稳定依赖和 Spring Boot Loader 分层基线；fast 校验并复用该基线，只更新 SNAPSHOT 与 application 层。
+- Fast/Full 共用 `english-material-backend` 容器、`18744` 端口和 `vibedeploy-shared` 网络；依赖不兼容时 Fast 必须停止并要求 Full。
+- 两种模式都执行容器健康、重启次数和 `Started AiTaskCenterApplication` 日志验证，并以非零状态报告失败。
 - 容器镜像包含 Codex CLI，Compose 只在本机挂载 Codex 配置目录，并以当前宿主用户 UID 运行后端；本地凭据不得写入镜像、源码或日志。

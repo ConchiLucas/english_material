@@ -1,0 +1,39 @@
+services:
+  frontend:
+    image: english-material/frontend:dev
+    container_name: english-material-frontend
+    networks:
+      - vibedeploy-shared
+    restart: unless-stopped
+    init: true
+    working_dir: /app
+    ports:
+      - "${FRONTEND_HOST_BIND_ADDRESS:-127.0.0.1}:${ENGLISH_MATERIAL_FRONTEND_PORT:-19638}:19638"
+    environment:
+      CHOKIDAR_USEPOLLING: "true"
+      VITE_API_BASE: /api
+      VITE_BACKEND_TARGET: http://english-material-backend:18744
+    volumes:
+      - "${PROJECT_HOST_ROOT}:/app"
+      - node_modules:/app/node_modules
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -qO- http://127.0.0.1:19638/ >/dev/null || exit 1
+      interval: 15s
+      timeout: 3s
+      retries: 8
+      start_period: 15s
+    labels:
+      runtime-runner.project-id: "${RUNTIME_PROJECT_ID:-5864a9be48fb4e61b8a469c0c5238921}"
+      runtime-runner.mode: "fast"
+
+networks:
+  vibedeploy-shared:
+    external: true
+    name: vibedeploy-shared
+
+volumes:
+  node_modules:
+    external: true
+    name: ${NODE_MODULES_VOLUME}

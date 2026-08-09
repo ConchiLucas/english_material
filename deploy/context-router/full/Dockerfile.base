@@ -1,0 +1,31 @@
+# syntax=docker/dockerfile:1.7
+ARG NODE_IMAGE=node:22-bookworm-slim
+ARG JAVA_IMAGE=eclipse-temurin:17-jre
+
+FROM ${NODE_IMAGE} AS codex-cli
+ARG CODEX_CLI_VERSION=0.144.1
+RUN --mount=type=cache,target=/root/.npm \
+    npm install --global "@openai/codex@${CODEX_CLI_VERSION}"
+
+FROM ${JAVA_IMAGE}
+ARG APP_UID=1000
+
+RUN groupadd app \
+    && useradd --uid "${APP_UID}" --gid app --home-dir /home/app \
+       --create-home --shell /usr/sbin/nologin app \
+    && mkdir -p /app /workspace /home/app/.codex /home/app/dumps \
+    && chown -R app:app /app /workspace /home/app
+
+COPY --from=codex-cli /usr/local/bin/node /usr/local/bin/node
+COPY --from=codex-cli /usr/local/lib/node_modules/@openai/codex /usr/local/lib/node_modules/@openai/codex
+RUN ln -s /usr/local/lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex
+
+WORKDIR /app
+COPY --chown=app:app dependencies/ ./
+COPY --chown=app:app spring-boot-loader/ ./
+
+ENV HOME=/home/app CODEX_HOME=/home/app/.codex LANG=C.UTF-8 LC_ALL=C.UTF-8
+USER app
+EXPOSE 18744
+STOPSIGNAL SIGTERM
+ENTRYPOINT ["java", "-Duser.home=/home/app", "org.springframework.boot.loader.launch.JarLauncher"]

@@ -1,0 +1,32 @@
+services:
+  frontend:
+    image: english-material/frontend:local
+    container_name: english-material-frontend
+    networks:
+      - vibedeploy-shared
+    restart: unless-stopped
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,nosuid,size=64m
+      - /var/cache/nginx:rw,nosuid,size=32m
+    ports:
+      - "${FRONTEND_HOST_BIND_ADDRESS:-127.0.0.1}:${ENGLISH_MATERIAL_FRONTEND_PORT:-19638}:80"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -qO- http://127.0.0.1/ >/dev/null || exit 1
+      interval: 15s
+      timeout: 3s
+      retries: 8
+      start_period: 10s
+    labels:
+      runtime-runner.project-id: "${RUNTIME_PROJECT_ID:-5864a9be48fb4e61b8a469c0c5238921}"
+      runtime-runner.mode: "full"
+
+networks:
+  vibedeploy-shared:
+    external: true
+    name: vibedeploy-shared

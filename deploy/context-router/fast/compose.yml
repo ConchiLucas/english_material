@@ -1,0 +1,57 @@
+services:
+  backend:
+    image: english-material/backend:dev
+    container_name: english-material-backend
+    networks:
+      vibedeploy-shared:
+        aliases:
+          - english-material-backend
+    restart: unless-stopped
+    init: true
+    read_only: true
+    mem_limit: ${ENGLISH_MATERIAL_BACKEND_MEMORY_LIMIT:-1024m}
+    stop_grace_period: 35s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,nosuid,size=256m
+    ports:
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${ENGLISH_MATERIAL_BACKEND_PORT:-18744}:18744"
+    environment:
+      TASK_CENTER_SERVER_PORT: "18744"
+      TASK_CENTER_DB_URL: ${TASK_CENTER_DB_URL:?Set TASK_CENTER_DB_URL in .env.local}
+      TASK_CENTER_DB_USER: ${TASK_CENTER_DB_USER:?Set TASK_CENTER_DB_USER in .env.local}
+      TASK_CENTER_DB_PASSWORD: ${TASK_CENTER_DB_PASSWORD:?Set TASK_CENTER_DB_PASSWORD in .env.local}
+      JAVA_TOOL_OPTIONS: >-
+        -XX:MaxRAMPercentage=${JAVA_MAX_RAM_PERCENTAGE:-75.0}
+        -XX:+ExitOnOutOfMemoryError
+        -XX:+HeapDumpOnOutOfMemoryError
+        -XX:HeapDumpPath=/home/app/dumps
+        -Dfile.encoding=UTF-8
+        ${ENGLISH_MATERIAL_BACKEND_JVM_OPTIONS:-}
+        -Dserver.port=18744
+    volumes:
+      - "${WORKSPACE_HOST_ROOT}:/workspace:ro"
+      - "${CODEX_HOST_HOME}:/home/app/.codex"
+      - english-material-backend-dumps:/home/app/dumps
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - bash -ec 'exec 3<>/dev/tcp/127.0.0.1/18744'
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
+    labels:
+      runtime-runner.project-id: "${RUNTIME_PROJECT_ID:-88029d3b59f44be2ab98649f758863da}"
+      runtime-runner.mode: "fast"
+
+networks:
+  vibedeploy-shared:
+    external: true
+    name: vibedeploy-shared
+
+volumes:
+  english-material-backend-dumps:

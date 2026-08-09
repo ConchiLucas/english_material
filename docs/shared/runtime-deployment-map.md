@@ -15,10 +15,12 @@ summary: 区分开发机启动、旧部署目录和 Context Router 统一编排�
 - Workspace start：`deploy/context-router/workspace/start/deploy.sh`。
 - Java fast/full：`deploy/context-router/{fast|full}/deploy.sh`。
 - React fast/full：`web-react/deploy/context-router/{fast|full}/deploy.sh`。
-- 统一实现：`deploy/context-router/deploy.sh`。
-- 统一 Compose：`deploy/context-router/compose.yaml`。
 
-fast 使用现有基础镜像和 Docker 构建缓存；full 增加 `--pull` 并强制重建。Workspace 启动先等待后端 HTTP 可用，再启动并检查前端。
+Java Full 从当前本地代码完整打包 Spring Boot JAR，提取 `dependencies`、`spring-boot-loader`、`snapshot-dependencies` 和 `application` 四层，建立带哈希标签的 Java 17、Codex CLI 与稳定依赖基线；Java Fast 重新打包当前代码并严格验证基线，只叠加 SNAPSHOT 与业务层。依赖或基线不一致时 Fast 必须失败并要求 Full。
+
+React Fast 使用锁文件哈希隔离的 `node_modules` Volume 和源码挂载运行 Vite；React Full 执行 `npm ci`、生产构建并生成只读 Nginx 镜像。Fast/Full 替换同一个前端容器并保持宿主机端口 `19638` 不变。
+
+后端和前端都加入 `vibedeploy-shared`。Workspace 启动依次执行后端 Full 和前端 Full，每一步都等待容器健康。
 
 ## 环境规则
 
