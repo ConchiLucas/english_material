@@ -121,6 +121,11 @@ const renderPage = () => render(
 
 describe('AgentWorkspacePage list and detail workflow', () => {
   beforeEach(() => {
+    apiMocks.getAgents.mockReset();
+    apiMocks.getAgentRuns.mockReset();
+    apiMocks.createAgent.mockReset();
+    apiMocks.updateAgent.mockReset();
+    apiMocks.testAgent.mockReset();
     apiMocks.getAgents.mockResolvedValue(agents);
     apiMocks.getAgentRuns.mockResolvedValue(runs);
     apiMocks.createAgent.mockResolvedValue({ ...agents[0], ID: 3, name: '新 Agent' });
@@ -176,8 +181,11 @@ describe('AgentWorkspacePage list and detail workflow', () => {
     const drawer = await screen.findByRole('dialog');
     await user.click(within(drawer).getByRole('button', { name: /保存 Agent/ }));
     await waitFor(() => expect(apiMocks.updateAgent).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(apiMocks.getAgents).toHaveBeenCalledTimes(2));
 
     expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(document.querySelector('.ant-skeleton')).not.toBeInTheDocument();
     finishRefresh?.(agents);
+    await waitFor(() => expect(within(screen.getByRole('dialog')).getByRole('button', { name: /保存 Agent/ })).not.toHaveClass('ant-btn-loading'));
   });
 });
