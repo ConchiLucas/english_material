@@ -8,6 +8,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -29,9 +31,11 @@ import com.aitaskcenter.model.StoryFlowConfig;
 import com.aitaskcenter.repository.StoryAgentConfigRepository;
 import com.aitaskcenter.repository.StoryAgentPromptVersionRepository;
 import com.aitaskcenter.repository.StoryFlowConfigRepository;
+import jakarta.persistence.Version;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,8 +45,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
@@ -68,6 +74,12 @@ class StoryAgentServiceTest {
                 versionRepository,
                 flowRepository,
                 aiConfigService);
+    }
+
+    @Test
+    void storyAgentConfigUsesJpaOptimisticVersion() {
+        assertTrue(Arrays.stream(StoryAgentConfig.class.getDeclaredFields())
+                .anyMatch(field -> field.isAnnotationPresent(Version.class)));
     }
 
     @Test
@@ -178,8 +190,10 @@ class StoryAgentServiceTest {
         ArgumentCaptor<StoryAgentConfig> configCaptor = ArgumentCaptor.forClass(StoryAgentConfig.class);
         ArgumentCaptor<StoryAgentPromptVersion> versionCaptor =
                 ArgumentCaptor.forClass(StoryAgentPromptVersion.class);
-        verify(configRepository).save(configCaptor.capture());
-        verify(versionRepository).save(versionCaptor.capture());
+        InOrder writeOrder = inOrder(configRepository, versionRepository);
+        writeOrder.verify(configRepository).save(configCaptor.capture());
+        writeOrder.verify(configRepository).flush();
+        writeOrder.verify(versionRepository).save(versionCaptor.capture());
         StoryAgentConfig saved = configCaptor.getValue();
         StoryAgentPromptVersion snapshot = versionCaptor.getValue();
         assertEquals("Changed prompt", saved.getSystemPrompt());
@@ -196,7 +210,27 @@ class StoryAgentServiceTest {
         assertEquals(4, result.promptVersion());
         assertEquals("Changed prompt", result.systemPrompt());
         assertEquals(flushedAt, result.updatedAt());
-        verify(configRepository).flush();
+    }
+
+    @Test
+    void updateMapsOptimisticConflictBeforeSavingSnapshot() {
+        OffsetDateTime updatedAt = OffsetDateTime.parse("2026-08-12T10:15:30+08:00");
+        StoryAgentConfig current = config(
+                "story-writer", "Current prompt", "text-provider", 0.7, true, 3, updatedAt);
+        current.setId(99L);
+        when(configRepository.findByAgentKey("story-writer")).thenReturn(Optional.of(current));
+        when(aiConfigService.getProviders()).thenReturn(providerConfig(
+                "text-provider",
+                provider("text-provider", "Text", "text-model", true, "TEXT_GENERATION")));
+        doThrow(new ObjectOptimisticLockingFailureException(StoryAgentConfig.class, current.getId()))
+                .when(configRepository).flush();
+
+        IllegalArgumentException conflict = assertThrows(IllegalArgumentException.class, () ->
+                service.update("story-writer", new AgentUpdateRequest(
+                        "Changed prompt", "text-provider", 0.5, false, updatedAt)));
+
+        assertEquals("故事 Agent 配置已被更新，请刷新页面后重试", conflict.getMessage());
+        verify(versionRepository, never()).save(any());
     }
 
     @Test
@@ -287,6 +321,9 @@ class StoryAgentServiceTest {
                 "story-writer", 2, "Historical prompt", "historical-provider", 0.2, false,
                 historicalCreatedAt);
         when(configRepository.findByAgentKey("story-writer")).thenReturn(Optional.of(current));
+        when(aiConfigService.getProviders()).thenReturn(providerConfig(
+                "historical-provider",
+                provider("historical-provider", "Historical", "text-model", true, "TEXT_GENERATION")));
         when(versionRepository.findByAgentKeyAndVersion("story-writer", 2))
                 .thenReturn(Optional.of(historical));
         when(versionRepository.findByAgentKeyOrderByVersionDesc("story-writer"))
@@ -312,7 +349,10 @@ class StoryAgentServiceTest {
 
         ArgumentCaptor<StoryAgentPromptVersion> snapshotCaptor =
                 ArgumentCaptor.forClass(StoryAgentPromptVersion.class);
-        verify(versionRepository).save(snapshotCaptor.capture());
+        InOrder writeOrder = inOrder(configRepository, versionRepository);
+        writeOrder.verify(configRepository).save(current);
+        writeOrder.verify(configRepository).flush();
+        writeOrder.verify(versionRepository).save(snapshotCaptor.capture());
         StoryAgentPromptVersion newSnapshot = snapshotCaptor.getValue();
         assertEquals(6, current.getPromptVersion());
         assertEquals("Historical prompt", current.getSystemPrompt());
@@ -324,12 +364,66 @@ class StoryAgentServiceTest {
         assertEquals(6, restored.promptVersion());
         assertEquals("Historical prompt", restored.systemPrompt());
         assertEquals(flushedAt, restored.updatedAt());
-        verify(configRepository).flush();
+    }
+
+    @Test
+    void restoreMapsOptimisticConflictBeforeSavingSnapshot() {
+        OffsetDateTime updatedAt = OffsetDateTime.parse("2026-08-12T10:15:30+08:00");
+        StoryAgentConfig current = config(
+                "story-writer", "Current prompt", "text-provider", 0.7, true, 3, updatedAt);
+        current.setId(99L);
+        StoryAgentPromptVersion historical = version(
+                "story-writer", 2, "Historical prompt", "text-provider", 0.2, false, updatedAt);
+        when(versionRepository.findByAgentKeyAndVersion("story-writer", 2))
+                .thenReturn(Optional.of(historical));
+        when(configRepository.findByAgentKey("story-writer")).thenReturn(Optional.of(current));
+        when(aiConfigService.getProviders()).thenReturn(providerConfig(
+                "text-provider",
+                provider("text-provider", "Text", "text-model", true, "TEXT_GENERATION")));
+        doThrow(new ObjectOptimisticLockingFailureException(StoryAgentConfig.class, current.getId()))
+                .when(configRepository).flush();
+
+        IllegalArgumentException conflict = assertThrows(IllegalArgumentException.class, () ->
+                service.restore("story-writer", 2));
+
+        assertEquals("故事 Agent 配置已被更新，请刷新页面后重试", conflict.getMessage());
+        verify(versionRepository, never()).save(any());
+    }
+
+    @Test
+    void restoreRejectsMissingDisabledAndNonTextProvidersWithoutWrites() {
+        OffsetDateTime createdAt = OffsetDateTime.parse("2026-08-10T09:00:00+08:00");
+        when(versionRepository.findByAgentKeyAndVersion("story-writer", 1)).thenReturn(Optional.of(version(
+                "story-writer", 1, "Missing", "missing-provider", 0.2, true, createdAt)));
+        when(versionRepository.findByAgentKeyAndVersion("story-writer", 2)).thenReturn(Optional.of(version(
+                "story-writer", 2, "Disabled", "disabled-provider", 0.2, true, createdAt)));
+        when(versionRepository.findByAgentKeyAndVersion("story-writer", 3)).thenReturn(Optional.of(version(
+                "story-writer", 3, "Audio", "audio-provider", 0.2, true, createdAt)));
+        when(aiConfigService.getProviders()).thenReturn(providerConfig(
+                "disabled-provider",
+                provider("disabled-provider", "Disabled", "text-model", false, "TEXT_GENERATION"),
+                provider("audio-provider", "Audio", "tts-model", true, "AUDIO_TTS")));
+
+        IllegalArgumentException missing = assertThrows(
+                IllegalArgumentException.class, () -> service.restore("story-writer", 1));
+        IllegalArgumentException disabled = assertThrows(
+                IllegalArgumentException.class, () -> service.restore("story-writer", 2));
+        IllegalArgumentException nonText = assertThrows(
+                IllegalArgumentException.class, () -> service.restore("story-writer", 3));
+
+        assertEquals("AI 配置「missing-provider」不存在", missing.getMessage());
+        assertEquals("AI 配置「disabled-provider」未启用", disabled.getMessage());
+        assertEquals("AI 配置「audio-provider」不支持文本生成", nonText.getMessage());
+        verify(configRepository, never()).findByAgentKey(any());
+        verify(configRepository, never()).save(any());
+        verify(configRepository, never()).flush();
+        verify(versionRepository, never()).save(any());
     }
 
     @Test
     void validatesAndSavesBudgetBounds() {
         AtomicReference<StoryFlowConfig> savedConfig = new AtomicReference<>();
+        OffsetDateTime flushedAt = OffsetDateTime.parse("2026-08-12T10:15:31+08:00");
         when(flowRepository.findByConfigKey(StoryFlowConfig.DEFAULT_CONFIG_KEY)).thenAnswer(invocation ->
                 Optional.ofNullable(savedConfig.get()));
         when(flowRepository.save(any())).thenAnswer(invocation -> {
@@ -337,6 +431,10 @@ class StoryAgentServiceTest {
             savedConfig.set(saved);
             return saved;
         });
+        doAnswer(invocation -> {
+            setTimestamps(savedConfig.get(), flushedAt, flushedAt);
+            return null;
+        }).when(flowRepository).flush();
 
         BudgetView defaults = service.getBudget();
         BudgetView saved = service.updateBudget(budget(5, 4, 3, 2, 1, 0, 500_000));
@@ -350,6 +448,7 @@ class StoryAgentServiceTest {
         assertEquals(1, saved.maxPitchReturns());
         assertEquals(0, saved.maxPlanReturns());
         assertEquals(500_000, saved.maxTotalTokens());
+        assertEquals(flushedAt, saved.updatedAt());
         assertEquals(500_000, savedConfig.get().getMaxTotalTokens());
 
         assertThrows(IllegalArgumentException.class, () ->
@@ -368,6 +467,7 @@ class StoryAgentServiceTest {
                 service.updateBudget(new BudgetUpdateRequest(null, 1, 1, 1, 1, 1, 1_000)));
 
         verify(flowRepository, times(1)).save(any());
+        verify(flowRepository, times(1)).flush();
     }
 
     private AgentView findNode(FlowView flow, String key) {

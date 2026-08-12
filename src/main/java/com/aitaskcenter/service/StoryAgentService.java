@@ -27,6 +27,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -122,9 +123,8 @@ public class StoryAgentService {
         current.setTemperature(normalized.temperature());
         current.setEnabled(normalized.enabled());
         current.setPromptVersion(current.getPromptVersion() + 1);
-        configRepository.save(current);
+        saveCurrentConfig(current);
         versionRepository.save(snapshot(current));
-        configRepository.flush();
         return toView(definition, current);
     }
 
@@ -149,6 +149,7 @@ public class StoryAgentService {
                 .findByAgentKeyAndVersion(definition.key(), version)
                 .orElseThrow(() -> new IllegalArgumentException(
                         "故事 Agent「" + definition.key() + "」的提示词版本 " + version + " 不存在"));
+        requireTextProvider(historical.getAiProviderId());
         StoryAgentConfig current = configRepository.findByAgentKey(definition.key())
                 .orElseThrow(() -> new IllegalArgumentException(
                         "故事 Agent 配置「" + definition.key() + "」不存在，请刷新后重试"));
@@ -157,9 +158,8 @@ public class StoryAgentService {
         current.setTemperature(historical.getTemperature());
         current.setEnabled(historical.isEnabled());
         current.setPromptVersion(current.getPromptVersion() + 1);
-        configRepository.save(current);
+        saveCurrentConfig(current);
         versionRepository.save(snapshot(current));
-        configRepository.flush();
         return toView(definition, current);
     }
 
@@ -183,6 +183,7 @@ public class StoryAgentService {
         config.setMaxPlanReturns(request.maxPlanReturns());
         config.setMaxTotalTokens(request.maxTotalTokens());
         flowRepository.save(config);
+        flowRepository.flush();
         return toView(config);
     }
 
@@ -198,6 +199,22 @@ public class StoryAgentService {
         if (!StringUtils.hasText(providerId)) {
             throw new IllegalArgumentException("请选择 AI 配置");
         }
+        requireTextProvider(providerId);
+        Double temperature = request.temperature();
+        if (temperature == null || !Double.isFinite(temperature) || temperature < 0 || temperature > 2) {
+            throw new IllegalArgumentException("温度必须在 0 到 2 之间");
+        }
+        if (request.enabled() == null) {
+            throw new IllegalArgumentException("请选择是否启用故事 Agent");
+        }
+        return new NormalizedAgentUpdate(systemPrompt, providerId, temperature, request.enabled());
+    }
+
+    private AiProviderConfigItem requireTextProvider(String requestedProviderId) {
+        String providerId = clean(requestedProviderId);
+        if (!StringUtils.hasText(providerId)) {
+            throw new IllegalArgumentException("请选择 AI 配置");
+        }
         AiProviderConfigItem provider = providers(aiConfigService.getProviders()).stream()
                 .filter(item -> providerId.equals(clean(item.getId())))
                 .findFirst()
@@ -208,14 +225,16 @@ public class StoryAgentService {
         if (!supportsTextGeneration(provider)) {
             throw new IllegalArgumentException("AI 配置「" + providerId + "」不支持文本生成");
         }
-        Double temperature = request.temperature();
-        if (temperature == null || !Double.isFinite(temperature) || temperature < 0 || temperature > 2) {
-            throw new IllegalArgumentException("温度必须在 0 到 2 之间");
+        return provider;
+    }
+
+    private void saveCurrentConfig(StoryAgentConfig config) {
+        try {
+            configRepository.save(config);
+            configRepository.flush();
+        } catch (ObjectOptimisticLockingFailureException ex) {
+            throw new IllegalArgumentException("故事 Agent 配置已被更新，请刷新页面后重试", ex);
         }
-        if (request.enabled() == null) {
-            throw new IllegalArgumentException("请选择是否启用故事 Agent");
-        }
-        return new NormalizedAgentUpdate(systemPrompt, providerId, temperature, request.enabled());
     }
 
     private void requireCurrentTimestamp(StoryAgentConfig current, java.time.OffsetDateTime requestedUpdatedAt) {

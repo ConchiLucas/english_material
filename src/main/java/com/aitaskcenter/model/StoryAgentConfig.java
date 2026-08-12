@@ -3,6 +3,7 @@ package com.aitaskcenter.model;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 
 @Entity
 @Table(name = "tb_story_agent_config")
@@ -33,6 +34,9 @@ public class StoryAgentConfig extends BaseEntity {
 
     @Column(name = "prompt_version", nullable = false)
     private int promptVersion;
+
+    @Version
+    private long lockVersion;
 
     public String getAgentKey() {
         return agentKey;
