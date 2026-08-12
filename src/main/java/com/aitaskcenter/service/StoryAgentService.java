@@ -124,6 +124,7 @@ public class StoryAgentService {
         current.setPromptVersion(current.getPromptVersion() + 1);
         configRepository.save(current);
         versionRepository.save(snapshot(current));
+        configRepository.flush();
         return toView(definition, current);
     }
 
@@ -158,6 +159,7 @@ public class StoryAgentService {
         current.setPromptVersion(current.getPromptVersion() + 1);
         configRepository.save(current);
         versionRepository.save(snapshot(current));
+        configRepository.flush();
         return toView(definition, current);
     }
 

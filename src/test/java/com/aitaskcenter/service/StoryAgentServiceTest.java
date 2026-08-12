@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -156,6 +157,7 @@ class StoryAgentServiceTest {
     @Test
     void saveChangedPromptCreatesNextVersion() {
         OffsetDateTime updatedAt = OffsetDateTime.parse("2026-08-12T10:15:30+08:00");
+        OffsetDateTime flushedAt = updatedAt.plusSeconds(1);
         StoryAgentConfig current = config(
                 "story-writer", "Current prompt", "text-provider", 0.7, true, 3, updatedAt);
         when(configRepository.findByAgentKey("story-writer")).thenReturn(Optional.of(current));
@@ -164,6 +166,10 @@ class StoryAgentServiceTest {
                 provider("text-provider", "Text", "text-model", true, "TEXT_GENERATION")));
         when(configRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(versionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        doAnswer(invocation -> {
+            ReflectionTestUtils.setField(current, "updatedAt", flushedAt);
+            return null;
+        }).when(configRepository).flush();
 
         AgentView result = service.update("story-writer", new AgentUpdateRequest(
                 "  Changed prompt  ", "text-provider", 0.5, false,
@@ -189,6 +195,8 @@ class StoryAgentServiceTest {
         assertEquals(saved.isEnabled(), snapshot.isEnabled());
         assertEquals(4, result.promptVersion());
         assertEquals("Changed prompt", result.systemPrompt());
+        assertEquals(flushedAt, result.updatedAt());
+        verify(configRepository).flush();
     }
 
     @Test
@@ -207,6 +215,7 @@ class StoryAgentServiceTest {
         assertEquals(3, result.promptVersion());
         assertEquals("Current prompt", result.systemPrompt());
         verify(configRepository, never()).save(any());
+        verify(configRepository, never()).flush();
         verify(versionRepository, never()).save(any());
     }
 
@@ -270,6 +279,7 @@ class StoryAgentServiceTest {
     @Test
     void restoreCreatesNewLatestVersionWithoutChangingHistory() {
         OffsetDateTime currentUpdatedAt = OffsetDateTime.parse("2026-08-12T10:15:30+08:00");
+        OffsetDateTime flushedAt = currentUpdatedAt.plusSeconds(1);
         OffsetDateTime historicalCreatedAt = OffsetDateTime.parse("2026-08-10T09:00:00+08:00");
         StoryAgentConfig current = config(
                 "story-writer", "Current prompt", "current-provider", 0.7, true, 5, currentUpdatedAt);
@@ -283,6 +293,10 @@ class StoryAgentServiceTest {
                 .thenReturn(List.of(historical));
         when(configRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(versionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        doAnswer(invocation -> {
+            ReflectionTestUtils.setField(current, "updatedAt", flushedAt);
+            return null;
+        }).when(configRepository).flush();
 
         List<PromptVersionView> historyBeforeRestore = service.versions("story-writer");
         AgentView restored = service.restore("story-writer", 2);
@@ -309,6 +323,8 @@ class StoryAgentServiceTest {
         assertEquals("Historical prompt", newSnapshot.getSystemPrompt());
         assertEquals(6, restored.promptVersion());
         assertEquals("Historical prompt", restored.systemPrompt());
+        assertEquals(flushedAt, restored.updatedAt());
+        verify(configRepository).flush();
     }
 
     @Test
