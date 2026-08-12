@@ -28,3 +28,4 @@ __pycache__/
 
 # Runtime
 .runtime/
+.superpowers/
