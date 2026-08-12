@@ -1,4 +1,5 @@
 import {
+  ApartmentOutlined,
   CheckCircleFilled,
   BookOutlined,
   CodeOutlined,
@@ -33,7 +34,7 @@ import {
   Tooltip,
   Typography,
 } from 'antd';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AIConfig,
   AIProviderConfigItem,
@@ -50,13 +51,14 @@ import {
   testConnectionPayload,
   updateConnection,
 } from './api';
+import StoryAgentFlowPage from './StoryAgentFlowPage';
 import WordCleanPage from './WordCleanPage';
 
 const { Header, Sider, Content } = Layout;
 const { Title, Text } = Typography;
 
 type ConfigTab = 'database' | 'ai' | 'cli';
-type WorkspaceSection = 'config' | 'word-clean';
+type WorkspaceSection = 'config' | 'word-clean' | 'agents';
 type BusyAction = 'connection-save' | 'connection-test' | 'ai-save' | 'cli-save' | `delete-${number}` | null;
 
 const newProvider = (index: number): AIProviderConfigItem => ({
@@ -91,10 +93,12 @@ const configNavigationItems = [
 const workspaceNavigationItems = [
   { key: 'config', icon: <SettingOutlined />, label: <><span className="nav-label-full">配置管理</span><span className="nav-label-short">配置</span></> },
   { key: 'word-clean', icon: <BookOutlined />, label: <><span className="nav-label-full">去重单词表</span><span className="nav-label-short">词表</span></> },
+  { key: 'agents', icon: <ApartmentOutlined />, label: <><span className="nav-label-full">Agent 工作台</span><span className="nav-label-short">Agent</span></> },
 ];
 
 export default function App() {
   const { message, modal } = AntApp.useApp();
+  const leaveAgentConfirmOpen = useRef(false);
   const [section, setSection] = useState<WorkspaceSection>('config');
   const [tab, setTab] = useState<ConfigTab>('database');
   const [connections, setConnections] = useState<ConnectionConfig[]>([]);
@@ -113,6 +117,7 @@ export default function App() {
   const [selectedCli, setSelectedCli] = useState('');
   const [aiDirty, setAiDirty] = useState(false);
   const [cliDirty, setCliDirty] = useState(false);
+  const [agentDirty, setAgentDirty] = useState(false);
 
   const reload = async () => {
     setLoading(true);
@@ -306,6 +311,31 @@ export default function App() {
         }
       },
     });
+  };
+
+  const changeSection = (nextSection: WorkspaceSection) => {
+    if (nextSection === section) return;
+    if (section === 'agents' && nextSection !== 'agents' && agentDirty) {
+      if (leaveAgentConfirmOpen.current) return;
+      leaveAgentConfirmOpen.current = true;
+      modal.confirm({
+        title: '离开 Agent 工作台？',
+        content: '尚有未保存修改，离开后将丢失。',
+        okText: '确认离开',
+        cancelText: '取消',
+        autoFocusButton: 'cancel',
+        onOk: () => {
+          leaveAgentConfirmOpen.current = false;
+          setAgentDirty(false);
+          setSection(nextSection);
+        },
+        afterClose: () => {
+          leaveAgentConfirmOpen.current = false;
+        },
+      });
+      return;
+    }
+    setSection(nextSection);
   };
 
   const renderDatabase = () => (
@@ -692,9 +722,11 @@ export default function App() {
     </div>
   ) : section === 'word-clean'
     ? <WordCleanPage connections={connections} />
-    : tab === 'database'
-      ? renderDatabase()
-      : renderEditor(tab);
+    : section === 'agents'
+      ? <StoryAgentFlowPage providers={ai.providers} onDirtyChange={setAgentDirty} />
+      : tab === 'database'
+        ? renderDatabase()
+        : renderEditor(tab);
 
   return (
     <Layout className="app-shell">
@@ -710,7 +742,7 @@ export default function App() {
           theme="dark"
           aria-label="主导航"
           selectedKeys={[section]}
-          onClick={({ key }) => setSection(key as WorkspaceSection)}
+          onClick={({ key }) => changeSection(key as WorkspaceSection)}
           items={workspaceNavigationItems}
         />
       </Header>
@@ -725,7 +757,7 @@ export default function App() {
           />
         </nav>
       )}
-      <Layout className={`workspace-layout ${section === 'config' ? 'config-workspace' : 'word-workspace'}`}>
+      <Layout className={`workspace-layout ${section === 'config' ? 'config-workspace' : section === 'agents' ? 'story-workspace' : 'word-workspace'}`}>
         {section === 'config' && (
           <Sider width={264} className="app-sider" aria-label="配置管理导航">
             <div className="sidebar-copy">
@@ -741,7 +773,7 @@ export default function App() {
             />
           </Sider>
         )}
-        <Content className={`app-content ${section === 'word-clean' ? 'word-workspace-content' : ''}`} role="main">{content}</Content>
+        <Content className={`app-content ${section === 'word-clean' ? 'word-workspace-content' : section === 'agents' ? 'story-workspace-content' : ''}`} role="main">{content}</Content>
       </Layout>
 
       <Modal

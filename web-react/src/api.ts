@@ -1,4 +1,11 @@
 import axios from 'axios';
+import type {
+  StoryAgentFlow,
+  StoryAgentNode,
+  StoryAgentUpdate,
+  StoryFlowBudget,
+  StoryPromptVersion,
+} from './story-flow-types';
 
 export interface ApiResponse<T> { code: number; data: T; msg: string; }
 export interface ConnectionConfig { ID?: number; connectionName: string; connectionType: string; connectionUrl: string; databaseName: string; port: number; dbLoginName: string; dbLoginPassword?: string; envName?: string; }
@@ -83,3 +90,15 @@ export const getWordCleanFacets = (connectionId: number) =>
   request.get<ApiResponse<WordCleanFacets>>('/word-clean/facets', { params: { connectionId } }).then(unwrap);
 export const getWordCleanSentences = (connectionId: number, wordCleanId: number) =>
   request.get<ApiResponse<WordCleanSentenceItem[]>>(`/word-clean/${wordCleanId}/sentences`, { params: { connectionId } }).then(unwrap);
+export const getStoryAgentFlow = () =>
+  request.get<ApiResponse<StoryAgentFlow>>('/story-agents/flow').then(unwrap);
+export const updateStoryAgent = (key: string, value: StoryAgentUpdate) =>
+  request.put<ApiResponse<StoryAgentNode>>(`/story-agents/${encodeURIComponent(key)}`, value).then(unwrap);
+export const getStoryAgentVersions = (key: string) =>
+  request.get<ApiResponse<StoryPromptVersion[]>>(`/story-agents/${encodeURIComponent(key)}/versions`).then(unwrap);
+export const restoreStoryAgentVersion = (key: string, version: number) =>
+  request.post<ApiResponse<StoryAgentNode>>(
+    `/story-agents/${encodeURIComponent(key)}/versions/${encodeURIComponent(String(version))}/restore`,
+  ).then(unwrap);
+export const updateStoryFlowBudget = (value: StoryFlowBudget) =>
+  request.put<ApiResponse<StoryFlowBudget>>('/story-agents/flow/config', value).then(unwrap);
