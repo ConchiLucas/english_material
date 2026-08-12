@@ -21,7 +21,7 @@ summary: 说明 Agent 工作台、Spring Boot 配置接口和本地三张故事�
 | `GET /api/story-agents/flow` | 返回 4 个阶段、12 个可编辑 Agent、5 个只读程序/人工节点及预算 |
 | `PUT /api/story-agents/{agentKey}` | 更新 Prompt、AI Provider ID、Temperature、启用状态，并生成新版本 |
 | `GET /api/story-agents/{agentKey}/versions` | 倒序返回指定 Agent 的 Prompt 快照 |
-| `POST /api/story-agents/{agentKey}/versions/{version}/restore` | 复制历史快照并保存为新的最新版本，不删除历史 |
+| `POST /api/story-agents/{agentKey}/versions/{version}/restore` | 请求体携带当前 Agent 的 `updatedAt`，复制历史快照并保存为新的最新版本，不删除历史 |
 | `PUT /api/story-agents/flow/config` | 更新质量轮次、各类回退次数和总 Token 预算 |
 
 `StoryAgentCatalog` 是四阶段拓扑、节点关系、变量和默认 Prompt 的固定定义；5 个 `PROGRAM`/`HUMAN` 节点只读且不能通过 Agent 更新或版本接口修改。
@@ -55,6 +55,6 @@ Agent 工作台
 ## 错误、并发与边界
 
 - 空 Prompt、缺失/停用/不支持文本生成的 Provider、超出 `0` 到 `2` 的 Temperature、非法节点和越界预算由 `StoryAgentService` 拒绝，`ApiExceptionHandler` 返回 `code = 7` 的统一错误响应。
-- Agent 更新携带 `updatedAt` 作为客户端并发前置条件；时间戳过期会提示刷新。`tb_story_agent_config` 另有 JPA `@Version` 锁，写入竞争同样转换为可读错误。流程预算更新当前不携带客户端并发版本，以最后一次成功保存为当前值。
+- Agent 更新和 Prompt 版本恢复都携带目标 Agent 当前的 `updatedAt` 作为客户端并发前置条件；时间戳缺失或过期会提示刷新。版本弹窗恢复时按弹窗所属 Agent key 从最新流程状态读取该时间戳，避免节点切换或并行保存响应造成串台、陈旧恢复。`tb_story_agent_config` 另有 JPA `@Version` 锁，写入竞争同样转换为可读错误。流程预算更新当前不携带客户端并发版本，以最后一次成功保存为当前值。
 - 本链路只写本地配置库，不写外部材料库或 `word_clean` 相关表，不保存 Provider 密钥或完整连接信息。
 - 当前版本没有故事执行引擎、真实生成调用、任务队列、运行状态或运行结果；画布描述的是未来执行所需的配置拓扑，不代表流程已经运行。

@@ -7,6 +7,7 @@ import com.aitaskcenter.dto.StoryAgentDtos.BudgetUpdateRequest;
 import com.aitaskcenter.dto.StoryAgentDtos.BudgetView;
 import com.aitaskcenter.dto.StoryAgentDtos.FlowView;
 import com.aitaskcenter.dto.StoryAgentDtos.PromptVersionView;
+import com.aitaskcenter.dto.StoryAgentDtos.RestoreVersionRequest;
 import com.aitaskcenter.service.StoryAgentService;
 import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -46,8 +47,9 @@ public class StoryAgentController {
     @PostMapping("/{agentKey}/versions/{version}/restore")
     public ApiResponse<AgentView> restore(
             @PathVariable String agentKey,
-            @PathVariable int version) {
-        return ApiResponse.ok(service.restore(agentKey, version), "Prompt 版本已恢复");
+            @PathVariable int version,
+            @RequestBody RestoreVersionRequest request) {
+        return ApiResponse.ok(service.restore(agentKey, version, request.updatedAt()), "Prompt 版本已恢复");
     }
 
     @PutMapping("/flow/config")

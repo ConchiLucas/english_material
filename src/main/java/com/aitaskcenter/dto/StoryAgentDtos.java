@@ -15,6 +15,9 @@ public final class StoryAgentDtos {
             OffsetDateTime updatedAt) {
     }
 
+    public record RestoreVersionRequest(OffsetDateTime updatedAt) {
+    }
+
     public record BudgetUpdateRequest(
             Integer maxQualityRounds,
             Integer maxLocalRevisions,

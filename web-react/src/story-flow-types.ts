@@ -61,3 +61,7 @@ export interface StoryAgentUpdate {
   enabled: boolean;
   updatedAt?: string | null;
 }
+
+export interface StoryAgentRestoreRequest {
+  updatedAt: string | null;
+}

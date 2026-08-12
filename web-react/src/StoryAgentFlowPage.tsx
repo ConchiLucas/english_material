@@ -133,6 +133,7 @@ export default function StoryAgentFlowPage({ providers, onDirtyChange }: StoryAg
   const [budgetDraft, setBudgetDraft] = useState<StoryFlowBudget | null>(null);
   const [budgetSaving, setBudgetSaving] = useState(false);
   const switchConfirmOpen = useRef(false);
+  const flowRef = useRef<StoryAgentFlow | null>(flow);
   const onDirtyChangeRef = useRef(onDirtyChange);
   const selectedKeyRef = useRef(selectedKey);
   const draftRef = useRef(draft);
@@ -208,6 +209,7 @@ export default function StoryAgentFlowPage({ providers, onDirtyChange }: StoryAg
     setLoadError('');
     try {
       const loaded = await getStoryAgentFlow();
+      flowRef.current = loaded;
       setFlow(loaded);
       const nodes = loaded.stages.flatMap((stage) => stage.nodes);
       const initial = nodes.find((node) => node.editable);
@@ -230,13 +232,17 @@ export default function StoryAgentFlowPage({ providers, onDirtyChange }: StoryAg
   }, [loadFlow]);
 
   const mergeNode = useCallback((replacement: StoryAgentNode) => {
-    setFlow((current) => current ? {
+    const current = flowRef.current;
+    if (!current) return;
+    const next = {
       ...current,
       stages: current.stages.map((stage) => ({
         ...stage,
         nodes: stage.nodes.map((node) => node.key === replacement.key ? replacement : node),
       })),
-    } : current);
+    };
+    flowRef.current = next;
+    setFlow(next);
   }, []);
 
   const syncCurrentDraft = useCallback((replacement: StoryAgentNode) => {
@@ -376,7 +382,12 @@ export default function StoryAgentFlowPage({ providers, onDirtyChange }: StoryAg
       onOk: async () => {
         setRestoringVersion(version.version);
         try {
-          const restored = await restoreStoryAgentVersion(key, version.version);
+          const currentNode = flowRef.current?.stages
+            .flatMap((stage) => stage.nodes)
+            .find((node) => node.key === key);
+          const restored = await restoreStoryAgentVersion(key, version.version, {
+            updatedAt: currentNode?.updatedAt ?? null,
+          });
           mergeNode(restored);
           if (selectedKeyRef.current === key) {
             syncCurrentDraft(restored);
@@ -422,7 +433,12 @@ export default function StoryAgentFlowPage({ providers, onDirtyChange }: StoryAg
     setBudgetSaving(true);
     try {
       const saved = await updateStoryFlowBudget(payload);
-      setFlow((current) => current ? { ...current, budget: saved } : current);
+      const current = flowRef.current;
+      if (current) {
+        const next = { ...current, budget: saved };
+        flowRef.current = next;
+        setFlow(next);
+      }
       setBudgetOpen(false);
       message.success('质量预算已保存');
     } catch (error) {

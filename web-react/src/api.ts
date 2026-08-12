@@ -2,6 +2,7 @@ import axios from 'axios';
 import type {
   StoryAgentFlow,
   StoryAgentNode,
+  StoryAgentRestoreRequest,
   StoryAgentUpdate,
   StoryFlowBudget,
   StoryPromptVersion,
@@ -96,9 +97,10 @@ export const updateStoryAgent = (key: string, value: StoryAgentUpdate) =>
   request.put<ApiResponse<StoryAgentNode>>(`/story-agents/${encodeURIComponent(key)}`, value).then(unwrap);
 export const getStoryAgentVersions = (key: string) =>
   request.get<ApiResponse<StoryPromptVersion[]>>(`/story-agents/${encodeURIComponent(key)}/versions`).then(unwrap);
-export const restoreStoryAgentVersion = (key: string, version: number) =>
+export const restoreStoryAgentVersion = (key: string, version: number, value: StoryAgentRestoreRequest) =>
   request.post<ApiResponse<StoryAgentNode>>(
     `/story-agents/${encodeURIComponent(key)}/versions/${encodeURIComponent(String(version))}/restore`,
+    value,
   ).then(unwrap);
 export const updateStoryFlowBudget = (value: StoryFlowBudget) =>
   request.put<ApiResponse<StoryFlowBudget>>('/story-agents/flow/config', value).then(unwrap);

@@ -106,15 +106,24 @@ class StoryAgentControllerTest {
 
     @Test
     void restorePassesAgentKeyAndVersionAndReturnsRestoredAgent() throws Exception {
-        when(service.restore("story-writer", 3)).thenReturn(agent("story-writer"));
+        when(service.restore(eq("story-writer"), eq(3), any(OffsetDateTime.class)))
+                .thenReturn(agent("story-writer"));
 
-        mockMvc.perform(post("/api/story-agents/story-writer/versions/3/restore"))
+        mockMvc.perform(post("/api/story-agents/story-writer/versions/3/restore")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "updatedAt": "2026-08-13T10:15:30+08:00"
+                                }
+                                """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0))
                 .andExpect(jsonPath("$.data.key").value("story-writer"))
                 .andExpect(jsonPath("$.msg").value("Prompt 版本已恢复"));
 
-        verify(service).restore("story-writer", 3);
+        ArgumentCaptor<OffsetDateTime> timestampCaptor = ArgumentCaptor.forClass(OffsetDateTime.class);
+        verify(service).restore(eq("story-writer"), eq(3), timestampCaptor.capture());
+        org.junit.jupiter.api.Assertions.assertEquals(UPDATED_AT.toInstant(), timestampCaptor.getValue().toInstant());
     }
 
     @Test

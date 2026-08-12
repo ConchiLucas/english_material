@@ -597,7 +597,11 @@ describe('StoryAgentFlowPage', () => {
     const confirmButtons = await screen.findAllByRole('button', { name: /确\s*定/ });
     await user.click(confirmButtons.at(-1)!);
 
-    await waitFor(() => expect(apiMocks.restoreStoryAgentVersion).toHaveBeenCalledWith('story-writer', 1));
+    await waitFor(() => expect(apiMocks.restoreStoryAgentVersion).toHaveBeenCalledWith(
+      'story-writer',
+      1,
+      { updatedAt: '2026-08-10T08:00:00Z' },
+    ));
     expect(await screen.findByRole('heading', { name: '故事作家 Agent' })).toBeInTheDocument();
     expect((await screen.findAllByText('Prompt v3')).length).toBeGreaterThan(0);
     expect(screen.getByRole('textbox', { name: 'System Prompt' })).toHaveValue('old writer prompt');
@@ -607,6 +611,12 @@ describe('StoryAgentFlowPage', () => {
     const user = userEvent.setup();
     const writerVersions = deferred<StoryPromptVersion[]>();
     const polisherVersions = deferred<StoryPromptVersion[]>();
+    const flow = makeFlow();
+    const polisher = flow.stages
+      .flatMap((stage) => stage.nodes)
+      .find((node) => node.key === 'targeted-reviser');
+    if (polisher) polisher.updatedAt = '2026-08-13T07:30:00Z';
+    apiMocks.getStoryAgentFlow.mockResolvedValue(flow);
     apiMocks.getStoryAgentVersions
       .mockReturnValueOnce(writerVersions.promise)
       .mockReturnValueOnce(polisherVersions.promise);
@@ -656,7 +666,59 @@ describe('StoryAgentFlowPage', () => {
     await user.click(screen.getByRole('button', { name: '恢复 Prompt v9' }));
     const confirmButtons = await screen.findAllByRole('button', { name: /确\s*定/ });
     await user.click(confirmButtons.at(-1)!);
-    await waitFor(() => expect(apiMocks.restoreStoryAgentVersion).toHaveBeenCalledWith('targeted-reviser', 9));
+    await waitFor(() => expect(apiMocks.restoreStoryAgentVersion).toHaveBeenCalledWith(
+      'targeted-reviser',
+      9,
+      { updatedAt: '2026-08-13T07:30:00Z' },
+    ));
+  });
+
+  it('restores with the latest timestamp after a save resolves while versions are open', async () => {
+    const user = userEvent.setup();
+    const pendingSave = deferred<StoryAgentNode>();
+    apiMocks.updateStoryAgent.mockReturnValue(pendingSave.promise);
+    apiMocks.getStoryAgentVersions.mockResolvedValue([{
+      version: 1,
+      systemPrompt: 'old writer prompt',
+      aiProviderId: 'writer-provider',
+      temperature: 0.5,
+      enabled: true,
+      createdAt: '2026-08-09T08:00:00Z',
+    }]);
+    apiMocks.restoreStoryAgentVersion.mockResolvedValue(agent(
+      'story-writer',
+      '故事作家 Agent',
+      'writing',
+      10,
+      { systemPrompt: 'old writer prompt', promptVersion: 3 },
+    ));
+    renderPage();
+    await openWriter(user);
+
+    const prompt = screen.getByRole('textbox', { name: 'System Prompt' });
+    await user.type(prompt, ' changed');
+    await user.click(screen.getByRole('button', { name: '保存提示词' }));
+    await waitFor(() => expect(apiMocks.updateStoryAgent).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole('button', { name: '查看版本' }));
+    expect(await screen.findByRole('button', { name: '恢复 Prompt v1' })).toBeInTheDocument();
+
+    pendingSave.resolve(agent('story-writer', '故事作家 Agent', 'writing', 10, {
+      systemPrompt: 'writer prompt changed',
+      promptVersion: 2,
+      updatedAt: '2026-08-13T10:30:00Z',
+    }));
+    await waitFor(() => expect(within(screen.getByRole('button', { name: /故事作家 Agent/ }))
+      .getByText('Prompt v2')).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: '恢复 Prompt v1' }));
+    const confirmButtons = await screen.findAllByRole('button', { name: /确\s*定/ });
+    await user.click(confirmButtons.at(-1)!);
+
+    await waitFor(() => expect(apiMocks.restoreStoryAgentVersion).toHaveBeenCalledWith(
+      'story-writer',
+      1,
+      { updatedAt: '2026-08-13T10:30:00Z' },
+    ));
   });
 
   it('updates the quality budget and refreshes the header summary', async () => {

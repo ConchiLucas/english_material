@@ -336,7 +336,7 @@ class StoryAgentServiceTest {
         }).when(configRepository).flush();
 
         List<PromptVersionView> historyBeforeRestore = service.versions("story-writer");
-        AgentView restored = service.restore("story-writer", 2);
+        AgentView restored = service.restore("story-writer", 2, currentUpdatedAt);
 
         assertEquals(1, historyBeforeRestore.size());
         assertEquals(2, historyBeforeRestore.get(0).version());
@@ -367,6 +367,31 @@ class StoryAgentServiceTest {
     }
 
     @Test
+    void restoreRejectsStaleUpdatedAtBeforeWrites() {
+        OffsetDateTime currentUpdatedAt = OffsetDateTime.parse("2026-08-12T10:15:31+08:00");
+        OffsetDateTime requestedUpdatedAt = currentUpdatedAt.minusSeconds(1);
+        StoryAgentConfig current = config(
+                "story-writer", "Current prompt", "text-provider", 0.7, true, 3, currentUpdatedAt);
+        StoryAgentPromptVersion historical = version(
+                "story-writer", 2, "Historical prompt", "text-provider", 0.2, false,
+                requestedUpdatedAt);
+        when(versionRepository.findByAgentKeyAndVersion("story-writer", 2))
+                .thenReturn(Optional.of(historical));
+        when(configRepository.findByAgentKey("story-writer")).thenReturn(Optional.of(current));
+        when(aiConfigService.getProviders()).thenReturn(providerConfig(
+                "text-provider",
+                provider("text-provider", "Text", "text-model", true, "TEXT_GENERATION")));
+
+        IllegalArgumentException stale = assertThrows(IllegalArgumentException.class, () ->
+                service.restore("story-writer", 2, requestedUpdatedAt));
+
+        assertEquals("故事 Agent 配置已被更新，请刷新页面后重试", stale.getMessage());
+        verify(configRepository, never()).save(any());
+        verify(configRepository, never()).flush();
+        verify(versionRepository, never()).save(any());
+    }
+
+    @Test
     void restoreMapsOptimisticConflictBeforeSavingSnapshot() {
         OffsetDateTime updatedAt = OffsetDateTime.parse("2026-08-12T10:15:30+08:00");
         StoryAgentConfig current = config(
@@ -384,7 +409,7 @@ class StoryAgentServiceTest {
                 .when(configRepository).flush();
 
         IllegalArgumentException conflict = assertThrows(IllegalArgumentException.class, () ->
-                service.restore("story-writer", 2));
+                service.restore("story-writer", 2, updatedAt));
 
         assertEquals("故事 Agent 配置已被更新，请刷新页面后重试", conflict.getMessage());
         verify(versionRepository, never()).save(any());
@@ -405,11 +430,11 @@ class StoryAgentServiceTest {
                 provider("audio-provider", "Audio", "tts-model", true, "AUDIO_TTS")));
 
         IllegalArgumentException missing = assertThrows(
-                IllegalArgumentException.class, () -> service.restore("story-writer", 1));
+                IllegalArgumentException.class, () -> service.restore("story-writer", 1, createdAt));
         IllegalArgumentException disabled = assertThrows(
-                IllegalArgumentException.class, () -> service.restore("story-writer", 2));
+                IllegalArgumentException.class, () -> service.restore("story-writer", 2, createdAt));
         IllegalArgumentException nonText = assertThrows(
-                IllegalArgumentException.class, () -> service.restore("story-writer", 3));
+                IllegalArgumentException.class, () -> service.restore("story-writer", 3, createdAt));
 
         assertEquals("AI 配置「missing-provider」不存在", missing.getMessage());
         assertEquals("AI 配置「disabled-provider」未启用", disabled.getMessage());

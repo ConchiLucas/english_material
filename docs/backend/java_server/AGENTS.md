@@ -37,7 +37,7 @@ summary: 维护数据库连接、AI、本地 CLI 与故事 Agent 流程配置，
 | `GET /api/story-agents/flow` | 读取固定四阶段流程、节点配置和质量预算 |
 | `PUT /api/story-agents/{agentKey}` | 保存指定可编辑 Agent 的 Prompt、Provider ID、温度和启用状态 |
 | `GET /api/story-agents/{agentKey}/versions` | 按版本倒序读取 Prompt 历史 |
-| `POST /api/story-agents/{agentKey}/versions/{version}/restore` | 将历史快照恢复为新的最新版本 |
+| `POST /api/story-agents/{agentKey}/versions/{version}/restore` | 携带当前 `updatedAt`，将历史快照恢复为新的最新版本 |
 | `PUT /api/story-agents/flow/config` | 保存质量轮次、回退次数和总 Token 预算 |
 | `/api/word-clean` | 分页查询去重单词 |
 | `/api/word-clean/facets` | 查询难度和来源筛选项 |
@@ -48,7 +48,7 @@ summary: 维护数据库连接、AI、本地 CLI 与故事 Agent 流程配置，
 - 本地配置库由 `TASK_CENTER_DB_URL`、`TASK_CENTER_DB_USER` 和 `TASK_CENTER_DB_PASSWORD` 注入，默认库名为 `english_material`。
 - JPA 在可写的本地配置库中维护 `tb_connection`、`tb_ai_config`、`tb_story_agent_config`、`tb_story_agent_prompt_version` 和 `tb_story_flow_config` 等配置表。
 - 故事 Agent 表只保存 AI Provider ID 字符串，不复制 Provider 详情或密钥，与 `tb_ai_config` 之间没有数据库外键。初始化时如果没有有效的文本生成 Provider，缺失 Agent 的 Provider ID 可以保存为空字符串。
-- 更新 Agent 或恢复 Prompt 版本时，`StoryAgentService` 当下校验 Provider 是否存在、已启用且包含 `TEXT_GENERATION` 能力。之后删除或停用 AI 配置可能使已保存 ID 失效；前端会将其标为不可用并要求重新选择后才能保存。
+- 更新 Agent 或恢复 Prompt 版本时，请求都携带当前 Agent 的 `updatedAt`；`StoryAgentService` 拒绝过期时间戳，并当下校验 Provider 是否存在、已启用且包含 `TEXT_GENERATION` 能力。之后删除或停用 AI 配置可能使已保存 ID 失效；前端会将其标为不可用并要求重新选择后才能保存。
 - 外部材料查询使用 `ConnectionConfigService.openConfiguredConnection` 打开用户选中的连接。
 - `WordCleanService` 只使用参数化 `SELECT` 查询 `word_clean`、`word_clean_sentence`、`word_clean_best_sentence` 和 `word_clean_tts`。
 - 故事 Agent 配置写入只发生在本地配置库，不触碰外部 `word_clean` 材料表；不得把外部连接的写入、DDL 或迁移能力加入材料浏览链路。

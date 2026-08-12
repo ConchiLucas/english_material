@@ -17,6 +17,7 @@ import com.aitaskcenter.model.StoryFlowConfig;
 import com.aitaskcenter.repository.StoryAgentConfigRepository;
 import com.aitaskcenter.repository.StoryAgentPromptVersionRepository;
 import com.aitaskcenter.repository.StoryFlowConfigRepository;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -143,7 +144,7 @@ public class StoryAgentService {
     }
 
     @Transactional
-    public AgentView restore(String key, int version) {
+    public AgentView restore(String key, int version, OffsetDateTime expectedUpdatedAt) {
         NodeDefinition definition = requireEditable(key);
         StoryAgentPromptVersion historical = versionRepository
                 .findByAgentKeyAndVersion(definition.key(), version)
@@ -153,6 +154,7 @@ public class StoryAgentService {
         StoryAgentConfig current = configRepository.findByAgentKey(definition.key())
                 .orElseThrow(() -> new IllegalArgumentException(
                         "故事 Agent 配置「" + definition.key() + "」不存在，请刷新后重试"));
+        requireCurrentTimestamp(current, expectedUpdatedAt);
         current.setSystemPrompt(historical.getSystemPrompt());
         current.setAiProviderId(historical.getAiProviderId());
         current.setTemperature(historical.getTemperature());
