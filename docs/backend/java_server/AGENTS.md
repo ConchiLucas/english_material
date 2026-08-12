@@ -18,7 +18,6 @@ summary: 维护数据库连接、AI 与本地 CLI 配置，并参数化只读查
 - `ConnectionConfigController` 维护可访问的 PostgreSQL、MySQL、SQL Server、Oracle 或 SQLite 连接配置，并提供连接测试和表清单。
 - `AiConfigController` 维护 AI Provider、当前 Provider 和本地 CLI 配置。
 - `WordCleanController` 根据已保存的连接 ID 查询去重单词、筛选项和例句。
-- `AgentController` 维护 Agent 定义、单 Agent 在线测试和最近运行记录；所有 Agent 测试统一使用本地 CLI 配置中当前默认项发起文本生成与独立评分，初始默认项为 Codex CLI。
 - 当前源码没有项目配置、任务配置、任务队列、任务结果或 Python Worker API。
 
 ## HTTP 入口
@@ -36,16 +35,11 @@ summary: 维护数据库连接、AI 与本地 CLI 配置，并参数化只读查
 | `/api/word-clean` | 分页查询去重单词 |
 | `/api/word-clean/facets` | 查询难度和来源筛选项 |
 | `/api/word-clean/{id}/sentences` | 查询指定单词的候选例句 |
-| `/api/agents` | 查询或新增 Agent 定义 |
-| `/api/agents/{id}` | 更新 Agent 定义 |
-| `/api/agents/{id}/test` | 使用 Agent 当前配置运行一次在线测试 |
-| `/api/agents/runs` | 查询最近 100 次单 Agent 测试记录 |
 
 ## 数据边界
 
 - 本地配置库由 `TASK_CENTER_DB_URL`、`TASK_CENTER_DB_USER` 和 `TASK_CENTER_DB_PASSWORD` 注入，默认库名为 `english_material`。
-- JPA 当前维护 `tb_connection`、`tb_ai_config`、`tb_agent_definition` 与 `tb_agent_test_run` 等本地配置和质量记录表。
-- Agent 定义不保存凭据；运行时动态读取本地 CLI 当前默认项，历史 `aiProviderId` 字段仅兼容保存实际执行的 CLI ID。测试运行记录保存输入、输出、结构校验、评分和有界错误信息。
+- JPA 当前维护 `tb_connection` 与 `tb_ai_config` 等本地配置表。
 - 外部材料查询使用 `ConnectionConfigService.openConfiguredConnection` 打开用户选中的连接。
 - `WordCleanService` 只使用参数化 `SELECT` 查询 `word_clean`、`word_clean_sentence`、`word_clean_best_sentence` 和 `word_clean_tts`。
 - 不得把外部连接的写入、DDL 或迁移能力加入材料浏览链路。

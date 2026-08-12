@@ -17,14 +17,13 @@ summary: 提供数据库、AI、本地 CLI 配置和去重单词浏览页面。
 - 配置管理包含数据库配置、AI 配置和本地 CLI 配置。
 - 去重单词表自动优先使用名称或数据库名匹配 `rob_english_word` 的已配置数据源，并支持关键词、教材难度、来源难度、综合难度、排序和分页。
 - 单词详情展示候选例句、评分信息及可用的单词或例句音频。
-- Agent 工作台以单一列表展示 Agent；配置编辑、当前默认本地 CLI、输入/输出 Schema、在线测试和当前 Agent 的运行记录统一收纳在列表操作栏打开的详情抽屉中。页面不再提供独立流程视图或全局运行记录页签；所有 Agent 跟随本地 CLI 配置的当前默认项，当前不包含启用/停用、版本管理、发布或回滚。
 - 前端不包含任务队列、任务执行和 Python Worker 页面。
 
 ## 请求入口
 
 请求统一定义在 `web-react/src/api.ts`。开发环境默认访问 `http://127.0.0.1:18744/api`；容器生产环境使用同源 `/api`。
 
-主要请求包括 `/connection/*`、`/ai/config`、`/ai/cli/config`、`/word-clean*` 和 `/agents*`。
+主要请求包括 `/connection/*`、`/ai/config`、`/ai/cli/config` 和 `/word-clean*`。
 
 ## 部署
 
