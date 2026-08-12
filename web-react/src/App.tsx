@@ -1,5 +1,4 @@
 import {
-  ApartmentOutlined,
   CheckCircleFilled,
   BookOutlined,
   CodeOutlined,
@@ -51,14 +50,13 @@ import {
   testConnectionPayload,
   updateConnection,
 } from './api';
-import AgentWorkspacePage from './AgentWorkspacePage';
 import WordCleanPage from './WordCleanPage';
 
 const { Header, Sider, Content } = Layout;
 const { Title, Text } = Typography;
 
 type ConfigTab = 'database' | 'ai' | 'cli';
-type WorkspaceSection = 'config' | 'word-clean' | 'agents';
+type WorkspaceSection = 'config' | 'word-clean';
 type BusyAction = 'connection-save' | 'connection-test' | 'ai-save' | 'cli-save' | `delete-${number}` | null;
 
 const newProvider = (index: number): AIProviderConfigItem => ({
@@ -93,7 +91,6 @@ const configNavigationItems = [
 const workspaceNavigationItems = [
   { key: 'config', icon: <SettingOutlined />, label: <><span className="nav-label-full">配置管理</span><span className="nav-label-short">配置</span></> },
   { key: 'word-clean', icon: <BookOutlined />, label: <><span className="nav-label-full">去重单词表</span><span className="nav-label-short">词表</span></> },
-  { key: 'agents', icon: <ApartmentOutlined />, label: <><span className="nav-label-full">Agent 工作台</span><span className="nav-label-short">Agent</span></> },
 ];
 
 export default function App() {
@@ -695,8 +692,6 @@ export default function App() {
     </div>
   ) : section === 'word-clean'
     ? <WordCleanPage connections={connections} />
-    : section === 'agents'
-      ? <AgentWorkspacePage cliConfig={cli} />
     : tab === 'database'
       ? renderDatabase()
       : renderEditor(tab);
@@ -730,7 +725,7 @@ export default function App() {
           />
         </nav>
       )}
-      <Layout className={`workspace-layout ${section === 'config' ? 'config-workspace' : section === 'word-clean' ? 'word-workspace' : 'agent-workspace'}`}>
+      <Layout className={`workspace-layout ${section === 'config' ? 'config-workspace' : 'word-workspace'}`}>
         {section === 'config' && (
           <Sider width={264} className="app-sider" aria-label="配置管理导航">
             <div className="sidebar-copy">
@@ -746,7 +741,7 @@ export default function App() {
             />
           </Sider>
         )}
-        <Content className={`app-content ${section === 'word-clean' ? 'word-workspace-content' : section === 'agents' ? 'agent-workspace-content' : ''}`} role="main">{content}</Content>
+        <Content className={`app-content ${section === 'word-clean' ? 'word-workspace-content' : ''}`} role="main">{content}</Content>
       </Layout>
 
       <Modal
