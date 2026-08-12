@@ -122,30 +122,43 @@ export default function App() {
   const reload = async () => {
     setLoading(true);
     setLoadError('');
-    try {
-      const [databaseConnections, providers, commands] = await Promise.all([
-        getConnections(),
-        getAIConfig(),
-        getLocalCliConfig(),
-      ]);
-      setConnections(databaseConnections);
-      setAi(providers);
-      setCli(commands);
-      setSelectedAi((current) =>
-        providers.providers.some((item) => item.id === current)
-          ? current
-          : providers.active || providers.providers[0]?.id || '',
-      );
-      setSelectedCli((current) =>
-        commands.configs.some((item) => item.id === current)
-          ? current
-          : commands.active || commands.configs[0]?.id || '',
-      );
-    } catch {
+    const results = await Promise.all([
+      getConnections().then(
+        (databaseConnections) => {
+          setConnections(databaseConnections);
+          return true;
+        },
+        () => false,
+      ),
+      getAIConfig().then(
+        (providers) => {
+          setAi(providers);
+          setSelectedAi((current) =>
+            providers.providers.some((item) => item.id === current)
+              ? current
+              : providers.active || providers.providers[0]?.id || '',
+          );
+          return true;
+        },
+        () => false,
+      ),
+      getLocalCliConfig().then(
+        (commands) => {
+          setCli(commands);
+          setSelectedCli((current) =>
+            commands.configs.some((item) => item.id === current)
+              ? current
+              : commands.active || commands.configs[0]?.id || '',
+          );
+          return true;
+        },
+        () => false,
+      ),
+    ]);
+    if (results.some((succeeded) => !succeeded)) {
       setLoadError('无法读取配置。请确认后端服务已启动，然后重试。');
-    } finally {
-      setLoading(false);
     }
+    setLoading(false);
   };
 
   useEffect(() => {
@@ -324,6 +337,9 @@ export default function App() {
         okText: '确认离开',
         cancelText: '取消',
         autoFocusButton: 'cancel',
+        onCancel: () => {
+          leaveAgentConfirmOpen.current = false;
+        },
         onOk: () => {
           leaveAgentConfirmOpen.current = false;
           setAgentDirty(false);
@@ -706,7 +722,9 @@ export default function App() {
     );
   };
 
-  const content = loading ? (
+  const content = section === 'agents'
+    ? <StoryAgentFlowPage providers={ai.providers} onDirtyChange={setAgentDirty} />
+    : loading ? (
     <div className="panel-page loading-panel" aria-busy="true" aria-label="正在加载配置">
       <Skeleton active paragraph={{ rows: 8 }} />
     </div>
@@ -722,11 +740,9 @@ export default function App() {
     </div>
   ) : section === 'word-clean'
     ? <WordCleanPage connections={connections} />
-    : section === 'agents'
-      ? <StoryAgentFlowPage providers={ai.providers} onDirtyChange={setAgentDirty} />
-      : tab === 'database'
-        ? renderDatabase()
-        : renderEditor(tab);
+    : tab === 'database'
+      ? renderDatabase()
+      : renderEditor(tab);
 
   return (
     <Layout className="app-shell">
