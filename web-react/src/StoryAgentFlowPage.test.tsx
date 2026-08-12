@@ -401,7 +401,13 @@ describe('StoryAgentFlowPage', () => {
     const user = userEvent.setup();
     const onDirtyChange = vi.fn();
     const pendingSave = deferred<StoryAgentNode>();
-    apiMocks.updateStoryAgent.mockReturnValue(pendingSave.promise);
+    apiMocks.updateStoryAgent
+      .mockReturnValueOnce(pendingSave.promise)
+      .mockResolvedValueOnce(agent('story-writer', '故事作家 Agent', 'writing', 10, {
+        systemPrompt: 'submitted prompt with newer edits',
+        promptVersion: 3,
+        updatedAt: '2026-08-13T10:30:00Z',
+      }));
     renderPage(onDirtyChange);
     await openWriter(user);
 
@@ -423,6 +429,21 @@ describe('StoryAgentFlowPage', () => {
     expect(screen.getByRole('heading', { name: '故事作家 Agent' })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'System Prompt' })).toHaveValue('submitted prompt with newer edits');
     expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+
+    const secondSave = screen.getByRole('button', { name: /保存提示词/ });
+    await waitFor(() => expect(secondSave).not.toHaveClass('ant-btn-loading'));
+    await user.click(secondSave);
+    await waitFor(() => expect(apiMocks.updateStoryAgent).toHaveBeenNthCalledWith(
+      2,
+      'story-writer',
+      expect.objectContaining({
+        systemPrompt: 'submitted prompt with newer edits',
+        updatedAt: '2026-08-13T09:30:00Z',
+      }),
+    ));
+    await waitFor(() => expect(within(screen.getByRole('button', { name: /故事作家 Agent/ }))
+      .getByText('Prompt v3')).toBeInTheDocument());
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
   });
 
   it('merges a late save into its Agent card without leaving the newly selected Agent', async () => {

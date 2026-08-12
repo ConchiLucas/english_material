@@ -316,6 +316,13 @@ export default function StoryAgentFlowPage({ providers, onDirtyChange }: StoryAg
         draftRef.current = savedDraft;
         setDraft(savedDraft);
         setDirty(false);
+      } else if (selectedKeyRef.current === submissionKey && currentDraft) {
+        if (saved.updatedAt?.trim()) {
+          const pendingDraft = { ...currentDraft, updatedAt: saved.updatedAt };
+          draftRef.current = pendingDraft;
+          setDraft(pendingDraft);
+        }
+        setDirty(true);
       }
       message.success('提示词已保存');
     } catch (error) {
