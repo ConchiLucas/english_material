@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test;
 
 class LocalCliGenerationServiceTest {
     @Test
-    void sendsAgentPromptToConfiguredCliThroughStandardInput() {
+    void sendsGenerationPromptToConfiguredCliThroughStandardInput() {
         LocalCliConfigItem cli = new LocalCliConfigItem();
         cli.setId("test-cli");
         cli.setCommand("/bin/cat");
@@ -17,9 +17,9 @@ class LocalCliGenerationServiceTest {
         cli.setTimeoutSeconds(5);
 
         String output = new LocalCliGenerationService().generate(
-                cli, "你是测试 Agent。", "只返回 JSON。", 128);
+                cli, "你是测试生成助手。", "只返回 JSON。", 128);
 
-        assertTrue(output.contains("你是测试 Agent。"));
+        assertTrue(output.contains("你是测试生成助手。"));
         assertTrue(output.contains("只返回 JSON。"));
     }
 }

@@ -26,9 +26,9 @@ public class LocalCliGenerationService {
         Path finalOutput = null;
         Process process = null;
         try {
-            stdout = Files.createTempFile("agent-cli-stdout-", ".log");
-            stderr = Files.createTempFile("agent-cli-stderr-", ".log");
-            finalOutput = Files.createTempFile("agent-cli-result-", ".txt");
+            stdout = Files.createTempFile("generation-cli-stdout-", ".log");
+            stderr = Files.createTempFile("generation-cli-stderr-", ".log");
+            finalOutput = Files.createTempFile("generation-cli-result-", ".txt");
             List<String> command = buildCommand(cli, finalOutput);
             ProcessBuilder builder = new ProcessBuilder(command)
                     .directory(resolveWorkingDirectory(cli).toFile())

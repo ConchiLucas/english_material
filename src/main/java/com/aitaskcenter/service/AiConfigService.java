@@ -55,7 +55,7 @@ public class AiConfigService {
 
     public AiProviderConfigItem getProviderForExecution(String providerId) {
         if (!StringUtils.hasText(providerId)) {
-            throw new IllegalArgumentException("请为 Agent 选择 AI 配置");
+            throw new IllegalArgumentException("请选择 AI 配置");
         }
         return getConfig().getProviders().stream()
                 .filter(provider -> providerId.trim().equals(provider.getId()))
