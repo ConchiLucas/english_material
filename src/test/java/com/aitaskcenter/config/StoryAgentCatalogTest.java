@@ -3,6 +3,7 @@ package com.aitaskcenter.config;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class StoryAgentCatalogTest {
@@ -14,6 +15,10 @@ class StoryAgentCatalogTest {
         assertEquals(12, nodes.stream().filter(StoryAgentCatalog.NodeDefinition::editable).count());
         assertEquals(5, nodes.stream().filter(node -> !node.editable()).count());
         assertEquals(17, nodes.stream().map(StoryAgentCatalog.NodeDefinition::key).distinct().count());
+        assertEquals(
+                Set.of("AGENT", "PROGRAM", "HUMAN"),
+                nodes.stream().map(StoryAgentCatalog.NodeDefinition::nodeKind).collect(java.util.stream.Collectors.toSet()));
+        assertEquals("PROGRAM", StoryAgentCatalog.require("word-pack").nodeKind());
         assertEquals(
                 List.of(
                         "vocabulary-planner",

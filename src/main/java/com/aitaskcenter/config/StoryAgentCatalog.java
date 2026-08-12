@@ -128,7 +128,7 @@ public final class StoryAgentCatalog {
             new NodeDefinition(
                     "word-pack",
                     "Word Pack",
-                    "INPUT",
+                    "PROGRAM",
                     "INPUT",
                     "planning",
                     10,
