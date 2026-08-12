@@ -62,45 +62,6 @@ export interface WordCleanQuery {
   pageSize?: number;
 }
 
-export type AgentCategory = 'planning' | 'creation' | 'review' | 'visual' | 'learning';
-export interface AgentDefinition {
-  ID?: number;
-  CreatedAt?: string;
-  UpdatedAt?: string;
-  agentKey: string;
-  name: string;
-  category: AgentCategory;
-  description: string;
-  aiProviderId: string;
-  systemPrompt: string;
-  promptTemplate: string;
-  inputSchema: string;
-  outputSchema: string;
-  hardRules: string;
-  evaluationRubric: string;
-  temperature: number;
-  maxTokens: number;
-  retryLimit: number;
-  sortOrder: number;
-}
-export interface AgentTestResult {
-  runId: number;
-  agentId: number;
-  agentKey: string;
-  agentName: string;
-  aiProviderId: string;
-  status: 'PASSED' | 'NEEDS_REVISION' | 'NEEDS_REVIEW' | 'FAILED' | 'RUNNING';
-  inputJson: string;
-  outputText: string;
-  schemaValid: boolean;
-  overallScore?: number;
-  dimensionScores: Record<string, number>;
-  issues: string[];
-  durationMs: number;
-  errorMessage: string;
-  createdAt?: string;
-}
-
 const request = axios.create({ baseURL: import.meta.env.VITE_API_BASE || 'http://127.0.0.1:18744/api', timeout: 120000 });
 const unwrap = <T>(response: { data: ApiResponse<T> }) => {
   if (response.data.code !== 0) throw new Error(response.data.msg || '请求失败');
@@ -122,8 +83,3 @@ export const getWordCleanFacets = (connectionId: number) =>
   request.get<ApiResponse<WordCleanFacets>>('/word-clean/facets', { params: { connectionId } }).then(unwrap);
 export const getWordCleanSentences = (connectionId: number, wordCleanId: number) =>
   request.get<ApiResponse<WordCleanSentenceItem[]>>(`/word-clean/${wordCleanId}/sentences`, { params: { connectionId } }).then(unwrap);
-export const getAgents = () => request.get<ApiResponse<AgentDefinition[]>>('/agents').then(unwrap);
-export const createAgent = (value: AgentDefinition) => request.post<ApiResponse<AgentDefinition>>('/agents', value).then(unwrap);
-export const updateAgent = (value: AgentDefinition) => request.put<ApiResponse<AgentDefinition>>(`/agents/${value.ID}`, value).then(unwrap);
-export const testAgent = (id: number, inputJson: string) => request.post<ApiResponse<AgentTestResult>>(`/agents/${id}/test`, { inputJson }).then(unwrap);
-export const getAgentRuns = () => request.get<ApiResponse<AgentTestResult[]>>('/agents/runs').then(unwrap);
