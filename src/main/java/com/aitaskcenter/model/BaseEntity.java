@@ -9,6 +9,7 @@ import jakarta.persistence.MappedSuperclass;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
 
 @MappedSuperclass
 public abstract class BaseEntity {
@@ -30,14 +31,18 @@ public abstract class BaseEntity {
 
     @PrePersist
     void prePersist() {
-        OffsetDateTime now = OffsetDateTime.now();
+        OffsetDateTime now = normalizeTimestamp(OffsetDateTime.now());
         createdAt = now;
         updatedAt = now;
     }
 
     @PreUpdate
     void preUpdate() {
-        updatedAt = OffsetDateTime.now();
+        updatedAt = normalizeTimestamp(OffsetDateTime.now());
+    }
+
+    static OffsetDateTime normalizeTimestamp(OffsetDateTime timestamp) {
+        return timestamp.truncatedTo(ChronoUnit.MICROS);
     }
 
     // 方法：getId
