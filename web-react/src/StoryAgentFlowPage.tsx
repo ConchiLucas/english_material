@@ -86,6 +86,7 @@ const draftsEqual = (left: AgentDraft, right: AgentDraft) => (
   && left.aiProviderId === right.aiProviderId
   && left.temperature === right.temperature
   && left.enabled === right.enabled
+  && left.updatedAt === right.updatedAt
 );
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : '请求失败，请稍后重试';
@@ -122,6 +123,8 @@ export default function StoryAgentFlowPage({ providers, onDirtyChange }: StoryAg
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [versionsOpen, setVersionsOpen] = useState(false);
+  const [versionsAgentKey, setVersionsAgentKey] = useState('');
+  const [versionsAgentName, setVersionsAgentName] = useState('');
   const [versions, setVersions] = useState<StoryPromptVersion[]>([]);
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [versionsError, setVersionsError] = useState('');
@@ -131,6 +134,10 @@ export default function StoryAgentFlowPage({ providers, onDirtyChange }: StoryAg
   const [budgetSaving, setBudgetSaving] = useState(false);
   const switchConfirmOpen = useRef(false);
   const onDirtyChangeRef = useRef(onDirtyChange);
+  const selectedKeyRef = useRef(selectedKey);
+  const draftRef = useRef(draft);
+  const versionsRequestIdRef = useRef(0);
+  const detailRef = useRef<HTMLElement | null>(null);
 
   const allNodes = useMemo(() => flow?.stages.flatMap((stage) => stage.nodes) ?? [], [flow]);
   const selectedNode = useMemo(
@@ -149,10 +156,22 @@ export default function StoryAgentFlowPage({ providers, onDirtyChange }: StoryAg
   }, [onDirtyChange]);
 
   useEffect(() => {
+    selectedKeyRef.current = selectedKey;
+  }, [selectedKey]);
+
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
+
+  useEffect(() => {
     onDirtyChangeRef.current(dirty);
   }, [dirty]);
 
   useEffect(() => () => onDirtyChangeRef.current(false), []);
+
+  useEffect(() => () => {
+    versionsRequestIdRef.current += 1;
+  }, []);
 
   useEffect(() => {
     if (!dirty) return undefined;
@@ -164,11 +183,25 @@ export default function StoryAgentFlowPage({ providers, onDirtyChange }: StoryAg
     return () => window.removeEventListener('beforeunload', preventUnload);
   }, [dirty]);
 
-  const selectNode = useCallback((node: StoryAgentNode) => {
-    setSelectedKey(node.key);
-    setDraft(node.editable ? draftFromNode(node) : null);
-    setDirty(false);
+  const scrollDetailIntoView = useCallback(() => {
+    if (!window.matchMedia('(max-width: 1100px)').matches) return;
+    const behavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+    window.requestAnimationFrame(() => {
+      detailRef.current?.scrollIntoView?.({ behavior, block: 'start' });
+    });
   }, []);
+
+  const selectNode = useCallback((node: StoryAgentNode) => {
+    const nextDraft = node.editable ? draftFromNode(node) : null;
+    versionsRequestIdRef.current += 1;
+    setVersionsOpen(false);
+    selectedKeyRef.current = node.key;
+    draftRef.current = nextDraft;
+    setSelectedKey(node.key);
+    setDraft(nextDraft);
+    setDirty(false);
+    scrollDetailIntoView();
+  }, [scrollDetailIntoView]);
 
   const loadFlow = useCallback(async () => {
     setLoading(true);
@@ -178,8 +211,12 @@ export default function StoryAgentFlowPage({ providers, onDirtyChange }: StoryAg
       setFlow(loaded);
       const nodes = loaded.stages.flatMap((stage) => stage.nodes);
       const initial = nodes.find((node) => node.editable);
-      setSelectedKey(initial?.key ?? '');
-      setDraft(initial ? draftFromNode(initial) : null);
+      const initialKey = initial?.key ?? '';
+      const initialDraft = initial ? draftFromNode(initial) : null;
+      selectedKeyRef.current = initialKey;
+      draftRef.current = initialDraft;
+      setSelectedKey(initialKey);
+      setDraft(initialDraft);
       setDirty(false);
     } catch (error) {
       setLoadError(errorText(error));
@@ -192,7 +229,7 @@ export default function StoryAgentFlowPage({ providers, onDirtyChange }: StoryAg
     void loadFlow();
   }, [loadFlow]);
 
-  const replaceNode = useCallback((replacement: StoryAgentNode) => {
+  const mergeNode = useCallback((replacement: StoryAgentNode) => {
     setFlow((current) => current ? {
       ...current,
       stages: current.stages.map((stage) => ({
@@ -200,14 +237,19 @@ export default function StoryAgentFlowPage({ providers, onDirtyChange }: StoryAg
         nodes: stage.nodes.map((node) => node.key === replacement.key ? replacement : node),
       })),
     } : current);
-    setSelectedKey(replacement.key);
-    setDraft(replacement.editable ? draftFromNode(replacement) : null);
+  }, []);
+
+  const syncCurrentDraft = useCallback((replacement: StoryAgentNode) => {
+    const nextDraft = replacement.editable ? draftFromNode(replacement) : null;
+    draftRef.current = nextDraft;
+    setDraft(nextDraft);
     setDirty(false);
   }, []);
 
   const updateDraft = <K extends keyof AgentDraft>(key: K, value: AgentDraft[K]) => {
     if (!draft || !selectedNode) return;
     const next = { ...draft, [key]: value };
+    draftRef.current = next;
     setDraft(next);
     setDirty(!draftsEqual(next, draftFromNode(selectedNode)));
   };
@@ -239,6 +281,8 @@ export default function StoryAgentFlowPage({ providers, onDirtyChange }: StoryAg
 
   const handleSave = async () => {
     if (!selectedNode || !draft) return;
+    const submissionKey = selectedNode.key;
+    const submissionDraft = { ...draft };
     const prompt = draft.systemPrompt.trim();
     if (!prompt) {
       message.error('System Prompt 不能为空');
@@ -254,14 +298,25 @@ export default function StoryAgentFlowPage({ providers, onDirtyChange }: StoryAg
     }
     setSaving(true);
     try {
-      const saved = await updateStoryAgent(selectedNode.key, {
+      const saved = await updateStoryAgent(submissionKey, {
         systemPrompt: prompt,
         aiProviderId: draft.aiProviderId,
         temperature: draft.temperature,
         enabled: draft.enabled,
         updatedAt: draft.updatedAt,
       });
-      replaceNode(saved);
+      mergeNode(saved);
+      const currentDraft = draftRef.current;
+      if (
+        selectedKeyRef.current === submissionKey
+        && currentDraft
+        && draftsEqual(currentDraft, submissionDraft)
+      ) {
+        const savedDraft = draftFromNode(saved);
+        draftRef.current = savedDraft;
+        setDraft(savedDraft);
+        setDirty(false);
+      }
       message.success('提示词已保存');
     } catch (error) {
       message.error(errorText(error));
@@ -273,24 +328,39 @@ export default function StoryAgentFlowPage({ providers, onDirtyChange }: StoryAg
   const openVersions = async () => {
     if (!selectedNode) return;
     const key = selectedNode.key;
+    const requestId = versionsRequestIdRef.current + 1;
+    versionsRequestIdRef.current = requestId;
+    setVersionsAgentKey(key);
+    setVersionsAgentName(selectedNode.name);
     setVersionsOpen(true);
     setVersions([]);
     setVersionsError('');
     setVersionsLoading(true);
     try {
       const loaded = await getStoryAgentVersions(key);
-      setVersions([...loaded].sort((left, right) => right.version - left.version));
+      if (versionsRequestIdRef.current === requestId) {
+        setVersions([...loaded].sort((left, right) => right.version - left.version));
+      }
     } catch (error) {
-      setVersionsError(errorText(error));
+      if (versionsRequestIdRef.current === requestId) {
+        setVersionsError(errorText(error));
+      }
     } finally {
-      setVersionsLoading(false);
+      if (versionsRequestIdRef.current === requestId) {
+        setVersionsLoading(false);
+      }
     }
   };
 
+  const closeVersions = () => {
+    versionsRequestIdRef.current += 1;
+    setVersionsOpen(false);
+  };
+
   const confirmRestore = (version: StoryPromptVersion) => {
-    if (!selectedNode || restoringVersion !== null) return;
-    const key = selectedNode.key;
-    const dirtyWarning = dirty ? '当前未保存修改也会丢失。' : '';
+    if (!versionsAgentKey || restoringVersion !== null) return;
+    const key = versionsAgentKey;
+    const dirtyWarning = dirty && selectedKeyRef.current === key ? '当前未保存修改也会丢失。' : '';
     modal.confirm({
       title: `恢复 Prompt v${version.version}？`,
       content: `${dirtyWarning}恢复会生成新的最新版本，且不会删除任何历史版本。`,
@@ -300,8 +370,11 @@ export default function StoryAgentFlowPage({ providers, onDirtyChange }: StoryAg
         setRestoringVersion(version.version);
         try {
           const restored = await restoreStoryAgentVersion(key, version.version);
-          replaceNode(restored);
-          setVersionsOpen(false);
+          mergeNode(restored);
+          if (selectedKeyRef.current === key) {
+            syncCurrentDraft(restored);
+          }
+          closeVersions();
           message.success('历史提示词已恢复为最新版本');
         } catch (error) {
           message.error(errorText(error));
@@ -485,7 +558,7 @@ export default function StoryAgentFlowPage({ providers, onDirtyChange }: StoryAg
           ))}
         </div>
 
-        <aside className="story-agent-detail" aria-label="Agent 节点详情">
+        <aside ref={detailRef} className="story-agent-detail" aria-label="Agent 节点详情">
           {selectedNode ? (
             <>
               <div className="story-agent-detail-head">
@@ -581,11 +654,11 @@ export default function StoryAgentFlowPage({ providers, onDirtyChange }: StoryAg
       </div>
 
       <Modal
-        title={selectedNode ? `${selectedNode.name} · 版本历史` : '版本历史'}
+        title={versionsAgentName ? `${versionsAgentName} · 版本历史` : '版本历史'}
         open={versionsOpen}
         width={760}
-        footer={<Button onClick={() => setVersionsOpen(false)}>关闭</Button>}
-        onCancel={() => setVersionsOpen(false)}
+        footer={<Button onClick={closeVersions}>关闭</Button>}
+        onCancel={closeVersions}
         destroyOnHidden
       >
         {versionsLoading ? (

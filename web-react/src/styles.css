@@ -493,7 +493,7 @@ button, input, textarea, select { font: inherit; }
   .story-workbench { overflow-x: visible; }
   .story-workbench-grid { grid-template-columns: minmax(0, 1fr); }
   .story-flow-canvas { min-width: 0; }
-  .story-agent-detail { position: static; }
+  .story-agent-detail { position: static; order: -1; }
 }
 
 @media (max-width: 1023px) {

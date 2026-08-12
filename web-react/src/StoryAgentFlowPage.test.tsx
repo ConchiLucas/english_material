@@ -1,10 +1,10 @@
 import { App as AntApp } from 'antd';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AIProviderConfigItem } from './api';
 import StoryAgentFlowPage from './StoryAgentFlowPage';
-import type { StoryAgentFlow, StoryAgentNode } from './story-flow-types';
+import type { StoryAgentFlow, StoryAgentNode, StoryPromptVersion } from './story-flow-types';
 
 const apiMocks = vi.hoisted(() => ({
   getStoryAgentFlow: vi.fn(),
@@ -13,6 +13,20 @@ const apiMocks = vi.hoisted(() => ({
   restoreStoryAgentVersion: vi.fn(),
   updateStoryFlowBudget: vi.fn(),
 }));
+
+const deferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+};
+
+const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+const originalMatchMedia = window.matchMedia;
+const originalRequestAnimationFrame = window.requestAnimationFrame;
 
 vi.mock('./api', async (importOriginal) => ({
   ...await importOriginal<typeof import('./api')>(),
@@ -52,6 +66,7 @@ const readonlyNode = (
   stageKey: string,
   order: number,
   nodeKind: 'PROGRAM' | 'HUMAN' = 'PROGRAM',
+  overrides: Partial<StoryAgentNode> = {},
 ): StoryAgentNode => ({
   key,
   name,
@@ -64,6 +79,7 @@ const readonlyNode = (
   upstream: [],
   downstream: [],
   editable: false,
+  ...overrides,
 });
 
 const makeFlow = (): StoryAgentFlow => ({
@@ -74,27 +90,62 @@ const makeFlow = (): StoryAgentFlow => ({
       note: '先约束学习目标，再并行提出故事方向。',
       order: 1,
       nodes: [
-        agent('vocabulary-planner', '词汇策划 Agent', 'planning', 1, { downstream: ['pitch-a'] }),
-        agent('pitch-a', '创意提案 A', 'planning', 2, { parallelGroup: 'story-pitches', roleType: 'PITCH' }),
-        agent('pitch-b', '创意提案 B', 'planning', 3, { parallelGroup: 'story-pitches', roleType: 'PITCH' }),
-        agent('pitch-c', '创意提案 C', 'planning', 4, { parallelGroup: 'story-pitches', roleType: 'PITCH' }),
-        readonlyNode('merge-pitches', '创意合并器', 'planning', 5),
-        agent('story-director', '故事导演 Agent', 'planning', 6),
+        readonlyNode('word-pack', 'Word Pack', 'planning', 10, 'PROGRAM', {
+          roleType: 'INPUT',
+          downstream: ['vocabulary-planner'],
+        }),
+        agent('vocabulary-planner', '用词策划 Agent', 'planning', 20, {
+          roleType: 'PLANNER',
+          upstream: ['word-pack', 'quality-decider'],
+          downstream: ['pitch-humor', 'pitch-adventure', 'pitch-wonder'],
+        }),
+        agent('pitch-humor', '幽默创意 Agent', 'planning', 30, {
+          parallelGroup: 'story-pitches',
+          roleType: 'PITCH',
+          upstream: ['vocabulary-planner', 'quality-decider'],
+          downstream: ['story-director'],
+        }),
+        agent('pitch-adventure', '冒险创意 Agent', 'planning', 31, {
+          parallelGroup: 'story-pitches',
+          roleType: 'PITCH',
+          upstream: ['vocabulary-planner', 'quality-decider'],
+          downstream: ['story-director'],
+        }),
+        agent('pitch-wonder', '奇想创意 Agent', 'planning', 32, {
+          parallelGroup: 'story-pitches',
+          roleType: 'PITCH',
+          upstream: ['vocabulary-planner', 'quality-decider'],
+          downstream: ['story-director'],
+        }),
+        agent('story-director', '故事导演 Agent', 'planning', 40, {
+          roleType: 'DIRECTOR',
+          upstream: ['pitch-humor', 'pitch-adventure', 'pitch-wonder', 'quality-decider'],
+          downstream: ['story-writer'],
+        }),
       ],
     },
     {
-      key: 'production',
-      name: '故事生产',
-      note: '写作后执行硬规则检查，再进入语言润色。',
+      key: 'writing',
+      name: '写作与候选',
+      note: '同一主角、同一主线、逐场升级',
       order: 2,
       nodes: [
-        agent('story-writer', '故事作家 Agent', 'production', 1, {
+        agent('story-writer', '故事作家 Agent', 'writing', 10, {
+          roleType: 'WRITER',
           systemPrompt: 'writer prompt',
-          upstream: ['story-director'],
-          downstream: ['hard-rules'],
+          upstream: ['story-director', 'quality-decider'],
+          downstream: ['hard-rule-check'],
         }),
-        readonlyNode('hard-rules', '硬规则校验', 'production', 2),
-        agent('language-polisher', '语言润色 Agent', 'production', 3),
+        readonlyNode('hard-rule-check', '硬规则校验', 'writing', 20, 'PROGRAM', {
+          roleType: 'VALIDATOR',
+          upstream: ['story-writer', 'targeted-reviser'],
+          downstream: ['candidate-snapshot'],
+        }),
+        readonlyNode('candidate-snapshot', '候选版本快照', 'writing', 30, 'PROGRAM', {
+          roleType: 'SNAPSHOT',
+          upstream: ['hard-rule-check'],
+          downstream: ['review-fun', 'review-language', 'review-continuity'],
+        }),
       ],
     },
     {
@@ -103,22 +154,54 @@ const makeFlow = (): StoryAgentFlow => ({
       note: '审核、评分与决策完全分离',
       order: 3,
       nodes: [
-        agent('review-a', '语言审核员', 'quality', 1, { parallelGroup: 'quality-reviewers', roleType: 'SCORER' }),
-        agent('review-b', '教学审核员', 'quality', 2, { parallelGroup: 'quality-reviewers', roleType: 'SCORER' }),
-        agent('review-c', '情节审核员', 'quality', 3, { parallelGroup: 'quality-reviewers', roleType: 'SCORER' }),
-        readonlyNode('review-router', '审核结果路由', 'quality', 4),
-        agent('quality-decider', '质量决策 Agent', 'quality', 5),
+        agent('review-fun', '趣味审核员', 'quality', 10, {
+          parallelGroup: 'quality-reviewers',
+          roleType: 'REVIEWER',
+          upstream: ['candidate-snapshot'],
+          downstream: ['story-scorer'],
+        }),
+        agent('review-language', '语言用词审核员', 'quality', 11, {
+          parallelGroup: 'quality-reviewers',
+          roleType: 'REVIEWER',
+          upstream: ['candidate-snapshot'],
+          downstream: ['story-scorer'],
+        }),
+        agent('review-continuity', '剧情连续性审核员', 'quality', 12, {
+          parallelGroup: 'quality-reviewers',
+          roleType: 'REVIEWER',
+          upstream: ['candidate-snapshot'],
+          downstream: ['story-scorer'],
+        }),
+        agent('story-scorer', '独立评分员', 'quality', 20, {
+          roleType: 'SCORER',
+          upstream: ['review-fun', 'review-language', 'review-continuity'],
+          downstream: ['quality-decider'],
+        }),
+        agent('quality-decider', '质量决策人', 'quality', 30, {
+          roleType: 'DECIDER',
+          upstream: ['story-scorer'],
+          downstream: ['targeted-reviser', 'story-writer', 'story-director'],
+        }),
       ],
     },
     {
       key: 'delivery',
-      name: '交付与人工审核',
-      note: '人工确认最终故事后交付。',
+      name: '修订与交付',
+      note: '通过后进入人工审核',
       order: 4,
       nodes: [
-        agent('final-polisher', '交付润色 Agent', 'delivery', 1),
-        readonlyNode('delivery-gate', '交付门禁', 'delivery', 2),
-        readonlyNode('human-editor', '人工编辑审核', 'delivery', 3, 'HUMAN'),
+        agent('targeted-reviser', '定向修订 Agent', 'delivery', 10, {
+          roleType: 'REVISER',
+          upstream: ['quality-decider'],
+          downstream: ['hard-rule-check'],
+        }),
+        readonlyNode('budget-controller', '确定性预算控制器', 'delivery', 20, 'PROGRAM', {
+          roleType: 'CONTROLLER',
+        }),
+        readonlyNode('human-review', '人工审核', 'delivery', 30, 'HUMAN', {
+          roleType: 'HUMAN_REVIEW',
+          upstream: ['quality-decider'],
+        }),
       ],
     },
   ],
@@ -191,6 +274,29 @@ describe('StoryAgentFlowPage', () => {
     apiMocks.updateStoryFlowBudget.mockReset();
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      writable: true,
+      value: originalMatchMedia,
+    });
+    Object.defineProperty(window, 'requestAnimationFrame', {
+      configurable: true,
+      writable: true,
+      value: originalRequestAnimationFrame,
+    });
+    if (originalScrollIntoView) {
+      Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+        configurable: true,
+        writable: true,
+        value: originalScrollIntoView,
+      });
+    } else {
+      delete (HTMLElement.prototype as { scrollIntoView?: typeof HTMLElement.prototype.scrollIntoView }).scrollIntoView;
+    }
+  });
+
   it('renders four stages and switches prompt details when an Agent is clicked', async () => {
     const user = userEvent.setup();
     renderPage();
@@ -205,6 +311,38 @@ describe('StoryAgentFlowPage', () => {
 
     expect(await screen.findByRole('heading', { name: '故事作家 Agent' })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'System Prompt' })).toHaveValue('writer prompt');
+  });
+
+  it('uses the backend 17-node catalog in its flow fixture', () => {
+    const fixture = makeFlow();
+
+    expect(fixture.stages.map(({ key, name }) => ({ key, name }))).toEqual([
+      { key: 'planning', name: '策划与创意' },
+      { key: 'writing', name: '写作与候选' },
+      { key: 'quality', name: '独立质量委员会' },
+      { key: 'delivery', name: '修订与交付' },
+    ]);
+    expect(fixture.stages.flatMap((stage) => stage.nodes.map((node) => node.key))).toEqual([
+      'word-pack',
+      'vocabulary-planner',
+      'pitch-humor',
+      'pitch-adventure',
+      'pitch-wonder',
+      'story-director',
+      'story-writer',
+      'hard-rule-check',
+      'candidate-snapshot',
+      'review-fun',
+      'review-language',
+      'review-continuity',
+      'story-scorer',
+      'quality-decider',
+      'targeted-reviser',
+      'budget-controller',
+      'human-review',
+    ]);
+    expect(fixture.stages.flatMap((stage) => stage.nodes).filter((node) => node.editable)).toHaveLength(12);
+    expect(fixture.stages.flatMap((stage) => stage.nodes).filter((node) => !node.editable)).toHaveLength(5);
   });
 
   it('labels backend parallel groups and exposes the quality return constraint', async () => {
@@ -232,7 +370,7 @@ describe('StoryAgentFlowPage', () => {
 
   it('saves a changed prompt and keeps the selected Agent visible', async () => {
     const user = userEvent.setup();
-    const savedWriter = agent('story-writer', '故事作家 Agent', 'production', 1, {
+    const savedWriter = agent('story-writer', '故事作家 Agent', 'writing', 10, {
       systemPrompt: 'new writer prompt',
       aiProviderId: 'writer-provider',
       promptVersion: 2,
@@ -259,6 +397,63 @@ describe('StoryAgentFlowPage', () => {
     expect((await screen.findAllByText('Prompt v2')).length).toBeGreaterThan(0);
   });
 
+  it('preserves newer prompt edits when an earlier save resolves', async () => {
+    const user = userEvent.setup();
+    const onDirtyChange = vi.fn();
+    const pendingSave = deferred<StoryAgentNode>();
+    apiMocks.updateStoryAgent.mockReturnValue(pendingSave.promise);
+    renderPage(onDirtyChange);
+    await openWriter(user);
+
+    const prompt = screen.getByRole('textbox', { name: 'System Prompt' });
+    await user.clear(prompt);
+    await user.type(prompt, 'submitted prompt');
+    await user.click(screen.getByRole('button', { name: '保存提示词' }));
+    await waitFor(() => expect(apiMocks.updateStoryAgent).toHaveBeenCalledTimes(1));
+    await user.type(prompt, ' with newer edits');
+
+    pendingSave.resolve(agent('story-writer', '故事作家 Agent', 'writing', 10, {
+      systemPrompt: 'submitted prompt',
+      promptVersion: 2,
+      updatedAt: '2026-08-13T09:30:00Z',
+    }));
+
+    await waitFor(() => expect(within(screen.getByRole('button', { name: /故事作家 Agent/ }))
+      .getByText('Prompt v2')).toBeInTheDocument());
+    expect(screen.getByRole('heading', { name: '故事作家 Agent' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'System Prompt' })).toHaveValue('submitted prompt with newer edits');
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+  });
+
+  it('merges a late save into its Agent card without leaving the newly selected Agent', async () => {
+    const user = userEvent.setup();
+    const pendingSave = deferred<StoryAgentNode>();
+    apiMocks.updateStoryAgent.mockReturnValue(pendingSave.promise);
+    renderPage();
+    await openWriter(user);
+
+    const prompt = screen.getByRole('textbox', { name: 'System Prompt' });
+    await user.clear(prompt);
+    await user.type(prompt, 'submitted prompt');
+    await user.click(screen.getByRole('button', { name: '保存提示词' }));
+    await waitFor(() => expect(apiMocks.updateStoryAgent).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole('button', { name: /定向修订 Agent/ }));
+    const confirmButtons = await screen.findAllByRole('button', { name: /确\s*定/ });
+    await user.click(confirmButtons.at(-1)!);
+    expect(await screen.findByRole('heading', { name: '定向修订 Agent' })).toBeInTheDocument();
+
+    pendingSave.resolve(agent('story-writer', '故事作家 Agent', 'writing', 10, {
+      systemPrompt: 'submitted prompt',
+      promptVersion: 2,
+      updatedAt: '2026-08-13T09:30:00Z',
+    }));
+
+    await waitFor(() => expect(within(screen.getByRole('button', { name: /故事作家 Agent/ }))
+      .getByText('Prompt v2')).toBeInTheDocument());
+    expect(screen.getByRole('heading', { name: '定向修订 Agent' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'System Prompt' })).toHaveValue('targeted-reviser prompt');
+  });
+
   it('confirms before switching a dirty Agent and synchronizes dirty state', async () => {
     const user = userEvent.setup();
     const onDirtyChange = vi.fn();
@@ -268,7 +463,7 @@ describe('StoryAgentFlowPage', () => {
     const prompt = screen.getByRole('textbox', { name: 'System Prompt' });
     await user.type(prompt, ' changed');
     expect(onDirtyChange).toHaveBeenLastCalledWith(true);
-    await user.click(screen.getByRole('button', { name: /语言润色 Agent/ }));
+    await user.click(screen.getByRole('button', { name: /定向修订 Agent/ }));
 
     expect((await screen.findAllByText('切换 Agent？')).length).toBeGreaterThan(0);
     expect(screen.getAllByRole('dialog')).toHaveLength(1);
@@ -276,13 +471,44 @@ describe('StoryAgentFlowPage', () => {
     expect(screen.getByRole('heading', { name: '故事作家 Agent' })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'System Prompt' })).toHaveValue('writer prompt changed');
 
-    await user.click(screen.getByRole('button', { name: /语言润色 Agent/ }));
+    await user.click(screen.getByRole('button', { name: /定向修订 Agent/ }));
     const confirmButtons = await screen.findAllByRole('button', { name: /确\s*定/ });
     await user.click(confirmButtons.at(-1)!);
 
-    expect(await screen.findByRole('heading', { name: '语言润色 Agent' })).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'System Prompt' })).toHaveValue('language-polisher prompt');
+    expect(await screen.findByRole('heading', { name: '定向修订 Agent' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'System Prompt' })).toHaveValue('targeted-reviser prompt');
     expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it('scrolls the detail panel into view after selecting a lower node on a narrow screen', async () => {
+    const user = userEvent.setup();
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      writable: true,
+      value: scrollIntoView,
+    });
+    vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+      matches: query === '(max-width: 1100px)',
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
+    renderPage();
+
+    await screen.findByRole('heading', { name: '策划与创意' });
+    await user.click(screen.getByRole('button', { name: /定向修订 Agent/ }));
+
+    expect(await screen.findByRole('heading', { name: '定向修订 Agent' })).toBeInTheDocument();
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
   });
 
   it('only offers enabled text generation providers and saves the selected provider', async () => {
@@ -331,8 +557,8 @@ describe('StoryAgentFlowPage', () => {
     apiMocks.restoreStoryAgentVersion.mockResolvedValue(agent(
       'story-writer',
       '故事作家 Agent',
-      'production',
-      1,
+      'writing',
+      10,
       { systemPrompt: 'old writer prompt', promptVersion: 3 },
     ));
     renderPage();
@@ -354,6 +580,62 @@ describe('StoryAgentFlowPage', () => {
     expect(await screen.findByRole('heading', { name: '故事作家 Agent' })).toBeInTheDocument();
     expect((await screen.findAllByText('Prompt v3')).length).toBeGreaterThan(0);
     expect(screen.getByRole('textbox', { name: 'System Prompt' })).toHaveValue('old writer prompt');
+  });
+
+  it('ignores a closed Agent version request and restores the currently open Agent history', async () => {
+    const user = userEvent.setup();
+    const writerVersions = deferred<StoryPromptVersion[]>();
+    const polisherVersions = deferred<StoryPromptVersion[]>();
+    apiMocks.getStoryAgentVersions
+      .mockReturnValueOnce(writerVersions.promise)
+      .mockReturnValueOnce(polisherVersions.promise);
+    apiMocks.restoreStoryAgentVersion.mockResolvedValue(agent(
+      'targeted-reviser',
+      '定向修订 Agent',
+      'delivery',
+      10,
+      { systemPrompt: 'polisher restored prompt', promptVersion: 10 },
+    ));
+    renderPage();
+    await openWriter(user);
+
+    await user.click(screen.getByRole('button', { name: '查看版本' }));
+    await waitFor(() => expect(apiMocks.getStoryAgentVersions).toHaveBeenCalledWith('story-writer'));
+    await user.click(screen.getByRole('button', { name: /关\s*闭/ }));
+    await user.click(screen.getByRole('button', { name: /定向修订 Agent/ }));
+    expect(await screen.findByRole('heading', { name: '定向修订 Agent' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '查看版本' }));
+    await waitFor(() => expect(apiMocks.getStoryAgentVersions).toHaveBeenLastCalledWith('targeted-reviser'));
+
+    polisherVersions.resolve([{
+      version: 9,
+      systemPrompt: 'polisher history prompt',
+      aiProviderId: 'writer-provider',
+      temperature: 0.4,
+      enabled: true,
+      createdAt: '2026-08-13T08:00:00Z',
+    }]);
+    expect(await screen.findByText('polisher history prompt')).toBeInTheDocument();
+
+    await act(async () => {
+      writerVersions.resolve([{
+        version: 8,
+        systemPrompt: 'stale writer history prompt',
+        aiProviderId: 'writer-provider',
+        temperature: 0.8,
+        enabled: true,
+        createdAt: '2026-08-12T08:00:00Z',
+      }]);
+      await writerVersions.promise;
+    });
+    expect(screen.queryByText('stale writer history prompt')).not.toBeInTheDocument();
+    expect(screen.getByText('polisher history prompt')).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: /定向修订 Agent · 版本历史/ })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '恢复 Prompt v9' }));
+    const confirmButtons = await screen.findAllByRole('button', { name: /确\s*定/ });
+    await user.click(confirmButtons.at(-1)!);
+    await waitFor(() => expect(apiMocks.restoreStoryAgentVersion).toHaveBeenCalledWith('targeted-reviser', 9));
   });
 
   it('updates the quality budget and refreshes the header summary', async () => {
