@@ -18,7 +18,7 @@ summary: 维护数据库连接、AI、本地 CLI 与故事 Agent 流程配置，
 - `ConnectionConfigController` 维护可访问的 PostgreSQL、MySQL、SQL Server、Oracle 或 SQLite 连接配置，并提供连接测试和表清单。
 - `AiConfigController` 维护 AI Provider、当前 Provider 和本地 CLI 配置。
 - `StoryAgentController` 提供故事 Agent 流程、Prompt 版本和质量预算的配置接口；`StoryAgentService` 负责拼装固定流程、校验可编辑节点与文本生成 Provider、保存 Agent 配置、生成 Prompt 版本快照、恢复历史版本和维护流程预算。
-- `StoryAgentCatalog` 固定定义 4 个阶段、12 个可编辑 Agent 和 5 个只读程序/人工节点；`StoryAgentInitializer` 启动时只补齐缺失的 Agent、初始版本和默认流程预算，不覆盖已有配置。
+- `StoryAgentCatalog` 固定定义 4 个阶段、12 个可编辑 Agent 和 5 个只读程序/人工节点；`StoryAgentInitializer` 启动时只在某个 Agent 配置缺失时创建该配置及其 v1 快照，已有 Agent 即使缺少历史快照也不补建；默认流程预算缺失时才创建，且不覆盖已有配置。
 - `WordCleanController` 根据已保存的连接 ID 查询去重单词、筛选项和例句。
 - 本版 Story Agent 能力只管理配置，不运行或生成故事，也没有执行引擎、任务队列、运行记录、任务结果或 Python Worker API。
 
@@ -47,7 +47,8 @@ summary: 维护数据库连接、AI、本地 CLI 与故事 Agent 流程配置，
 
 - 本地配置库由 `TASK_CENTER_DB_URL`、`TASK_CENTER_DB_USER` 和 `TASK_CENTER_DB_PASSWORD` 注入，默认库名为 `english_material`。
 - JPA 在可写的本地配置库中维护 `tb_connection`、`tb_ai_config`、`tb_story_agent_config`、`tb_story_agent_prompt_version` 和 `tb_story_flow_config` 等配置表。
-- 故事 Agent 表只引用现有 `tb_ai_config` 中的 AI Provider ID；Provider 的具体配置仍由 AI 配置链路管理，不复制到故事 Agent 表。
+- 故事 Agent 表只保存 AI Provider ID 字符串，不复制 Provider 详情或密钥，与 `tb_ai_config` 之间没有数据库外键。初始化时如果没有有效的文本生成 Provider，缺失 Agent 的 Provider ID 可以保存为空字符串。
+- 更新 Agent 或恢复 Prompt 版本时，`StoryAgentService` 当下校验 Provider 是否存在、已启用且包含 `TEXT_GENERATION` 能力。之后删除或停用 AI 配置可能使已保存 ID 失效；前端会将其标为不可用并要求重新选择后才能保存。
 - 外部材料查询使用 `ConnectionConfigService.openConfiguredConnection` 打开用户选中的连接。
 - `WordCleanService` 只使用参数化 `SELECT` 查询 `word_clean`、`word_clean_sentence`、`word_clean_best_sentence` 和 `word_clean_tts`。
 - 故事 Agent 配置写入只发生在本地配置库，不触碰外部 `word_clean` 材料表；不得把外部连接的写入、DDL 或迁移能力加入材料浏览链路。

@@ -9,7 +9,7 @@ summary: 说明 Agent 工作台、Spring Boot 配置接口和本地三张故事�
 
 - `web-react/src/App.tsx` 提供一级“Agent 工作台”入口，并把现有 AI Provider 列表传给 `StoryAgentFlowPage`。
 - `web-react/src/StoryAgentFlowPage.tsx` 渲染固定四阶段可点击画布；右侧是页面内联、非 Drawer 的 Prompt 配置中心，展示 Provider、Temperature、启用状态、上下游、动态变量和当前版本。
-- 版本历史与质量预算使用弹窗；切换节点、离开工作台或刷新/关闭浏览器时保护未保存编辑。响应式样式在窄屏把详情、画布节点和预算表单改为纵向或单列布局。
+- 版本历史与质量预算使用弹窗；未保存的 Agent 配置/Prompt 编辑在切换节点、离开工作台或刷新/关闭浏览器时受到保护。质量预算弹窗关闭时会丢弃其中未保存的草稿，不属于该保护范围。响应式样式在窄屏把详情、画布节点和预算表单改为纵向或单列布局。
 - 本页不支持增删 Agent、拖拽拓扑、查看运行记录或触发真实故事生成。
 
 ## 后端类与接口
@@ -30,11 +30,13 @@ summary: 说明 Agent 工作台、Spring Boot 配置接口和本地三张故事�
 
 | 本地配置表 | 用途 |
 | --- | --- |
-| `tb_story_agent_config` | 12 个可编辑 Agent 的当前 Prompt、Provider ID、Temperature、启用状态和版本号 |
-| `tb_story_agent_prompt_version` | 每次初始创建、有效更新或恢复产生的 Prompt 快照 |
+| `tb_story_agent_config` | 12 个可编辑 Agent 的当前 Prompt、Provider ID 字符串、Temperature、启用状态和版本号 |
+| `tb_story_agent_prompt_version` | Agent 初始创建、有效更新或恢复产生的 Prompt 快照 |
 | `tb_story_flow_config` | 默认故事流程的质量与 Token 预算 |
 
-`StoryAgentInitializer` 在应用启动时调用 `StoryAgentService.initializeDefaults()`：只为缺失 Agent 创建默认配置和 v1 快照，只在缺少默认流程配置时创建预算，不覆盖已经保存的记录。Provider 选择和保存只引用现有 `tb_ai_config` 的 Provider ID；更新或恢复前必须确认该 Provider 已启用且支持文本生成。
+`StoryAgentInitializer` 在应用启动时调用 `StoryAgentService.initializeDefaults()`：只在某个 Agent 配置缺失时创建该配置及其 v1 快照；已有 Agent 即使历史快照缺失也不补建。默认流程预算缺失时才创建，且不覆盖已经保存的记录。
+
+故事 Agent 配置和版本表只保存 Provider ID 字符串，不复制 Provider 详情或密钥，与 `tb_ai_config` 之间没有数据库外键。初始化时如果找不到有效文本生成 Provider，缺失 Agent 的 Provider ID 可以保存为空字符串；更新 Agent 或恢复版本时，服务才按当下的 AI 配置确认 Provider 存在、已启用且支持 `TEXT_GENERATION`。之后删除或停用 AI 配置会使已保存 ID 失效，前端将其显示为不可用并要求重新选择后才能保存。
 
 ## 数据流
 
