@@ -282,4 +282,3 @@ Expected: 测试与生产构建成功。
 Run: `git status --short && git log -8 --oneline`
 
 Expected: 工作区干净，删除相关提交存在。
-
