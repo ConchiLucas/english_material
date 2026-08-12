@@ -43,6 +43,20 @@ class StoryAgentCatalogTest {
                         .toList());
         assertEquals(
                 List.of(
+                        "目标词到三个匿名提案",
+                        "同一主角、同一主线、逐场升级",
+                        "审核、评分与决策完全分离",
+                        "通过后进入人工审核"),
+                StoryAgentCatalog.stages().stream()
+                        .map(StoryAgentCatalog.StageDefinition::note)
+                        .toList());
+        assertEquals(
+                List.of(1, 2, 3, 4),
+                StoryAgentCatalog.stages().stream()
+                        .map(StoryAgentCatalog.StageDefinition::order)
+                        .toList());
+        assertEquals(
+                List.of(
                         "targeted-reviser",
                         "story-writer",
                         "story-director",

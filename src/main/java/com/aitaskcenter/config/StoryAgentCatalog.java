@@ -119,10 +119,10 @@ public final class StoryAgentCatalog {
             """.strip();
 
     private static final List<StageDefinition> STAGES = List.of(
-            new StageDefinition("planning", "策划与创意", 1),
-            new StageDefinition("writing", "写作与候选", 2),
-            new StageDefinition("quality", "独立质量委员会", 3),
-            new StageDefinition("delivery", "修订与交付", 4));
+            new StageDefinition("planning", "策划与创意", "目标词到三个匿名提案", 1),
+            new StageDefinition("writing", "写作与候选", "同一主角、同一主线、逐场升级", 2),
+            new StageDefinition("quality", "独立质量委员会", "审核、评分与决策完全分离", 3),
+            new StageDefinition("delivery", "修订与交付", "通过后进入人工审核", 4));
 
     private static final List<NodeDefinition> NODES = List.of(
             new NodeDefinition(
@@ -435,10 +435,11 @@ public final class StoryAgentCatalog {
         return node;
     }
 
-    public record StageDefinition(String key, String name, int order) {
+    public record StageDefinition(String key, String name, String note, int order) {
         public StageDefinition {
             Objects.requireNonNull(key, "key");
             Objects.requireNonNull(name, "name");
+            Objects.requireNonNull(note, "note");
         }
     }
 
