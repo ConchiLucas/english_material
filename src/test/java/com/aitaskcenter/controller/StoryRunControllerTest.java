@@ -4,6 +4,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -12,6 +13,7 @@ import com.aitaskcenter.dto.StoryRunDtos.RunStepView;
 import com.aitaskcenter.dto.StoryRunDtos.RunSummary;
 import com.aitaskcenter.dto.StoryRunDtos.StoryWord;
 import com.aitaskcenter.service.StoryRunQueryService;
+import com.aitaskcenter.service.StoryWordSourceService;
 import java.time.OffsetDateTime;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -21,14 +23,34 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 class StoryRunControllerTest {
     private StoryRunQueryService service;
+    private StoryWordSourceService wordSourceService;
     private MockMvc mockMvc;
 
     @BeforeEach
     void setUp() {
         service = mock(StoryRunQueryService.class);
-        mockMvc = MockMvcBuilders.standaloneSetup(new StoryRunController(service))
+        wordSourceService = mock(StoryWordSourceService.class);
+        mockMvc = MockMvcBuilders.standaloneSetup(new StoryRunController(service, wordSourceService))
                 .setControllerAdvice(new ApiExceptionHandler())
                 .build();
+    }
+
+    @Test
+    void previewsRandomWordsFromSavedConnection() throws Exception {
+        when(wordSourceService.randomWords(9L, 21L, 20)).thenReturn(List.of(
+                new StoryWord("book", "书"),
+                new StoryWord("green", "绿色")));
+
+        mockMvc.perform(post("/api/story-runs/random-words")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"connectionId":9,"libraryId":21,"count":20}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].word").value("book"))
+                .andExpect(jsonPath("$.data[1].meaning").value("绿色"));
+
+        verify(wordSourceService).randomWords(9L, 21L, 20);
     }
 
     @Test

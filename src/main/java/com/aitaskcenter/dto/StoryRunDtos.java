@@ -10,6 +10,12 @@ public final class StoryRunDtos {
     public record StoryWord(String word, String meaning) {
     }
 
+    public record RandomWordsRequest(Long connectionId, Long libraryId, Integer count) {
+    }
+
+    public record WordLibraryView(Long id, String name, String meaning, int wordCount) {
+    }
+
     public record RunSummary(
             String runId,
             List<StoryWord> words,
