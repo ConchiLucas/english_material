@@ -20,17 +20,24 @@ import {
   restoreStoryAgentVersion,
   updateStoryAgent,
   updateStoryFlowBudget,
+  createStoryRun,
+  getStoryWordLibraries,
+  previewRandomStoryWords,
 } from './api';
-import type { AIProviderConfigItem } from './api';
+import StoryRunHistory from './StoryRunHistory';
+import type { AIProviderConfigItem, ConnectionConfig } from './api';
 import type {
   StoryAgentFlow,
   StoryAgentNode,
   StoryFlowBudget,
   StoryPromptVersion,
+  StoryWord,
+  StoryWordLibrary,
 } from './story-flow-types';
 
 interface StoryAgentFlowPageProps {
   providers: AIProviderConfigItem[];
+  connections?: ConnectionConfig[];
   onDirtyChange: (dirty: boolean) => void;
 }
 
@@ -113,7 +120,7 @@ const providerLabel = (provider: AIProviderConfigItem) => {
   return provider.model ? `${name} · ${provider.model}` : name;
 };
 
-export default function StoryAgentFlowPage({ providers, onDirtyChange }: StoryAgentFlowPageProps) {
+export default function StoryAgentFlowPage({ providers, connections = [], onDirtyChange }: StoryAgentFlowPageProps) {
   const { message, modal } = AntApp.useApp();
   const [flow, setFlow] = useState<StoryAgentFlow | null>(null);
   const [selectedKey, setSelectedKey] = useState('');
@@ -132,6 +139,18 @@ export default function StoryAgentFlowPage({ providers, onDirtyChange }: StoryAg
   const [budgetOpen, setBudgetOpen] = useState(false);
   const [budgetDraft, setBudgetDraft] = useState<StoryFlowBudget | null>(null);
   const [budgetSaving, setBudgetSaving] = useState(false);
+  const [startOpen, setStartOpen] = useState(false);
+  const [startMode, setStartMode] = useState<'manual' | 'random'>('manual');
+  const [targetGrade, setTargetGrade] = useState('三年级上册');
+  const [manualWords, setManualWords] = useState('');
+  const [connectionId, setConnectionId] = useState<number | null>(null);
+  const [libraryId, setLibraryId] = useState<number | null>(null);
+  const [randomCount, setRandomCount] = useState(20);
+  const [libraries, setLibraries] = useState<StoryWordLibrary[]>([]);
+  const [previewWords, setPreviewWords] = useState<StoryWord[]>([]);
+  const [startLoading, setStartLoading] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyRunId, setHistoryRunId] = useState<string>();
   const switchConfirmOpen = useRef(false);
   const flowRef = useRef<StoryAgentFlow | null>(flow);
   const onDirtyChangeRef = useRef(onDirtyChange);
@@ -448,6 +467,52 @@ export default function StoryAgentFlowPage({ providers, onDirtyChange }: StoryAg
     }
   };
 
+  const parseManualWords = () => manualWords.split(/\n+/).map((line) => line.trim()).filter(Boolean).map((line) => {
+    const [word, ...meaning] = line.split(/[\s,，]+/);
+    return { word, meaning: meaning.join(' ') };
+  });
+
+  const loadLibraries = async (value: number) => {
+    setConnectionId(value);
+    setLibraryId(null);
+    setLibraries(await getStoryWordLibraries(value));
+  };
+
+  const previewRandom = async () => {
+    if (!connectionId || !libraryId) {
+      message.error('请填写数据库连接 ID 并选择词库');
+      return;
+    }
+    setStartLoading(true);
+    try {
+      setPreviewWords(await previewRandomStoryWords({ connectionId, libraryId, count: randomCount }));
+    } catch (error) {
+      message.error(errorText(error));
+    } finally {
+      setStartLoading(false);
+    }
+  };
+
+  const createRun = async () => {
+    const words = startMode === 'manual' ? parseManualWords() : previewWords;
+    if (!words.length) {
+      message.error(startMode === 'manual' ? '请至少输入 1 个单词' : '请先随机抽取单词');
+      return;
+    }
+    setStartLoading(true);
+    try {
+      const created = await createStoryRun({ words, targetGrade });
+      setStartOpen(false);
+      setHistoryRunId(created.runId);
+      setHistoryOpen(true);
+      message.success('运行批次已创建');
+    } catch (error) {
+      message.error(errorText(error));
+    } finally {
+      setStartLoading(false);
+    }
+  };
+
   const relatedNames = (keys: string[]) => (
     keys.length ? keys.map((key) => nodeNames.get(key) ?? key).join('、') : '无'
   );
@@ -550,7 +615,7 @@ export default function StoryAgentFlowPage({ providers, onDirtyChange }: StoryAg
         <div className="story-workbench-title">
           <span className="story-workbench-eyebrow">STORY AGENT ORCHESTRATION</span>
           <h2>英文故事 Agent 流转工作台</h2>
-          <p>配置多 Agent 如何层层协作；本版只管理流程与 Prompt，不执行故事。</p>
+          <p>配置多 Agent 如何层层协作，并启动真实故事生成。</p>
         </div>
         <div className="story-workbench-summary">
           <div className="story-workbench-stats" aria-label="流程统计">
@@ -558,7 +623,11 @@ export default function StoryAgentFlowPage({ providers, onDirtyChange }: StoryAg
             <span>{`${readonlyCount} 个程序 / 人工节点`}</span>
             <span>{`最多 ${flow.budget.maxQualityRounds} 轮 · ${flow.budget.maxTotalTokens.toLocaleString('en-US')} Token`}</span>
           </div>
-          <Button type="primary" onClick={openBudget}>质量预算</Button>
+          <div className="story-workbench-actions">
+            <Button onClick={() => setHistoryOpen(true)}>运行记录</Button>
+            <Button onClick={openBudget}>质量预算</Button>
+            <Button type="primary" onClick={() => setStartOpen(true)}>开始运行</Button>
+          </div>
         </div>
       </header>
 
@@ -755,6 +824,50 @@ export default function StoryAgentFlowPage({ providers, onDirtyChange }: StoryAg
           </Form>
         )}
       </Modal>
+
+      <Modal
+        title="开始运行"
+        open={startOpen}
+        onCancel={() => setStartOpen(false)}
+        footer={[
+          <Button key="cancel" onClick={() => setStartOpen(false)}>取消</Button>,
+          <Button key="create" type="primary" loading={startLoading} onClick={() => void createRun()}>创建并运行</Button>,
+        ]}
+      >
+        <Form layout="vertical">
+          <Form.Item label="目标年级"><Input aria-label="目标年级" value={targetGrade} onChange={(event) => setTargetGrade(event.target.value)} /></Form.Item>
+          <Form.Item label="单词来源">
+            <Select aria-label="单词来源" value={startMode} onChange={(value) => setStartMode(value)} options={[
+              { value: 'manual', label: '手动输入' }, { value: 'random', label: '从词库随机抽取' },
+            ]} />
+          </Form.Item>
+          {startMode === 'manual' ? (
+            <Form.Item label="目标单词" extra="每行一个：单词 空格 中文含义">
+              <Input.TextArea aria-label="目标单词" rows={10} value={manualWords} onChange={(event) => setManualWords(event.target.value)} />
+            </Form.Item>
+          ) : (
+            <>
+              <Form.Item label="数据库连接">
+                <Select
+                  aria-label="数据库连接"
+                  value={connectionId ?? undefined}
+                  onChange={(value) => void loadLibraries(value)}
+                  options={connections.filter((item) => item.ID).map((item) => ({
+                    value: item.ID!, label: `${item.connectionName} · ${item.databaseName}`,
+                  }))}
+                  placeholder="选择保存的单词数据库连接"
+                />
+              </Form.Item>
+              <Form.Item label="词库"><Select aria-label="词库" value={libraryId ?? undefined} onChange={setLibraryId} options={libraries.map((item) => ({ value: item.id, label: item.meaning ? `${item.name} · ${item.meaning}` : item.name }))} /></Form.Item>
+              <Form.Item label="随机数量"><InputNumber aria-label="随机数量" min={1} max={50} value={randomCount} onChange={(value) => setRandomCount(value ?? 20)} /></Form.Item>
+              <Button loading={startLoading} onClick={() => void previewRandom()}>随机抽取</Button>
+              <div className="story-run-preview">{previewWords.map((word) => <Tag key={word.word}>{word.word}</Tag>)}</div>
+            </>
+          )}
+        </Form>
+      </Modal>
+
+      <StoryRunHistory open={historyOpen} initialRunId={historyRunId} onClose={() => setHistoryOpen(false)} />
     </section>
   );
 }

@@ -723,7 +723,7 @@ export default function App() {
   };
 
   const content = section === 'agents'
-    ? <StoryAgentFlowPage providers={ai.providers} onDirtyChange={setAgentDirty} />
+    ? <StoryAgentFlowPage providers={ai.providers} connections={connections} onDirtyChange={setAgentDirty} />
     : loading ? (
     <div className="panel-page loading-panel" aria-busy="true" aria-label="正在加载配置">
       <Skeleton active paragraph={{ rows: 8 }} />

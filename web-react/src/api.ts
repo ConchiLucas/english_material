@@ -6,6 +6,10 @@ import type {
   StoryAgentUpdate,
   StoryFlowBudget,
   StoryPromptVersion,
+  StoryRunDetail,
+  StoryRunSummary,
+  StoryWord,
+  StoryWordLibrary,
 } from './story-flow-types';
 
 export interface ApiResponse<T> { code: number; data: T; msg: string; }
@@ -104,3 +108,11 @@ export const restoreStoryAgentVersion = (key: string, version: number, value: St
   ).then(unwrap);
 export const updateStoryFlowBudget = (value: StoryFlowBudget) =>
   request.put<ApiResponse<StoryFlowBudget>>('/story-agents/flow/config', value).then(unwrap);
+export const getStoryRuns = () => request.get<ApiResponse<StoryRunSummary[]>>('/story-runs').then(unwrap);
+export const getStoryRun = (runId: string) => request.get<ApiResponse<StoryRunDetail>>(`/story-runs/${encodeURIComponent(runId)}`).then(unwrap);
+export const createStoryRun = (value: { words: StoryWord[]; targetGrade: string }) =>
+  request.post<ApiResponse<StoryRunSummary>>('/story-runs', value).then(unwrap);
+export const getStoryWordLibraries = (connectionId: number) =>
+  request.get<ApiResponse<StoryWordLibrary[]>>('/story-runs/word-libraries', { params: { connectionId } }).then(unwrap);
+export const previewRandomStoryWords = (value: { connectionId: number; libraryId: number; count: number }) =>
+  request.post<ApiResponse<StoryWord[]>>('/story-runs/random-words', value).then(unwrap);

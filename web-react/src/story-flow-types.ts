@@ -65,3 +65,39 @@ export interface StoryAgentUpdate {
 export interface StoryAgentRestoreRequest {
   updatedAt: string | null;
 }
+
+export interface StoryWord { word: string; meaning: string; }
+export interface StoryWordLibrary { id: number; name: string; meaning: string; wordCount: number; }
+export interface StoryRunSummary {
+  runId: string;
+  words: StoryWord[];
+  targetGrade: string;
+  status: string;
+  totalTokens: number;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+export interface StoryRunStep {
+  id: number;
+  sequence: number;
+  qualityRound: number;
+  agentKey: string;
+  agentName: string;
+  promptVersion: number;
+  providerId: string;
+  providerModel: string;
+  inputJson: string;
+  outputText: string;
+  status: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  durationMs: number;
+  createdAt: string;
+}
+export interface StoryRunDetail extends StoryRunSummary {
+  finalStory: string | null;
+  errorMessage: string | null;
+  steps: StoryRunStep[];
+}

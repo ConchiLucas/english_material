@@ -12,6 +12,11 @@ const apiMocks = vi.hoisted(() => ({
   getStoryAgentVersions: vi.fn(),
   restoreStoryAgentVersion: vi.fn(),
   updateStoryFlowBudget: vi.fn(),
+  createStoryRun: vi.fn(),
+  getStoryRuns: vi.fn(),
+  getStoryRun: vi.fn(),
+  getStoryWordLibraries: vi.fn(),
+  previewRandomStoryWords: vi.fn(),
 }));
 
 const deferred = <T,>() => {
@@ -745,6 +750,32 @@ describe('StoryAgentFlowPage', () => {
       maxTotalTokens: 120000,
     }));
     expect(await screen.findByText('最多 5 轮 · 120,000 Token')).toBeInTheDocument();
+  });
+
+  it('opens start-run dialog and creates a run from manual words', async () => {
+    const user = userEvent.setup();
+    apiMocks.createStoryRun.mockResolvedValue({
+      runId: 'run-created', words: [{ word: 'book', meaning: '书' }], targetGrade: '三年级上册',
+      status: 'QUEUED', totalTokens: 0, createdAt: '2026-08-13T20:00:00Z', startedAt: null, finishedAt: null,
+    });
+    apiMocks.getStoryRuns.mockResolvedValue([]);
+    apiMocks.getStoryRun.mockResolvedValue({
+      runId: 'run-created', words: [{ word: 'book', meaning: '书' }], targetGrade: '三年级上册',
+      status: 'QUEUED', totalTokens: 0, createdAt: '2026-08-13T20:00:00Z', startedAt: null, finishedAt: null,
+      finalStory: null, errorMessage: null, steps: [],
+    });
+    renderPage();
+    await screen.findByRole('heading', { name: '策划与创意' });
+
+    await user.click(screen.getByRole('button', { name: '开始运行' }));
+    await user.type(screen.getByRole('textbox', { name: '目标单词' }), 'book 书\ngreen 绿色');
+    await user.click(screen.getByRole('button', { name: '创建并运行' }));
+
+    await waitFor(() => expect(apiMocks.createStoryRun).toHaveBeenCalledWith({
+      targetGrade: '三年级上册',
+      words: [{ word: 'book', meaning: '书' }, { word: 'green', meaning: '绿色' }],
+    }));
+    expect(await screen.findByRole('dialog', { name: '故事运行记录' })).toBeInTheDocument();
   });
 
   it('shows a load failure and reloads the flow on request', async () => {
