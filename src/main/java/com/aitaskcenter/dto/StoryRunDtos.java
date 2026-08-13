@@ -13,6 +13,9 @@ public final class StoryRunDtos {
     public record RandomWordsRequest(Long connectionId, Long libraryId, Integer count) {
     }
 
+    public record StartRunRequest(List<StoryWord> words, String targetGrade) {
+    }
+
     public record WordLibraryView(Long id, String name, String meaning, int wordCount) {
     }
 

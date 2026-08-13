@@ -1,6 +1,7 @@
 package com.aitaskcenter.controller;
 
 import static org.mockito.Mockito.mock;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -13,6 +14,7 @@ import com.aitaskcenter.dto.StoryRunDtos.RunStepView;
 import com.aitaskcenter.dto.StoryRunDtos.RunSummary;
 import com.aitaskcenter.dto.StoryRunDtos.StoryWord;
 import com.aitaskcenter.service.StoryRunQueryService;
+import com.aitaskcenter.service.StoryRunExecutionService;
 import com.aitaskcenter.service.StoryWordSourceService;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -24,15 +26,33 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 class StoryRunControllerTest {
     private StoryRunQueryService service;
     private StoryWordSourceService wordSourceService;
+    private StoryRunExecutionService executionService;
     private MockMvc mockMvc;
 
     @BeforeEach
     void setUp() {
         service = mock(StoryRunQueryService.class);
         wordSourceService = mock(StoryWordSourceService.class);
-        mockMvc = MockMvcBuilders.standaloneSetup(new StoryRunController(service, wordSourceService))
+        executionService = mock(StoryRunExecutionService.class);
+        mockMvc = MockMvcBuilders.standaloneSetup(new StoryRunController(service, wordSourceService, executionService))
                 .setControllerAdvice(new ApiExceptionHandler())
                 .build();
+    }
+
+    @Test
+    void createsAStoryRunFromExplicitWords() throws Exception {
+        when(executionService.createRun(any())).thenReturn(summary("run-created"));
+
+        mockMvc.perform(post("/api/story-runs")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"targetGrade":"三年级上册","words":[{"word":"book","meaning":"书"}]}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.runId").value("run-created"))
+                .andExpect(jsonPath("$.msg").value("运行批次已创建"));
+
+        verify(executionService).createRun(any());
     }
 
     @Test

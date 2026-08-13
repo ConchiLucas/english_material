@@ -25,6 +25,15 @@ public class AiTextGenerationService {
 
     public String generate(AiProviderConfigItem provider, String systemPrompt, String userPrompt,
                            double temperature, int maxTokens) {
+        return generateWithUsage(provider, systemPrompt, userPrompt, temperature, maxTokens).text();
+    }
+
+    public GenerationResult generateWithUsage(
+            AiProviderConfigItem provider,
+            String systemPrompt,
+            String userPrompt,
+            double temperature,
+            int maxTokens) {
         try {
             boolean anthropic = "anthropic-compatible".equals(provider.getType());
             String endpoint = endpoint(provider.getBaseUrl(), anthropic ? "/messages" : "/chat/completions");
@@ -49,12 +58,23 @@ public class AiTextGenerationService {
             JsonNode root = objectMapper.readTree(response.body());
             String content = anthropic ? anthropicContent(root) : openAiContent(root);
             if (!StringUtils.hasText(content)) throw new IllegalArgumentException("AI 返回内容为空");
-            return content.trim();
+            JsonNode usage = root.path("usage");
+            long inputTokens = anthropic
+                    ? usage.path("input_tokens").asLong(0)
+                    : usage.path("prompt_tokens").asLong(0);
+            long outputTokens = anthropic
+                    ? usage.path("output_tokens").asLong(0)
+                    : usage.path("completion_tokens").asLong(0);
+            long totalTokens = usage.path("total_tokens").asLong(inputTokens + outputTokens);
+            return new GenerationResult(content.trim(), inputTokens, outputTokens, totalTokens);
         } catch (IllegalArgumentException ex) {
             throw ex;
         } catch (Exception ex) {
             throw new IllegalArgumentException("AI 调用失败: " + ex.getMessage());
         }
+    }
+
+    public record GenerationResult(String text, long inputTokens, long outputTokens, long totalTokens) {
     }
 
     private Map<String, Object> openAiPayload(AiProviderConfigItem provider, String systemPrompt,
