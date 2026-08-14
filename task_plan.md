@@ -1,20 +1,24 @@
 # Task Plan
 
 ## Goal
-在当前分支实现统一任务处理器与调用通道：PostgreSQL/Python Worker 负责调度，运行时从 CLI 或 AI Provider 中固定选择一个调用通道；TTS 显示并使用 MiMo API，评分任务可继续使用 CLI 并为直接 AI API 扩展留出标准接口。
+修复故事运行的最终结果污染：新批次只保存纯英文场景标题与故事正文，完整 Agent 原始输出仍保留用于审计。
 
 ## Current Phase
-Complete — implementation, full verification, service restart, and read-only runtime acceptance are finished.
+Phase 1 — implementation plan written; beginning strict TDD RED tests.
 
 ## Phases
-1. [complete] 编写实施计划，锁定兼容字段、服务边界和测试命令
-2. [complete] TDD 增加 Java 调用通道目录、能力模型和任务快照字段
-3. [complete] TDD 重构 Python Worker 调用通道解析与 TTS/评分路由
-4. [complete] TDD 更新批次生成、开始执行接口和历史兼容读取
-5. [complete] 更新 React 任务配置、任务列表、日志和开始执行弹窗
-6. [complete] 执行 Java、Python、React 全量验证并启动三个服务验收
+1. [in_progress] 按 TDD 为故事运行时协议、严格提取和失败路径增加测试
+2. [pending] 实现纯英文故事协议并让审核链只接收提取后的正文
+3. [pending] 对齐默认作家/修订 Prompt 与当前事实文档
+4. [pending] 执行后端、前端全量验证与独立审查
+5. [pending] 通过 Context Router 部署并运行真实三年级批次验收
 
 ## Decisions
+- 采用用户确认的方案 A：运行时追加不可编辑协议，后端严格提取，不增加最终整理 Agent。
+- 最终结果保留 `Scene N: Plain English Title` 与英文段落，不允许 Markdown、中文说明、清单或修订记录。
+- `StoryRunStep.outputText` 保留原始响应；`StoryRun.finalStory` 和下游审核只使用提取后的正文。
+- 无协议或协议内不纯净时明确失败，不再回退为保存完整响应。
+- 用户已明确要求直接在当前目录开发，本次继续使用当前 `main`，不创建 worktree。
 - 不使用独立 worktree；用户明确要求在当前分支直接修改。
 - `handlerKey` 表示做什么；`executorType + executorId` 表示通过谁调用。
 - `executorType` 第一版仅允许 `CLI`、`AI_PROVIDER`。
@@ -25,6 +29,8 @@ Complete — implementation, full verification, service restart, and read-only r
 - 失败重试不自动跨调用通道切换。
 
 ## Safety
+- 不覆盖数据库中用户已编辑的 Agent Prompt；默认 Prompt 只影响后续缺失配置，运行时协议保证现有配置也生效。
+- 正常路径不增加模型调用次数；真实验收只创建一个用户已批准规格中的批次。
 - 不输出、记录或提交 API Key 正文。
 - 不调用真实 AI 或 TTS 完成功能验证；使用单元测试和安全配置检查。
 - 保留工作区中已有 MiMo、提示词边界和前端悬浮修复相关改动。
@@ -34,6 +40,7 @@ Complete — implementation, full verification, service restart, and read-only r
 | Error | Attempt | Resolution |
 | --- | --- | --- |
 | `psql` 在当前环境不可用 | 1 | 使用已有安全配置验证结果和代码模型继续设计，不安装额外客户端。 |
+| 实施计划 `git diff --cached --check` 报告 EOF 多余空行 | 1 | 用 `apply_patch` 删除末尾空行，重新暂存并复核。 |
 | 实施计划使用了不存在的 `./mvnw` | 1 | 仓库没有 Maven Wrapper，后续统一使用系统 `mvn`。 |
 | 沙箱内 Mockito/Byte Buddy 无法附加 GraalVM | 1 | 编译已通过；按既有项目验证方式在宿主权限下重跑同一 Maven 测试。 |
 | 系统 Python 运行 Worker 测试出现 FastAPI/Starlette 参数不兼容 | 1 | 项目启动脚本明确使用 `python-worker/.venv`，后续测试统一用其解释器。 |

@@ -1,5 +1,14 @@
 # Findings
 
+## 2026-08-14 纯故事最终输出
+
+- 真实批次 `9405d5d7-b476-43f6-a015-18e024c648d9` 的最终结果完整等于 `targeted-reviser` 原始输出，包含中文说明、Markdown、目标词表和修订日志。
+- `story-writer` 与 `targeted-reviser` 默认 Prompt 明确要求输出清单/记录，与用户希望的纯故事交付相冲突。
+- `StoryRunExecutionService` 已有 `STORY_TEXT_BEGIN`/`STORY_TEXT_END` 提取器，但运行时没有把协议追加给故事 Agent。
+- `extractStory` 在标记缺失时直接返回完整响应，是污染 `tb_story_run.final_story` 的确定根因。
+- 前端 `StoryRunHistory` 使用 `<pre>` 原样显示 `finalStory`，因此星号是后端数据污染的表现，不是前端 Markdown 渲染问题。
+- 修复边界：原始输出留在步骤表；严格提取后的纯故事才进入审核链和最终结果。
+
 ## 统一调用通道改造
 
 - 当前 `cliId` 同时存在于 `TaskConfig`、`TaskResult`、`TaskRun`、`TaskExecutionLog`，并被接入流程、单条处理、批次生成、筛选和日志复用。
