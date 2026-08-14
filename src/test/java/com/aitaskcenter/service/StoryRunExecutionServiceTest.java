@@ -126,7 +126,13 @@ class StoryRunExecutionServiceTest {
                 framedStory("Target Words: book, green"),
                 framedStory("Score: 95"),
                 framedStory("Changes: fixed the ending"),
+                framedStory("Revision Notes: fixed the ending"),
                 framedStory("_A quiet story._"),
+                framedStory("Read [the story](https://example.com)."),
+                framedStory("> A quoted report."),
+                framedStory("1. First change"),
+                framedStory("Use `book` here."),
+                framedStory("Word | Meaning"),
                 framedStory("Word | Meaning | Scene"),
                 framedStory("The child says Привет."))) {
             IllegalArgumentException error = assertThrows(
@@ -134,6 +140,15 @@ class StoryRunExecutionServiceTest {
                     () -> StoryRunExecutionService.extractStory(invalid));
             assertEquals("故事输出格式错误：只允许纯英文场景标题和故事正文", error.getMessage());
         }
+    }
+
+    @Test
+    void acceptsPlainEnglishPunctuationAndCurrency() {
+        assertEquals(
+                "Scene 1: The Toy Shop\n\nThe toy costs $5. \"Yes!\" Ben says.",
+                StoryRunExecutionService.extractStory(framedStory(
+                        "The toy costs $5. \"Yes!\" Ben says.")
+                        .replace("Scene 1: A Story", "Scene 1: The Toy Shop")));
     }
 
     @Test

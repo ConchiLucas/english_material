@@ -39,12 +39,12 @@ public class StoryRunExecutionService {
             "\\A\\s*STORY_TEXT_BEGIN[ \\t]*\\R(.*?)\\R[ \\t]*STORY_TEXT_END\\s*\\z",
             Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
     private static final Pattern MARKDOWN = Pattern.compile(
-            "(?m)^\\s*(?:#{1,6}\\s+|[-*+]\\s+)|[*_]|```");
-    private static final Pattern TABLE_ROW = Pattern.compile(
-            "(?m)^\\s*[^\\r\\n|]+\\|[^\\r\\n|]+\\|[^\\r\\n|]+\\s*$");
+            "(?m)^\\s*(?:#{1,6}\\s+|[-*+]\\s+|>\\s*|\\d+[.)]\\s+|(?:-{3,}|={3,})\\s*$)|"
+                    + "!?\\[[^]\\r\\n]+]\\([^)\\r\\n]+\\)|[*_`]");
     private static final Pattern AUDIT_SECTION = Pattern.compile(
             "(?im)^\\s*(?:target\\s+words?(?:\\s+checklist)?|word\\s+usage(?:\\s+map)?|"
-                    + "score(?:s|\\s+report)?|scoring|changes?|change\\s+log|revision(?:\\s+log)?|"
+                    + "score(?:s|\\s+report)?|scoring|changes?|change\\s+(?:log|notes?|history|summary)|"
+                    + "revision(?:\\s+(?:log|notes?|history|summary))?|"
                     + "analysis|explanation)\\s*[:：]");
     private static final Pattern SCENE_TITLE = Pattern.compile(
             "(?im)^\\s*Scene\\s+1\\s*:\\s*\\S.*$");
@@ -460,7 +460,7 @@ public class StoryRunExecutionService {
                 || normalized.contains("story_text_begin")
                 || normalized.contains("story_text_end")
                 || MARKDOWN.matcher(story).find()
-                || TABLE_ROW.matcher(story).find()
+                || story.indexOf('|') >= 0
                 || AUDIT_SECTION.matcher(story).find()
                 || containsNonLatinText(story)
                 || normalized.contains("target words checklist")
@@ -479,11 +479,7 @@ public class StoryRunExecutionService {
             if (Character.isLetter(codePoint)) {
                 return Character.UnicodeScript.of(codePoint) != Character.UnicodeScript.LATIN;
             }
-            int type = Character.getType(codePoint);
-            return type == Character.MATH_SYMBOL
-                    || type == Character.CURRENCY_SYMBOL
-                    || type == Character.MODIFIER_SYMBOL
-                    || type == Character.OTHER_SYMBOL;
+            return Character.getType(codePoint) == Character.OTHER_SYMBOL;
         });
     }
 
