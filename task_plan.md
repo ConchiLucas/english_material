@@ -4,14 +4,14 @@
 修复故事运行的最终结果污染：新批次只保存纯英文场景标题与故事正文，完整 Agent 原始输出仍保留用于审计。
 
 ## Current Phase
-Phase 5 — independently approved and fully verified; deploying and running the real 20-word acceptance batch.
+Complete — independently approved, deployed, and verified with a real 20-word multi-round acceptance batch.
 
 ## Phases
 1. [complete] 按 TDD 为故事运行时协议、严格提取和失败路径增加测试
 2. [complete] 实现纯英文故事协议并让审核链只接收提取后的正文
 3. [complete] 对齐默认作家/修订 Prompt 与当前事实文档
 4. [complete] 执行后端、前端全量验证与独立审查
-5. [in_progress] 通过 Context Router 部署并运行真实三年级批次验收
+5. [complete] 通过 Context Router 部署并运行真实三年级批次验收
 
 ## Decisions
 - 采用用户确认的方案 A：运行时追加不可编辑协议，后端严格提取，不增加最终整理 Agent。

@@ -19,6 +19,9 @@
 - 后续复审识别 `Rating`/`Scoring Report`/`Review Notes`、波浪号 Markdown 和无冒号独立审计标题；三组回归均先 RED 后 GREEN，提交 `dcb4640`、`4f8f449`，等待最终复审。
 - 最终独立复审确认无 Critical/Important，可部署；提交后全量复验后端 59/59、前端 25/25、React 生产构建成功。
 - 首次真实 20 词批次完成 12 个 Agent 后因修订 Agent 在结束边界外追加报告而失败，但 `finalStory` 保持干净初稿；新增提取与完整修订轮回归先得到 1 failure + 1 error 的 RED，兼容唯一干净故事块后聚焦 19/19 通过。
+- 真实兼容修复提交 `64a51f1` 经独立复审确认无 Critical/Important；全量后端 60/60、前端 25/25、React 构建成功，并由 Context Router 操作 `fe8d0f1ea4c84775b2af50ae858ddc89` 成功部署。
+- 最终批次 `141a0c49-9190-41f8-9c0f-8c1079c8dd7b` 使用同一组三年级上册 20 词，执行 23 个实际 Agent 步骤和 3 轮有界质量循环后以 `LIMIT_REACHED` 正常终止，`error=null`；两次修订均完成。
+- 最终故事机器校验通过：以 `Scene 1:` 开头，不含星号、竖线、反引号、中文或审计标题；第二次修订的边界外报告仍完整保留在步骤原始输出中，未进入 `finalStory`。
 
 - 2026-07-17：用户批准统一任务处理器与调用通道设计，设计文档已提交为 `d727f21`。
 - 2026-07-17：开始当前分支实施准备；已确认 Java 模型、批次生成、开始执行、单条结果和 Python Worker 均存在 `cliId` 耦合。
