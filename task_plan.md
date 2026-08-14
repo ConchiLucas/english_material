@@ -4,14 +4,14 @@
 修复故事运行的最终结果污染：新批次只保存纯英文场景标题与故事正文，完整 Agent 原始输出仍保留用于审计。
 
 ## Current Phase
-Phase 1 — implementation plan written; beginning strict TDD RED tests.
+Phase 5 — independently approved and fully verified; deploying and running the real 20-word acceptance batch.
 
 ## Phases
-1. [in_progress] 按 TDD 为故事运行时协议、严格提取和失败路径增加测试
-2. [pending] 实现纯英文故事协议并让审核链只接收提取后的正文
-3. [pending] 对齐默认作家/修订 Prompt 与当前事实文档
-4. [pending] 执行后端、前端全量验证与独立审查
-5. [pending] 通过 Context Router 部署并运行真实三年级批次验收
+1. [complete] 按 TDD 为故事运行时协议、严格提取和失败路径增加测试
+2. [complete] 实现纯英文故事协议并让审核链只接收提取后的正文
+3. [complete] 对齐默认作家/修订 Prompt 与当前事实文档
+4. [complete] 执行后端、前端全量验证与独立审查
+5. [in_progress] 通过 Context Router 部署并运行真实三年级批次验收
 
 ## Decisions
 - 采用用户确认的方案 A：运行时追加不可编辑协议，后端严格提取，不增加最终整理 Agent。
@@ -41,6 +41,8 @@ Phase 1 — implementation plan written; beginning strict TDD RED tests.
 | --- | --- | --- |
 | `psql` 在当前环境不可用 | 1 | 使用已有安全配置验证结果和代码模型继续设计，不安装额外客户端。 |
 | 实施计划 `git diff --cached --check` 报告 EOF 多余空行 | 1 | 用 `apply_patch` 删除末尾空行，重新暂存并复核。 |
+| Prompt 测试误用不存在的 `systemPrompt()` accessor | 1 | 核对 `NodeDefinition` record 后改为真实的 `defaultPrompt()`，重新运行取得行为 RED。 |
+| 文档组合补丁因链路上下文未匹配而整体未应用 | 1 | 重新读取准确段落，拆成小补丁分别更新后端、前端和链路文档。 |
 | 实施计划使用了不存在的 `./mvnw` | 1 | 仓库没有 Maven Wrapper，后续统一使用系统 `mvn`。 |
 | 沙箱内 Mockito/Byte Buddy 无法附加 GraalVM | 1 | 编译已通过；按既有项目验证方式在宿主权限下重跑同一 Maven 测试。 |
 | 系统 Python 运行 Worker 测试出现 FastAPI/Starlette 参数不兼容 | 1 | 项目启动脚本明确使用 `python-worker/.venv`，后续测试统一用其解释器。 |
