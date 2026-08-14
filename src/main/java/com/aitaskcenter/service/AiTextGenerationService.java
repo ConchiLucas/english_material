@@ -53,7 +53,7 @@ public class AiTextGenerationService {
                     request.POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(payload))).build(),
                     HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new IllegalArgumentException("AI 调用失败（HTTP " + response.statusCode() + "）: " + bounded(response.body()));
+                throw new IllegalArgumentException("AI 调用失败（HTTP " + response.statusCode() + "）");
             }
             JsonNode root = objectMapper.readTree(response.body());
             String content = anthropic ? anthropicContent(root) : openAiContent(root);

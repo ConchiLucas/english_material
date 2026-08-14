@@ -12,6 +12,7 @@ import com.aitaskcenter.dto.StoryRunDtos.StoryWord;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.DatabaseMetaData;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -95,5 +96,29 @@ class StoryWordSourceServiceTest {
         assertEquals("词库不存在或已停用", assertThrows(
                 IllegalArgumentException.class,
                 () -> service.randomWords(9L, 404L, 20)).getMessage());
+    }
+
+    @Test
+    void usesMysqlRandomFunctionForMysqlConnections() throws Exception {
+        DatabaseMetaData metadata = mock(DatabaseMetaData.class);
+        when(connection.getMetaData()).thenReturn(metadata);
+        when(metadata.getDatabaseProductName()).thenReturn("MySQL");
+        PreparedStatement libraryStatement = mock(PreparedStatement.class);
+        PreparedStatement wordStatement = mock(PreparedStatement.class);
+        ResultSet libraryRows = mock(ResultSet.class);
+        ResultSet wordRows = mock(ResultSet.class);
+        when(connection.prepareStatement(anyString())).thenReturn(libraryStatement, wordStatement);
+        when(libraryStatement.executeQuery()).thenReturn(libraryRows);
+        when(libraryRows.next()).thenReturn(true);
+        when(wordStatement.executeQuery()).thenReturn(wordRows);
+        when(wordRows.next()).thenReturn(true, false);
+        when(wordRows.getString("word")).thenReturn("book");
+        when(wordRows.getString("meaning")).thenReturn("书");
+
+        service.randomWords(9L, 21L, 1);
+
+        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+        verify(connection, org.mockito.Mockito.times(2)).prepareStatement(sql.capture());
+        assertTrue(sql.getAllValues().get(1).contains("ORDER BY RAND()"));
     }
 }

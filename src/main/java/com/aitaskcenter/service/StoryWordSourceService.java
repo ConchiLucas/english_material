@@ -75,13 +75,6 @@ public class StoryWordSourceService {
             throw new IllegalArgumentException("随机数量必须在 1 到 50 之间");
         }
         String librarySql = "SELECT 1 FROM word_library WHERE id = ? AND status = 1";
-        String wordSql = """
-                SELECT word, meaning
-                FROM word
-                WHERE library_id = ? AND status = 1
-                ORDER BY RANDOM()
-                LIMIT ?
-                """;
         try (Connection connection = connectionService.openConfiguredConnection(connectionId);
              PreparedStatement library = connection.prepareStatement(librarySql)) {
             library.setLong(1, libraryId);
@@ -90,6 +83,7 @@ public class StoryWordSourceService {
                     throw new IllegalArgumentException("词库不存在或已停用");
                 }
             }
+            String wordSql = randomWordSql(databaseProduct(connection));
             try (PreparedStatement words = connection.prepareStatement(wordSql)) {
                 words.setLong(1, libraryId);
                 words.setInt(2, count);
@@ -109,6 +103,30 @@ public class StoryWordSourceService {
         } catch (Exception ex) {
             throw new IllegalArgumentException("随机读取单词失败: " + ex.getMessage(), ex);
         }
+    }
+
+    private static String databaseProduct(Connection connection) {
+        try {
+            return connection.getMetaData() == null ? "" : clean(connection.getMetaData().getDatabaseProductName());
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    private static String randomWordSql(String product) {
+        String normalized = product.toLowerCase(Locale.ROOT);
+        if (normalized.contains("mysql") || normalized.contains("mariadb")) {
+            return "SELECT word, meaning FROM word WHERE library_id = ? AND status = 1 ORDER BY RAND() LIMIT ?";
+        }
+        if (normalized.contains("microsoft") || normalized.contains("sql server")) {
+            return "SELECT word, meaning FROM word WHERE library_id = ? AND status = 1 "
+                    + "ORDER BY NEWID() OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY";
+        }
+        if (normalized.contains("oracle")) {
+            return "SELECT word, meaning FROM word WHERE library_id = ? AND status = 1 "
+                    + "ORDER BY DBMS_RANDOM.VALUE FETCH FIRST ? ROWS ONLY";
+        }
+        return "SELECT word, meaning FROM word WHERE library_id = ? AND status = 1 ORDER BY RANDOM() LIMIT ?";
     }
 
     private static void requireConnectionId(Long connectionId) {

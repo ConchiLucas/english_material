@@ -1,5 +1,5 @@
 import { Alert, Button, Empty, Skeleton } from 'antd';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { getStoryRun, getStoryRuns } from './api';
 import type { StoryRunDetail, StoryRunStep, StoryRunSummary } from './story-flow-types';
 
@@ -14,6 +14,13 @@ const formatDate = (value: string) => new Date(value).toLocaleString('zh-CN', {
   month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
 });
 const copy = async (text: string) => navigator.clipboard?.writeText(text);
+const prettyJson = (value: string) => {
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2);
+  } catch {
+    return value;
+  }
+};
 
 export default function StoryRunHistory({ open, onClose, initialRunId }: StoryRunHistoryProps) {
   const [runs, setRuns] = useState<StoryRunSummary[]>([]);
@@ -22,10 +29,14 @@ export default function StoryRunHistory({ open, onClose, initialRunId }: StoryRu
   const [selectedStepId, setSelectedStepId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const detailRequestRef = useRef(0);
+  const selectedRunRef = useRef('');
 
   const loadDetail = useCallback(async (runId: string, preserveStep = false) => {
+    const requestId = ++detailRequestRef.current;
     const loaded = await getStoryRun(runId);
     if (!loaded) throw new Error('运行详情为空');
+    if (requestId !== detailRequestRef.current || selectedRunRef.current !== runId) return;
     setDetail(loaded);
     setSelectedStepId((current) => preserveStep && loaded.steps.some((step) => step.id === current)
       ? current
@@ -38,7 +49,11 @@ export default function StoryRunHistory({ open, onClose, initialRunId }: StoryRu
     try {
       const loaded = await getStoryRuns();
       setRuns(loaded);
-      const runId = initialRunId || loaded[0]?.runId || '';
+      const currentRunId = selectedRunRef.current;
+      const runId = loaded.some((run) => run.runId === currentRunId)
+        ? currentRunId
+        : initialRunId || loaded[0]?.runId || '';
+      selectedRunRef.current = runId;
       setSelectedRunId(runId);
       if (runId) await loadDetail(runId);
       else setDetail(null);
@@ -55,11 +70,27 @@ export default function StoryRunHistory({ open, onClose, initialRunId }: StoryRu
 
   useEffect(() => {
     if (!open || !detail || !activeStatuses.has(detail.status)) return undefined;
-    const timer = window.setInterval(() => {
-      void loadDetail(detail.runId, true);
-    }, 2000);
-    return () => window.clearInterval(timer);
+    let cancelled = false;
+    let timer = 0;
+    const poll = async () => {
+      try {
+        await loadDetail(detail.runId, true);
+      } catch (pollError) {
+        if (!cancelled) setError(pollError instanceof Error ? pollError.message : '运行记录刷新失败');
+      } finally {
+        if (!cancelled) timer = window.setTimeout(() => void poll(), 2000);
+      }
+    };
+    timer = window.setTimeout(() => void poll(), 2000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [detail, loadDetail, open]);
+
+  useEffect(() => () => {
+    detailRequestRef.current += 1;
+  }, []);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -82,7 +113,7 @@ export default function StoryRunHistory({ open, onClose, initialRunId }: StoryRu
           <Button onClick={onClose}>关闭</Button>
         </div>
       </header>
-      {loading && !detail ? <div className="story-run-history-state"><Skeleton active /></div> : error ? (
+      {loading && !detail ? <div className="story-run-history-state"><Skeleton active /></div> : error && !detail ? (
         <div className="story-run-history-state"><Alert type="error" showIcon message={error} /></div>
       ) : runs.length === 0 && !detail ? <Empty description="暂无运行批次" /> : (
         <>
@@ -97,7 +128,11 @@ export default function StoryRunHistory({ open, onClose, initialRunId }: StoryRu
                     className={run.runId === selectedRunId ? 'is-selected' : ''}
                     aria-label={`批次 ${run.runId} ${formatDate(run.createdAt)}`}
                     onClick={() => {
+                      detailRequestRef.current += 1;
+                      selectedRunRef.current = run.runId;
                       setSelectedRunId(run.runId);
+                      setDetail(null);
+                      setSelectedStepId(null);
                       void loadDetail(run.runId);
                     }}
                   >
@@ -119,7 +154,7 @@ export default function StoryRunHistory({ open, onClose, initialRunId }: StoryRu
                     onClick={() => setSelectedStepId(step.id)}
                   >
                     <span>{String(step.sequence).padStart(2, '0')}</span>
-                    <strong>{step.agentName}</strong>
+                    <strong>{step.agentName}{step.qualityRound > 0 ? ` · 第 ${step.qualityRound} 轮` : ''}</strong>
                   </button>
                 ))}
               </div>
@@ -132,7 +167,7 @@ export default function StoryRunHistory({ open, onClose, initialRunId }: StoryRu
                 <div className="story-run-io">
                   <section>
                     <header><strong>Agent 输入</strong><Button size="small" onClick={() => void copy(selectedStep.inputJson)}>复制</Button></header>
-                    <pre>{selectedStep.inputJson}</pre>
+                    <pre>{prettyJson(selectedStep.inputJson)}</pre>
                   </section>
                   <section>
                     <header><strong>Agent 输出</strong><Button size="small" onClick={() => void copy(selectedStep.outputText)}>复制</Button></header>

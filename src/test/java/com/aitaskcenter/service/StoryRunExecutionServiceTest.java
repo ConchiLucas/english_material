@@ -2,11 +2,13 @@ package com.aitaskcenter.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 import com.aitaskcenter.dto.AiProviderConfigItem;
@@ -25,10 +27,15 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.core.task.SyncTaskExecutor;
+import org.springframework.core.task.TaskRejectedException;
 
 class StoryRunExecutionServiceTest {
     private StoryRunRepository runRepository;
@@ -63,7 +70,7 @@ class StoryRunExecutionServiceTest {
         when(aiConfigService.getProviderForExecution("provider-1")).thenReturn(provider);
         service = new StoryRunExecutionService(
                 runRepository, stepRepository, agentService, aiConfigService, generationService,
-                wordSourceService, new ObjectMapper(), new SyncTaskExecutor());
+                wordSourceService, new ObjectMapper(), new SyncTaskExecutor(), new SyncTaskExecutor());
     }
 
     @Test
@@ -88,6 +95,36 @@ class StoryRunExecutionServiceTest {
     }
 
     @Test
+    void startsAllPitchAgentsBeforeWaitingForTheirResults() throws Exception {
+        CountDownLatch pitchesStarted = new CountDownLatch(3);
+        ExecutorService pool = Executors.newFixedThreadPool(3);
+        StoryRunExecutionService parallelService = new StoryRunExecutionService(
+                runRepository, stepRepository, agentService, aiConfigService, generationService,
+                wordSourceService, new ObjectMapper(), new SyncTaskExecutor(), pool::execute);
+        when(generationService.generateWithUsage(any(), anyString(), anyString(), any(Double.class), anyInt()))
+                .thenAnswer(call -> {
+                    String systemPrompt = call.getArgument(1);
+                    if (systemPrompt.contains("pitch-")) {
+                        pitchesStarted.countDown();
+                        assertTrue(pitchesStarted.await(1, TimeUnit.SECONDS));
+                        return result("pitch", 10);
+                    }
+                    if (systemPrompt.contains("story-writer")) {
+                        return result("STORY_TEXT_BEGIN\nA story\nSTORY_TEXT_END", 10);
+                    }
+                    if (systemPrompt.contains("quality-decider")) return result("ACTION: PASS", 10);
+                    return result("ok", 10);
+                });
+        try {
+            parallelService.createRun(new StartRunRequest(
+                    List.of(new StoryWord("book", "书")), "三年级上册"));
+            assertEquals("COMPLETED", persisted.getStatus());
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
     void repeatsReviewRoundAfterTargetedRevisionUntilPass() {
         ArrayDeque<String> outputs = successfulOutputs("ACTION: REVISE\nTARGET_NODE: targeted-reviser");
         outputs.add("STORY_TEXT_BEGIN\nA better story\nSTORY_TEXT_END");
@@ -109,7 +146,7 @@ class StoryRunExecutionServiceTest {
 
     @Test
     void routesRewriteDecisionBackToWriterWithinBudget() {
-        ArrayDeque<String> outputs = successfulOutputs("ACTION: REWRITE\nTARGET_NODE: story-writer");
+        ArrayDeque<String> outputs = successfulOutputs("After reviewing the evidence, the only action is REWRITE.");
         outputs.add("STORY_TEXT_BEGIN\nA rewritten story\nSTORY_TEXT_END");
         outputs.add("fun review 2");
         outputs.add("language review 2");
@@ -139,7 +176,72 @@ class StoryRunExecutionServiceTest {
         service.createRun(new StartRunRequest(List.of(new StoryWord("book", "书")), "三年级上册"));
 
         assertEquals("LIMIT_REACHED", persisted.getStatus());
-        assertEquals(60, persisted.getTotalTokens());
+        assertEquals(0, persisted.getTotalTokens());
+        verify(generationService, never()).generateWithUsage(any(), anyString(), anyString(), any(Double.class), anyInt());
+    }
+
+    @Test
+    void estimatesUsageWhenProviderOmitsTokenCountsSoBudgetStillStops() {
+        when(agentService.getFlow()).thenReturn(flow(3, 500));
+        when(generationService.generateWithUsage(any(), anyString(), anyString(), any(Double.class), anyInt()))
+                .thenReturn(result("x".repeat(400), 0));
+
+        service.createRun(new StartRunRequest(List.of(new StoryWord("book", "书")), "三年级上册"));
+
+        assertEquals("LIMIT_REACHED", persisted.getStatus());
+        org.junit.jupiter.api.Assertions.assertTrue(persisted.getTotalTokens() > 0);
+        org.junit.jupiter.api.Assertions.assertTrue(persisted.getTotalTokens() <= 500);
+    }
+
+    @Test
+    void marksPersistedRunFailedWhenBoundedQueueRejectsSubmission() {
+        StoryRunExecutionService rejecting = new StoryRunExecutionService(
+                runRepository, stepRepository, agentService, aiConfigService, generationService,
+                wordSourceService, new ObjectMapper(), command -> {
+                    throw new TaskRejectedException("queue full");
+                }, new SyncTaskExecutor());
+
+        IllegalArgumentException error = org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class,
+                () -> rejecting.createRun(new StartRunRequest(
+                        List.of(new StoryWord("book", "书")), "三年级上册")));
+
+        assertEquals("运行队列已满，请稍后重试", error.getMessage());
+        assertEquals("FAILED", persisted.getStatus());
+        assertNotNull(persisted.getFinishedAt());
+    }
+
+    @Test
+    void redactsProviderKeyFromPersistedFailure() {
+        AiProviderConfigItem provider = new AiProviderConfigItem();
+        provider.setId("provider-1");
+        provider.setModel("gemini-test");
+        provider.setApiKey("local-secret-key");
+        provider.setEnabled(true);
+        when(aiConfigService.getProviderForExecution("provider-1")).thenReturn(provider);
+        when(generationService.generateWithUsage(any(), anyString(), anyString(), any(Double.class), anyInt()))
+                .thenThrow(new IllegalArgumentException("gateway echoed Bearer local-secret-key"));
+
+        service.createRun(new StartRunRequest(List.of(new StoryWord("book", "书")), "三年级上册"));
+
+        ArgumentCaptor<StoryRunStep> step = ArgumentCaptor.forClass(StoryRunStep.class);
+        verify(stepRepository).save(step.capture());
+        org.junit.jupiter.api.Assertions.assertFalse(step.getValue().getOutputText().contains("local-secret-key"));
+        org.junit.jupiter.api.Assertions.assertFalse(persisted.getErrorMessage().contains("local-secret-key"));
+    }
+
+    @Test
+    void refusesDisabledProviderBeforeGeneration() {
+        AiProviderConfigItem provider = new AiProviderConfigItem();
+        provider.setId("provider-1");
+        provider.setModel("gemini-test");
+        provider.setEnabled(false);
+        when(aiConfigService.getProviderForExecution("provider-1")).thenReturn(provider);
+
+        service.createRun(new StartRunRequest(List.of(new StoryWord("book", "书")), "三年级上册"));
+
+        assertEquals("FAILED", persisted.getStatus());
+        verify(generationService, never()).generateWithUsage(any(), anyString(), anyString(), any(Double.class), anyInt());
     }
 
     @Test

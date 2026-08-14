@@ -57,10 +57,20 @@ public class AiConfigService {
         if (!StringUtils.hasText(providerId)) {
             throw new IllegalArgumentException("请选择 AI 配置");
         }
-        return getConfig().getProviders().stream()
-                .filter(provider -> providerId.trim().equals(provider.getId()))
+        AiProviderConfigItem provider = getConfig().getProviders().stream()
+                .filter(item -> providerId.trim().equals(item.getId()))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("AI 配置「" + providerId.trim() + "」不存在"));
+        if (!provider.isEnabled()) {
+            throw new IllegalArgumentException("AI 配置「" + defaultText(provider.getLabel(), provider.getId()) + "」未启用");
+        }
+        String protocol = effectiveProviderProtocol(provider);
+        provider.setType(protocol);
+        provider.setCapabilities(providerCapabilities(provider, protocol));
+        if (!provider.getCapabilities().contains("TEXT_GENERATION")) {
+            throw new IllegalArgumentException("AI 配置「" + defaultText(provider.getLabel(), provider.getId()) + "」不支持文本生成");
+        }
+        return provider;
     }
 
     // 方法：getLocalCliConfig

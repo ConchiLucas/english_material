@@ -105,7 +105,9 @@ public final class StoryAgentCatalog {
             未解决问题的最小责任范围和剩余确定性预算，选择一个动作：PASS、REVISE、REWRITE、REDIRECT、REPITCH 或 REPLAN。
 
             PASS 仅用于没有阻断问题且确定性分数达到通过线；局部问题选 REVISE，正文整体失效选 REWRITE，蓝图失效选
-            REDIRECT，创意前提失效选 REPITCH，用词策划失效选 REPLAN。输出唯一动作、证据化理由、目标节点和最小问题清单。
+            REDIRECT，创意前提失效选 REPITCH，用词策划失效选 REPLAN。第一行必须严格输出
+            ACTION: PASS|REVISE|REWRITE|REDIRECT|REPITCH|REPLAN 中的唯一一个动作；第二行输出 TARGET_NODE: 节点键，
+            随后再输出证据化理由和最小问题清单。
             严禁创作或改写正文、篡改审核事实或分数、调整通过线和预算，也不得输出受限集合之外的动作。
             """.strip();
 

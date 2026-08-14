@@ -258,9 +258,23 @@ const providers: AIProviderConfigItem[] = [
   },
 ];
 
-const renderPage = (onDirtyChange = vi.fn()) => render(
+const defaultConnections = [{
+  ID: 9,
+  connectionName: '英语单词库',
+  connectionType: 'postgresql',
+  connectionUrl: '127.0.0.1',
+  databaseName: 'rob_english_word',
+  port: 5432,
+  dbLoginName: 'local',
+}];
+
+const renderPage = (onDirtyChange = vi.fn(), connections = defaultConnections) => render(
   <AntApp>
-    <StoryAgentFlowPage providers={providers} onDirtyChange={onDirtyChange} />
+    <StoryAgentFlowPage
+      providers={providers}
+      connections={connections}
+      onDirtyChange={onDirtyChange}
+    />
   </AntApp>,
 );
 
@@ -277,6 +291,11 @@ describe('StoryAgentFlowPage', () => {
     apiMocks.getStoryAgentVersions.mockReset();
     apiMocks.restoreStoryAgentVersion.mockReset();
     apiMocks.updateStoryFlowBudget.mockReset();
+    apiMocks.createStoryRun.mockReset();
+    apiMocks.getStoryRuns.mockReset();
+    apiMocks.getStoryRun.mockReset();
+    apiMocks.getStoryWordLibraries.mockReset();
+    apiMocks.previewRandomStoryWords.mockReset();
   });
 
   afterEach(() => {
@@ -726,7 +745,7 @@ describe('StoryAgentFlowPage', () => {
     ));
   });
 
-  it('updates the quality budget and refreshes the header summary', async () => {
+  it('updates the quality budget without adding budget clutter to the header', async () => {
     const user = userEvent.setup();
     apiMocks.updateStoryFlowBudget.mockImplementation(async (value: object) => ({
       ...value,
@@ -749,7 +768,7 @@ describe('StoryAgentFlowPage', () => {
       maxPlanReturns: 1,
       maxTotalTokens: 120000,
     }));
-    expect(await screen.findByText('最多 5 轮 · 120,000 Token')).toBeInTheDocument();
+    expect(screen.queryByText(/最多 5 轮/)).not.toBeInTheDocument();
   });
 
   it('opens start-run dialog and creates a run from manual words', async () => {
@@ -776,6 +795,66 @@ describe('StoryAgentFlowPage', () => {
       words: [{ word: 'book', meaning: '书' }, { word: 'green', meaning: '绿色' }],
     }));
     expect(await screen.findByRole('dialog', { name: '故事运行记录' })).toBeInTheDocument();
+  });
+
+  it('previews random words from a selected saved library', async () => {
+    const user = userEvent.setup();
+    apiMocks.getStoryWordLibraries.mockResolvedValue([
+      { id: 21, name: 'PEP三年级上册', meaning: '人教版三年级上册', wordCount: 80 },
+    ]);
+    apiMocks.previewRandomStoryWords.mockResolvedValue([
+      { word: 'book', meaning: '书' }, { word: 'green', meaning: '绿色' },
+    ]);
+    renderPage();
+    await screen.findByRole('heading', { name: '策划与创意' });
+    await user.click(screen.getByRole('button', { name: '开始运行' }));
+    await user.click(screen.getByRole('combobox', { name: '单词来源' }));
+    const sourceChoices = await screen.findAllByText('从词库随机抽取');
+    await user.click(sourceChoices.at(-1)!);
+    await user.click(await screen.findByRole('combobox', { name: '数据库连接' }));
+    const connectionChoices = await screen.findAllByText(/英语单词库 · rob_english_word/);
+    await user.click(connectionChoices.at(-1)!);
+    await waitFor(() => expect(apiMocks.getStoryWordLibraries).toHaveBeenCalledWith(9));
+    await user.click(screen.getByRole('combobox', { name: '词库' }));
+    const libraryChoices = await screen.findAllByText(/PEP三年级上册/);
+    await user.click(libraryChoices.at(-1)!);
+    await user.click(screen.getByRole('button', { name: '随机抽取' }));
+
+    await waitFor(() => expect(apiMocks.previewRandomStoryWords).toHaveBeenCalledWith({
+      connectionId: 9, libraryId: 21, count: 20,
+    }));
+    expect(await screen.findByText('book')).toBeInTheDocument();
+    expect(screen.getByText('green')).toBeInTheDocument();
+  });
+
+  it('ignores a stale library response after the database connection changes', async () => {
+    const user = userEvent.setup();
+    const oldLibraries = deferred<Array<{ id: number; name: string; meaning: string; wordCount: number }>>();
+    apiMocks.getStoryWordLibraries.mockImplementation((id: number) => id === 9
+      ? oldLibraries.promise
+      : Promise.resolve([{ id: 30, name: '新连接词库', meaning: '', wordCount: 20 }]));
+    renderPage(vi.fn(), [
+      ...defaultConnections,
+      { ...defaultConnections[0], ID: 10, connectionName: '新英语库', databaseName: 'new_words' },
+    ]);
+    await screen.findByRole('heading', { name: '策划与创意' });
+    await user.click(screen.getByRole('button', { name: '开始运行' }));
+    await user.click(screen.getByRole('combobox', { name: '单词来源' }));
+    await user.click((await screen.findAllByText('从词库随机抽取')).at(-1)!);
+
+    await user.click(await screen.findByRole('combobox', { name: '数据库连接' }));
+    await user.click((await screen.findAllByText(/英语单词库 · rob_english_word/)).at(-1)!);
+    await waitFor(() => expect(apiMocks.getStoryWordLibraries).toHaveBeenCalledWith(9));
+    await user.click(screen.getByRole('combobox', { name: '数据库连接' }));
+    await user.click((await screen.findAllByText(/新英语库 · new_words/)).at(-1)!);
+    await waitFor(() => expect(apiMocks.getStoryWordLibraries).toHaveBeenCalledWith(10));
+    await user.click(screen.getByRole('combobox', { name: '词库' }));
+    await screen.findByText('新连接词库');
+
+    oldLibraries.resolve([{ id: 21, name: '旧连接词库', meaning: '', wordCount: 80 }]);
+    await act(async () => Promise.resolve());
+    expect(screen.queryByText('旧连接词库')).not.toBeInTheDocument();
+    expect(screen.getByText('新连接词库')).toBeInTheDocument();
   });
 
   it('shows a load failure and reloads the flow on request', async () => {

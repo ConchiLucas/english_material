@@ -17,4 +17,15 @@ public class StoryRunExecutorConfig {
         executor.initialize();
         return executor;
     }
+
+    @Bean("storyAgentCallExecutor")
+    public TaskExecutor storyAgentCallExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(6);
+        executor.setMaxPoolSize(6);
+        executor.setQueueCapacity(50);
+        executor.setThreadNamePrefix("story-agent-call-");
+        executor.initialize();
+        return executor;
+    }
 }

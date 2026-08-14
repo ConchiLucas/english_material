@@ -157,6 +157,10 @@ export default function StoryAgentFlowPage({ providers, connections = [], onDirt
   const selectedKeyRef = useRef(selectedKey);
   const draftRef = useRef(draft);
   const versionsRequestIdRef = useRef(0);
+  const librariesRequestIdRef = useRef(0);
+  const previewRequestIdRef = useRef(0);
+  const randomSelectionRef = useRef({ connectionId: null as number | null, libraryId: null as number | null });
+  const previewSourceRef = useRef('');
   const detailRef = useRef<HTMLElement | null>(null);
 
   const allNodes = useMemo(() => flow?.stages.flatMap((stage) => stage.nodes) ?? [], [flow]);
@@ -188,6 +192,17 @@ export default function StoryAgentFlowPage({ providers, connections = [], onDirt
   }, [dirty]);
 
   useEffect(() => () => onDirtyChangeRef.current(false), []);
+
+  useEffect(() => {
+    randomSelectionRef.current = { connectionId, libraryId };
+  }, [connectionId, libraryId]);
+
+  useEffect(() => {
+    if (!startOpen) {
+      librariesRequestIdRef.current += 1;
+      previewRequestIdRef.current += 1;
+    }
+  }, [startOpen]);
 
   useEffect(() => () => {
     versionsRequestIdRef.current += 1;
@@ -473,9 +488,29 @@ export default function StoryAgentFlowPage({ providers, connections = [], onDirt
   });
 
   const loadLibraries = async (value: number) => {
+    const requestId = ++librariesRequestIdRef.current;
+    previewRequestIdRef.current += 1;
+    randomSelectionRef.current = { connectionId: value, libraryId: null };
     setConnectionId(value);
     setLibraryId(null);
-    setLibraries(await getStoryWordLibraries(value));
+    setLibraries([]);
+    setPreviewWords([]);
+    previewSourceRef.current = '';
+    try {
+      const loaded = await getStoryWordLibraries(value);
+      if (requestId === librariesRequestIdRef.current
+          && randomSelectionRef.current.connectionId === value) setLibraries(loaded);
+    } catch (error) {
+      if (requestId === librariesRequestIdRef.current) message.error(errorText(error));
+    }
+  };
+
+  const selectLibrary = (value: number) => {
+    previewRequestIdRef.current += 1;
+    randomSelectionRef.current = { connectionId, libraryId: value };
+    setLibraryId(value);
+    setPreviewWords([]);
+    previewSourceRef.current = '';
   };
 
   const previewRandom = async () => {
@@ -483,18 +518,34 @@ export default function StoryAgentFlowPage({ providers, connections = [], onDirt
       message.error('请填写数据库连接 ID 并选择词库');
       return;
     }
+    const requestId = ++previewRequestIdRef.current;
+    const source = `${connectionId}:${libraryId}:${randomCount}`;
+    setPreviewWords([]);
+    previewSourceRef.current = '';
     setStartLoading(true);
     try {
-      setPreviewWords(await previewRandomStoryWords({ connectionId, libraryId, count: randomCount }));
+      const loaded = await previewRandomStoryWords({ connectionId, libraryId, count: randomCount });
+      const selection = randomSelectionRef.current;
+      if (requestId === previewRequestIdRef.current
+          && selection.connectionId === connectionId
+          && selection.libraryId === libraryId) {
+        setPreviewWords(loaded);
+        previewSourceRef.current = source;
+      }
     } catch (error) {
-      message.error(errorText(error));
+      if (requestId === previewRequestIdRef.current) message.error(errorText(error));
     } finally {
-      setStartLoading(false);
+      if (requestId === previewRequestIdRef.current) setStartLoading(false);
     }
   };
 
   const createRun = async () => {
     const words = startMode === 'manual' ? parseManualWords() : previewWords;
+    const currentPreviewSource = `${connectionId}:${libraryId}:${randomCount}`;
+    if (startMode === 'random' && previewSourceRef.current !== currentPreviewSource) {
+      message.error('词库或随机数量已变化，请重新随机抽取');
+      return;
+    }
     if (!words.length) {
       message.error(startMode === 'manual' ? '请至少输入 1 个单词' : '请先随机抽取单词');
       return;
@@ -621,7 +672,6 @@ export default function StoryAgentFlowPage({ providers, connections = [], onDirt
           <div className="story-workbench-stats" aria-label="流程统计">
             <strong>{`${agentCount} 个 Agent`}</strong>
             <span>{`${readonlyCount} 个程序 / 人工节点`}</span>
-            <span>{`最多 ${flow.budget.maxQualityRounds} 轮 · ${flow.budget.maxTotalTokens.toLocaleString('en-US')} Token`}</span>
           </div>
           <div className="story-workbench-actions">
             <Button onClick={() => setHistoryOpen(true)}>运行记录</Button>
@@ -837,7 +887,12 @@ export default function StoryAgentFlowPage({ providers, connections = [], onDirt
         <Form layout="vertical">
           <Form.Item label="目标年级"><Input aria-label="目标年级" value={targetGrade} onChange={(event) => setTargetGrade(event.target.value)} /></Form.Item>
           <Form.Item label="单词来源">
-            <Select aria-label="单词来源" value={startMode} onChange={(value) => setStartMode(value)} options={[
+            <Select aria-label="单词来源" value={startMode} onChange={(value) => {
+              setStartMode(value);
+              previewRequestIdRef.current += 1;
+              setPreviewWords([]);
+              previewSourceRef.current = '';
+            }} options={[
               { value: 'manual', label: '手动输入' }, { value: 'random', label: '从词库随机抽取' },
             ]} />
           </Form.Item>
@@ -858,8 +913,13 @@ export default function StoryAgentFlowPage({ providers, connections = [], onDirt
                   placeholder="选择保存的单词数据库连接"
                 />
               </Form.Item>
-              <Form.Item label="词库"><Select aria-label="词库" value={libraryId ?? undefined} onChange={setLibraryId} options={libraries.map((item) => ({ value: item.id, label: item.meaning ? `${item.name} · ${item.meaning}` : item.name }))} /></Form.Item>
-              <Form.Item label="随机数量"><InputNumber aria-label="随机数量" min={1} max={50} value={randomCount} onChange={(value) => setRandomCount(value ?? 20)} /></Form.Item>
+              <Form.Item label="词库"><Select aria-label="词库" value={libraryId ?? undefined} onChange={selectLibrary} options={libraries.map((item) => ({ value: item.id, label: item.meaning ? `${item.name} · ${item.meaning}` : item.name }))} /></Form.Item>
+              <Form.Item label="随机数量"><InputNumber aria-label="随机数量" min={1} max={50} value={randomCount} onChange={(value) => {
+                setRandomCount(value ?? 20);
+                previewRequestIdRef.current += 1;
+                setPreviewWords([]);
+                previewSourceRef.current = '';
+              }} /></Form.Item>
               <Button loading={startLoading} onClick={() => void previewRandom()}>随机抽取</Button>
               <div className="story-run-preview">{previewWords.map((word) => <Tag key={word.word}>{word.word}</Tag>)}</div>
             </>

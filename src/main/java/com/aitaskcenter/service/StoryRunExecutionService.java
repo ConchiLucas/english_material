@@ -14,7 +14,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.temporal.ChronoUnit;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -44,6 +48,7 @@ public class StoryRunExecutionService {
     private final StoryWordSourceService wordSourceService;
     private final ObjectMapper objectMapper;
     private final TaskExecutor executor;
+    private final TaskExecutor callExecutor;
 
     public StoryRunExecutionService(
             StoryRunRepository runRepository,
@@ -53,7 +58,8 @@ public class StoryRunExecutionService {
             AiTextGenerationService generationService,
             StoryWordSourceService wordSourceService,
             ObjectMapper objectMapper,
-            @Qualifier("storyRunExecutor") TaskExecutor executor) {
+            @Qualifier("storyRunExecutor") TaskExecutor executor,
+            @Qualifier("storyAgentCallExecutor") TaskExecutor callExecutor) {
         this.runRepository = runRepository;
         this.stepRepository = stepRepository;
         this.agentService = agentService;
@@ -62,6 +68,7 @@ public class StoryRunExecutionService {
         this.wordSourceService = wordSourceService;
         this.objectMapper = objectMapper;
         this.executor = executor;
+        this.callExecutor = callExecutor;
     }
 
     public RunSummary createRun(StartRunRequest request) {
@@ -79,7 +86,15 @@ public class StoryRunExecutionService {
         run.setTargetGrade(targetGrade);
         run.setStatus("QUEUED");
         runRepository.save(run);
-        executor.execute(() -> execute(run.getRunId()));
+        try {
+            executor.execute(() -> execute(run.getRunId()));
+        } catch (RejectedExecutionException ex) {
+            run.setStatus("FAILED");
+            run.setErrorMessage("运行队列已满，请稍后重试");
+            run.setFinishedAt(now());
+            runRepository.save(run);
+            throw new IllegalArgumentException("运行队列已满，请稍后重试");
+        }
         return toSummary(run, words);
     }
 
@@ -100,14 +115,14 @@ public class StoryRunExecutionService {
                     "sourceContext", "运行批次内保存的单词快照"));
             if (state.limitReached()) return;
 
-            Map<String, String> pitches = new LinkedHashMap<>();
+            Map<String, Map<String, Object>> pitchInputs = new LinkedHashMap<>();
             for (String key : PITCH_KEYS) {
-                pitches.put(key, call(state, key, 0, mapOf(
+                pitchInputs.put(key, mapOf(
                         "vocabularyPlan", plan,
                         "targetGrade", run.getTargetGrade(),
-                        "priorQualityFeedback", "")));
-                if (state.limitReached()) return;
+                        "priorQualityFeedback", ""));
             }
+            Map<String, String> pitches = callParallel(state, 0, pitchInputs);
             String blueprint = call(state, "story-director", 0, mapOf(
                     "vocabularyPlan", plan,
                     "anonymousPitches", pitches.values(),
@@ -131,7 +146,7 @@ public class StoryRunExecutionService {
             int pitchReturns = 0;
             int planReturns = 0;
             while (true) {
-                Map<String, String> reviews = new LinkedHashMap<>();
+                Map<String, Map<String, Object>> reviewInputs = new LinkedHashMap<>();
                 for (String key : REVIEW_KEYS) {
                     Map<String, Object> input = new LinkedHashMap<>();
                     input.put("candidateStory", candidate);
@@ -140,9 +155,9 @@ public class StoryRunExecutionService {
                     input.put("targetGrade", run.getTargetGrade());
                     input.put("storyBlueprint", blueprint);
                     input.put("qualityRound", qualityRound);
-                    reviews.put(key, call(state, key, qualityRound, input));
-                    if (state.limitReached()) return;
+                    reviewInputs.put(key, input);
                 }
+                Map<String, String> reviews = callParallel(state, qualityRound, reviewInputs);
                 String score = call(state, "story-scorer", qualityRound, mapOf(
                         "candidateStory", candidate,
                         "funReview", reviews.get("review-fun"),
@@ -174,12 +189,14 @@ public class StoryRunExecutionService {
                             "targetGrade", run.getTargetGrade(),
                             "sourceContext", decision));
                     pitches.clear();
+                    pitchInputs.clear();
                     for (String key : PITCH_KEYS) {
-                        pitches.put(key, call(state, key, qualityRound, mapOf(
+                        pitchInputs.put(key, mapOf(
                                 "vocabularyPlan", plan,
                                 "targetGrade", run.getTargetGrade(),
-                                "priorQualityFeedback", decision)));
+                                "priorQualityFeedback", decision));
                     }
+                    pitches.putAll(callParallel(state, qualityRound, pitchInputs));
                     blueprint = call(state, "story-director", qualityRound, mapOf(
                             "vocabularyPlan", plan,
                             "anonymousPitches", pitches.values(),
@@ -193,12 +210,14 @@ public class StoryRunExecutionService {
                 } else if ("REPITCH".equals(action) && pitchReturns < state.budget.maxPitchReturns()) {
                     pitchReturns++;
                     pitches.clear();
+                    pitchInputs.clear();
                     for (String key : PITCH_KEYS) {
-                        pitches.put(key, call(state, key, qualityRound, mapOf(
+                        pitchInputs.put(key, mapOf(
                                 "vocabularyPlan", plan,
                                 "targetGrade", run.getTargetGrade(),
-                                "priorQualityFeedback", decision)));
+                                "priorQualityFeedback", decision));
                     }
+                    pitches.putAll(callParallel(state, qualityRound, pitchInputs));
                     blueprint = call(state, "story-director", qualityRound, mapOf(
                             "vocabularyPlan", plan,
                             "anonymousPitches", pitches.values(),
@@ -244,6 +263,10 @@ public class StoryRunExecutionService {
                 runRepository.save(run);
                 if (state.limitReached()) return;
             }
+        } catch (BudgetLimitReachedException ex) {
+            run.setStatus("LIMIT_REACHED");
+            run.setFinishedAt(now());
+            runRepository.save(run);
         } catch (Exception ex) {
             run.setStatus("FAILED");
             run.setErrorMessage(bounded(ex.getMessage()));
@@ -257,16 +280,33 @@ public class StoryRunExecutionService {
             String agentKey,
             int qualityRound,
             Map<String, Object> input) {
+        return call(state, agentKey, qualityRound, input, state.nextSequence());
+    }
+
+    private String call(
+            ExecutionState state,
+            String agentKey,
+            int qualityRound,
+            Map<String, Object> input,
+            int sequence) {
         AgentView agent = state.agents.get(agentKey);
         if (agent == null || !Boolean.TRUE.equals(agent.enabled())) {
             throw new IllegalArgumentException("故事 Agent「" + agentKey + "」未启用或不存在");
         }
         AiProviderConfigItem provider = aiConfigService.getProviderForExecution(agent.aiProviderId());
+        if (!provider.isEnabled()
+                || (provider.getCapabilities() != null
+                && !provider.getCapabilities().isEmpty()
+                && !provider.getCapabilities().contains("TEXT_GENERATION"))) {
+            throw new IllegalArgumentException("故事 Agent「" + agentKey + "」的 AI 配置未启用或不支持文本生成");
+        }
         String inputJson = writeJson(input);
+        int configuredMax = provider.getMaxTokens() == null ? 4096 : provider.getMaxTokens();
+        BudgetReservation reservation = state.reserve(agent.systemPrompt(), inputJson, configuredMax);
         long started = System.nanoTime();
         StoryRunStep step = new StoryRunStep();
         step.setRunId(state.run.getRunId());
-        step.setSequence(++state.sequence);
+        step.setSequence(sequence);
         step.setQualityRound(qualityRound);
         step.setAgentKey(agent.key());
         step.setAgentName(agent.name());
@@ -280,21 +320,58 @@ public class StoryRunExecutionService {
                     agent.systemPrompt(),
                     inputJson,
                     agent.temperature() == null ? 0.2 : agent.temperature(),
-                    provider.getMaxTokens() == null ? 4096 : provider.getMaxTokens());
+                    reservation.maxOutputTokens());
+            long inputTokens = result.inputTokens() > 0
+                    ? result.inputTokens()
+                    : estimateTokens(agent.systemPrompt() + "\n" + inputJson);
+            long outputTokens = result.outputTokens() > 0
+                    ? result.outputTokens()
+                    : estimateTokens(result.text());
+            long totalTokens = result.totalTokens() > 0
+                    ? result.totalTokens()
+                    : inputTokens + outputTokens;
             step.setOutputText(result.text());
             step.setStatus("COMPLETED");
-            step.setInputTokens(result.inputTokens());
-            step.setOutputTokens(result.outputTokens());
-            step.setTotalTokens(result.totalTokens());
+            step.setInputTokens(inputTokens);
+            step.setOutputTokens(outputTokens);
+            step.setTotalTokens(totalTokens);
             step.setDurationMs(elapsedMillis(started));
             stepRepository.save(step);
-            state.addTokens(result.totalTokens());
+            state.completeReservation(reservation, totalTokens);
             return result.text();
         } catch (Exception ex) {
-            step.setOutputText(bounded(ex.getMessage()));
+            state.cancelReservation(reservation);
+            String safeMessage = redact(ex.getMessage(), provider.getApiKey());
+            step.setOutputText(safeMessage);
             step.setStatus("FAILED");
             step.setDurationMs(elapsedMillis(started));
             stepRepository.save(step);
+            if (ex instanceof BudgetLimitReachedException limit) throw limit;
+            throw new IllegalArgumentException(safeMessage, ex);
+        }
+    }
+
+    private Map<String, String> callParallel(
+            ExecutionState state,
+            int qualityRound,
+            Map<String, Map<String, Object>> inputs) {
+        List<CompletableFuture<Map.Entry<String, String>>> futures = new ArrayList<>();
+        inputs.forEach((key, input) -> {
+            int sequence = state.nextSequence();
+            futures.add(CompletableFuture.supplyAsync(
+                    () -> Map.entry(key, call(state, key, qualityRound, input, sequence)),
+                    command -> callExecutor.execute(command)));
+        });
+        Map<String, String> result = new LinkedHashMap<>();
+        try {
+            for (CompletableFuture<Map.Entry<String, String>> future : futures) {
+                Map.Entry<String, String> entry = future.join();
+                result.put(entry.getKey(), entry.getValue());
+            }
+            return result;
+        } catch (CompletionException ex) {
+            Throwable cause = ex.getCause();
+            if (cause instanceof RuntimeException runtime) throw runtime;
             throw ex;
         }
     }
@@ -315,10 +392,7 @@ public class StoryRunExecutionService {
     }
 
     private static boolean isPass(String decision) {
-        String normalized = decision == null ? "" : decision.toUpperCase(Locale.ROOT);
-        return normalized.matches("(?s).*FINAL_DECISION\\s*:\\s*PASS.*")
-                || normalized.matches("(?s).*ACTION\\s*:\\s*PASS.*")
-                || normalized.trim().equals("PASS");
+        return "PASS".equals(decisionAction(decision));
     }
 
     private static String decisionAction(String decision) {
@@ -328,6 +402,9 @@ public class StoryRunExecutionService {
                 return action;
             }
         }
+        Matcher action = Pattern.compile("\\b(PASS|REVISE|REWRITE|REDIRECT|REPITCH|REPLAN)\\b")
+                .matcher(normalized);
+        if (action.find()) return action.group(1);
         return "REVISE";
     }
 
@@ -371,6 +448,15 @@ public class StoryRunExecutionService {
         return Math.max(0, Duration.ofNanos(System.nanoTime() - startedNanos).toMillis());
     }
 
+    private static long estimateTokens(String value) {
+        int codePoints = value == null ? 0 : value.codePointCount(0, value.length());
+        return Math.max(1, (codePoints + 3L) / 4L);
+    }
+
+    private static long inputTokenUpperBound(String value) {
+        return Math.max(1, value == null ? 0 : value.getBytes(StandardCharsets.UTF_8).length);
+    }
+
     private static OffsetDateTime now() {
         return OffsetDateTime.now().truncatedTo(ChronoUnit.MICROS);
     }
@@ -384,6 +470,20 @@ public class StoryRunExecutionService {
         return text.length() <= 2_000 ? text : text.substring(0, 2_000) + "…";
     }
 
+    private static String redact(String value, String secret) {
+        String safe = bounded(value);
+        return StringUtils.hasText(secret) ? safe.replace(secret, "[REDACTED]") : safe;
+    }
+
+    private record BudgetReservation(long reservedTokens, int maxOutputTokens) {
+    }
+
+    private static final class BudgetLimitReachedException extends RuntimeException {
+        private BudgetLimitReachedException() {
+            super("已达到 Token 上限");
+        }
+    }
+
     private final class ExecutionState {
         private final StoryRun run;
         private final Map<String, AgentView> agents;
@@ -391,6 +491,7 @@ public class StoryRunExecutionService {
         private final List<String> revisionHistory = new ArrayList<>();
         private int sequence;
         private long totalTokens;
+        private long reservedTokens;
         private boolean limitReached;
 
         private ExecutionState(StoryRun run, Map<String, AgentView> agents, BudgetView budget) {
@@ -399,19 +500,46 @@ public class StoryRunExecutionService {
             this.budget = budget;
         }
 
-        private void addTokens(long tokens) {
+        private synchronized int nextSequence() {
+            return ++sequence;
+        }
+
+        private synchronized BudgetReservation reserve(String systemPrompt, String inputJson, int providerMax) {
+            long inputUpper = inputTokenUpperBound(systemPrompt + "\n" + inputJson);
+            long remaining = budget.maxTotalTokens() - totalTokens - reservedTokens;
+            if (remaining <= inputUpper) {
+                markLimitReached();
+                throw new BudgetLimitReachedException();
+            }
+            int maxOutput = (int) Math.min(Math.max(1, providerMax), remaining - inputUpper);
+            long reserved = inputUpper + maxOutput;
+            reservedTokens += reserved;
+            return new BudgetReservation(reserved, maxOutput);
+        }
+
+        private synchronized void completeReservation(BudgetReservation reservation, long tokens) {
+            reservedTokens = Math.max(0, reservedTokens - reservation.reservedTokens());
             totalTokens += Math.max(0, tokens);
             run.setTotalTokens(totalTokens);
             runRepository.save(run);
             if (totalTokens >= budget.maxTotalTokens()) {
-                limitReached = true;
-                run.setStatus("LIMIT_REACHED");
-                run.setFinishedAt(now());
-                runRepository.save(run);
+                markLimitReached();
             }
         }
 
-        private boolean limitReached() {
+        private synchronized void cancelReservation(BudgetReservation reservation) {
+            reservedTokens = Math.max(0, reservedTokens - reservation.reservedTokens());
+        }
+
+        private void markLimitReached() {
+            limitReached = true;
+            run.setStatus("LIMIT_REACHED");
+            run.setTotalTokens(totalTokens);
+            run.setFinishedAt(now());
+            runRepository.save(run);
+        }
+
+        private synchronized boolean limitReached() {
             return limitReached;
         }
     }
