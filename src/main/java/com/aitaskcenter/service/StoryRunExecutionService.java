@@ -36,7 +36,25 @@ import org.springframework.util.StringUtils;
 @Service
 public class StoryRunExecutionService {
     private static final Pattern STORY_BLOCK = Pattern.compile(
-            "STORY_TEXT_BEGIN\\s*(.*?)\\s*STORY_TEXT_END", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+            "\\A\\s*STORY_TEXT_BEGIN\\s*(.*?)\\s*STORY_TEXT_END\\s*\\z",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+    private static final Pattern CJK = Pattern.compile(
+            "[\\p{IsHan}\\p{IsHiragana}\\p{IsKatakana}\\p{IsHangul}]");
+    private static final Pattern MARKDOWN = Pattern.compile(
+            "(?m)^\\s*(?:#{1,6}\\s+|[-*+]\\s+|\\|.*\\|\\s*$)|\\*\\*|```");
+    private static final Pattern SCENE_TITLE = Pattern.compile(
+            "(?im)^\\s*Scene\\s+1\\s*:\\s*\\S.*$");
+    private static final String STORY_OUTPUT_CONTRACT = """
+
+            [运行时最终输出协议：此协议优先于前文的输出结构要求]
+            只输出以下边界之间的纯英文故事，不得在边界外输出任何内容：
+            STORY_TEXT_BEGIN
+            Scene 1: Plain English Title
+
+            Plain English story paragraphs only.
+            STORY_TEXT_END
+            故事块内禁止 Markdown、中文说明、目标词清单、评分信息、变更记录、表格或代码围栏。
+            """;
     private static final List<String> PITCH_KEYS = List.of("pitch-humor", "pitch-adventure", "pitch-wonder");
     private static final List<String> REVIEW_KEYS = List.of("review-fun", "review-language", "review-continuity");
 
@@ -135,7 +153,7 @@ public class StoryRunExecutionService {
                     "storyBlueprint", blueprint,
                     "targetGrade", run.getTargetGrade(),
                     "writerFeedback", ""));
-            run.setFinalStory(extractStory(candidate));
+            run.setFinalStory(candidate);
             runRepository.save(run);
             if (state.limitReached()) return;
 
@@ -259,7 +277,7 @@ public class StoryRunExecutionService {
                     complete(run, "LIMIT_REACHED", candidate, state.totalTokens);
                     return;
                 }
-                run.setFinalStory(extractStory(candidate));
+                run.setFinalStory(candidate);
                 runRepository.save(run);
                 if (state.limitReached()) return;
             }
@@ -301,8 +319,11 @@ public class StoryRunExecutionService {
             throw new IllegalArgumentException("故事 Agent「" + agentKey + "」的 AI 配置未启用或不支持文本生成");
         }
         String inputJson = writeJson(input);
+        String systemPrompt = producesStory(agentKey)
+                ? agent.systemPrompt() + STORY_OUTPUT_CONTRACT
+                : agent.systemPrompt();
         int configuredMax = provider.getMaxTokens() == null ? 4096 : provider.getMaxTokens();
-        BudgetReservation reservation = state.reserve(agent.systemPrompt(), inputJson, configuredMax);
+        BudgetReservation reservation = state.reserve(systemPrompt, inputJson, configuredMax);
         long started = System.nanoTime();
         StoryRunStep step = new StoryRunStep();
         step.setRunId(state.run.getRunId());
@@ -314,35 +335,49 @@ public class StoryRunExecutionService {
         step.setProviderId(agent.aiProviderId());
         step.setProviderModel(provider.getModel());
         step.setInputJson(inputJson);
+        boolean generationCompleted = false;
+        boolean reservationSettled = false;
+        long inputTokens = 0;
+        long outputTokens = 0;
+        long totalTokens = 0;
         try {
             AiTextGenerationService.GenerationResult result = generationService.generateWithUsage(
                     provider,
-                    agent.systemPrompt(),
+                    systemPrompt,
                     inputJson,
                     agent.temperature() == null ? 0.2 : agent.temperature(),
                     reservation.maxOutputTokens());
-            long inputTokens = result.inputTokens() > 0
+            generationCompleted = true;
+            inputTokens = result.inputTokens() > 0
                     ? result.inputTokens()
-                    : estimateTokens(agent.systemPrompt() + "\n" + inputJson);
-            long outputTokens = result.outputTokens() > 0
+                    : estimateTokens(systemPrompt + "\n" + inputJson);
+            outputTokens = result.outputTokens() > 0
                     ? result.outputTokens()
                     : estimateTokens(result.text());
-            long totalTokens = result.totalTokens() > 0
+            totalTokens = result.totalTokens() > 0
                     ? result.totalTokens()
                     : inputTokens + outputTokens;
             step.setOutputText(result.text());
-            step.setStatus("COMPLETED");
             step.setInputTokens(inputTokens);
             step.setOutputTokens(outputTokens);
             step.setTotalTokens(totalTokens);
+            String response = producesStory(agentKey) ? extractStory(result.text()) : result.text();
+            step.setStatus("COMPLETED");
             step.setDurationMs(elapsedMillis(started));
             stepRepository.save(step);
             state.completeReservation(reservation, totalTokens);
-            return result.text();
+            reservationSettled = true;
+            return response;
         } catch (Exception ex) {
-            state.cancelReservation(reservation);
+            if (generationCompleted && !reservationSettled) {
+                state.completeReservation(reservation, totalTokens);
+            } else if (!reservationSettled) {
+                state.cancelReservation(reservation);
+            }
             String safeMessage = redact(ex.getMessage(), provider.getApiKey());
-            step.setOutputText(safeMessage);
+            if (!generationCompleted) {
+                step.setOutputText(safeMessage);
+            }
             step.setStatus("FAILED");
             step.setDurationMs(elapsedMillis(started));
             stepRepository.save(step);
@@ -385,7 +420,7 @@ public class StoryRunExecutionService {
 
     private void complete(StoryRun run, String status, String candidate, long totalTokens) {
         run.setStatus(status);
-        run.setFinalStory(extractStory(candidate));
+        run.setFinalStory(candidate);
         run.setTotalTokens(totalTokens);
         run.setFinishedAt(now());
         runRepository.save(run);
@@ -411,7 +446,28 @@ public class StoryRunExecutionService {
     static String extractStory(String output) {
         String value = output == null ? "" : output.trim();
         Matcher matcher = STORY_BLOCK.matcher(value);
-        return matcher.find() ? matcher.group(1).trim() : value;
+        if (!matcher.matches()) {
+            throw invalidStoryOutput();
+        }
+        String story = matcher.group(1).trim();
+        String normalized = story.toLowerCase(Locale.ROOT);
+        if (story.isEmpty()
+                || !SCENE_TITLE.matcher(story).find()
+                || CJK.matcher(story).find()
+                || MARKDOWN.matcher(story).find()
+                || normalized.contains("target words checklist")
+                || normalized.contains("revision log")) {
+            throw invalidStoryOutput();
+        }
+        return story;
+    }
+
+    private static boolean producesStory(String agentKey) {
+        return "story-writer".equals(agentKey) || "targeted-reviser".equals(agentKey);
+    }
+
+    private static IllegalArgumentException invalidStoryOutput() {
+        return new IllegalArgumentException("故事输出格式错误：只允许纯英文场景标题和故事正文");
     }
 
     private RunSummary toSummary(StoryRun run, List<StoryWord> words) {

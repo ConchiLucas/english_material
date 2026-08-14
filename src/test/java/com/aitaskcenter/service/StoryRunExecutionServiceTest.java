@@ -1,7 +1,10 @@
 package com.aitaskcenter.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -74,6 +77,47 @@ class StoryRunExecutionServiceTest {
     }
 
     @Test
+    void extractsPlainEnglishMultiSceneStory() {
+        String output = """
+                STORY_TEXT_BEGIN
+                Scene 1: The Blue Bag
+
+                Ben opens his blue bag.
+
+                Scene 2: The Red Juice
+
+                The red juice spills.
+                STORY_TEXT_END
+                """;
+
+        assertEquals("""
+                Scene 1: The Blue Bag
+
+                Ben opens his blue bag.
+
+                Scene 2: The Red Juice
+
+                The red juice spills.
+                """.strip(), StoryRunExecutionService.extractStory(output));
+    }
+
+    @Test
+    void rejectsUnframedOrNonPlainStoryOutput() {
+        for (String invalid : List.of(
+                "Here is the story:\nScene 1: A Story",
+                "STORY_TEXT_BEGIN\n**Scene 1: A Story**\nSTORY_TEXT_END",
+                "STORY_TEXT_BEGIN\n### Scene 1: A Story\nSTORY_TEXT_END",
+                "STORY_TEXT_BEGIN\n故事说明\nScene 1: A Story\nSTORY_TEXT_END",
+                "STORY_TEXT_BEGIN\nOnce upon a time.\nSTORY_TEXT_END",
+                "STORY_TEXT_BEGIN\nTarget Words Checklist\nSTORY_TEXT_END")) {
+            IllegalArgumentException error = assertThrows(
+                    IllegalArgumentException.class,
+                    () -> StoryRunExecutionService.extractStory(invalid));
+            assertEquals("故事输出格式错误：只允许纯英文场景标题和故事正文", error.getMessage());
+        }
+    }
+
+    @Test
     void runsFixedAgentsInInvocationOrderAndStoresFinalStory() {
         ArrayDeque<String> outputs = successfulOutputs("FINAL_DECISION: PASS");
         when(generationService.generateWithUsage(any(), anyString(), anyString(), any(Double.class), anyInt()))
@@ -90,8 +134,43 @@ class StoryRunExecutionServiceTest {
                 "review-continuity", "story-scorer", "quality-decider"),
                 steps.getAllValues().stream().map(StoryRunStep::getAgentKey).toList());
         assertEquals("COMPLETED", persisted.getStatus());
-        assertEquals("A funny final story", persisted.getFinalStory());
+        assertEquals("Scene 1: A Funny Story\n\nA funny final story.", persisted.getFinalStory());
         assertNotNull(created.runId());
+    }
+
+    @Test
+    void appendsRuntimeContractAndPassesOnlyExtractedStoryToReviewers() {
+        ArrayDeque<String> outputs = successfulOutputs("FINAL_DECISION: PASS");
+        List<String> systemPrompts = new ArrayList<>();
+        List<String> inputJsonValues = new ArrayList<>();
+        when(generationService.generateWithUsage(any(), anyString(), anyString(), any(Double.class), anyInt()))
+                .thenAnswer(call -> {
+                    systemPrompts.add(call.getArgument(1));
+                    inputJsonValues.add(call.getArgument(2));
+                    return result(outputs.removeFirst(), 100);
+                });
+
+        service.createRun(new StartRunRequest(
+                List.of(new StoryWord("book", "书")), "三年级上册"));
+
+        String writerSystemPrompt = systemPrompts.stream()
+                .filter(prompt -> prompt.contains("System prompt for story-writer"))
+                .findFirst().orElseThrow();
+        assertTrue(writerSystemPrompt.contains("STORY_TEXT_BEGIN"));
+        assertTrue(writerSystemPrompt.contains("STORY_TEXT_END"));
+        assertTrue(writerSystemPrompt.contains("禁止 Markdown"));
+
+        String reviewInput = inputJsonValues.get(6);
+        assertTrue(reviewInput.contains("A funny final story."));
+        assertFalse(reviewInput.contains("STORY_TEXT_BEGIN"));
+
+        ArgumentCaptor<StoryRunStep> steps = ArgumentCaptor.forClass(StoryRunStep.class);
+        verify(stepRepository, org.mockito.Mockito.times(11)).save(steps.capture());
+        StoryRunStep writerStep = steps.getAllValues().stream()
+                .filter(step -> "story-writer".equals(step.getAgentKey()))
+                .findFirst().orElseThrow();
+        assertTrue(writerStep.getOutputText().contains("STORY_TEXT_BEGIN"));
+        assertEquals("COMPLETED", writerStep.getStatus());
     }
 
     @Test
@@ -110,7 +189,7 @@ class StoryRunExecutionServiceTest {
                         return result("pitch", 10);
                     }
                     if (systemPrompt.contains("story-writer")) {
-                        return result("STORY_TEXT_BEGIN\nA story\nSTORY_TEXT_END", 10);
+                        return result("STORY_TEXT_BEGIN\nScene 1: A Story\n\nA story.\nSTORY_TEXT_END", 10);
                     }
                     if (systemPrompt.contains("quality-decider")) return result("ACTION: PASS", 10);
                     return result("ok", 10);
@@ -127,27 +206,58 @@ class StoryRunExecutionServiceTest {
     @Test
     void repeatsReviewRoundAfterTargetedRevisionUntilPass() {
         ArrayDeque<String> outputs = successfulOutputs("ACTION: REVISE\nTARGET_NODE: targeted-reviser");
-        outputs.add("STORY_TEXT_BEGIN\nA better story\nSTORY_TEXT_END");
+        outputs.add("STORY_TEXT_BEGIN\nScene 1: A Better Story\n\nA better story.\nSTORY_TEXT_END");
         outputs.add("fun review 2");
         outputs.add("language review 2");
         outputs.add("continuity review 2");
         outputs.add("score 2");
         outputs.add("FINAL_DECISION: PASS");
+        List<String> systemPrompts = new ArrayList<>();
         when(generationService.generateWithUsage(any(), anyString(), anyString(), any(Double.class), anyInt()))
-                .thenAnswer(call -> result(outputs.removeFirst(), 50));
+                .thenAnswer(call -> {
+                    systemPrompts.add(call.getArgument(1));
+                    return result(outputs.removeFirst(), 50);
+                });
 
         service.createRun(new StartRunRequest(List.of(new StoryWord("book", "书")), "三年级上册"));
 
         ArgumentCaptor<StoryRunStep> steps = ArgumentCaptor.forClass(StoryRunStep.class);
         verify(stepRepository, org.mockito.Mockito.times(17)).save(steps.capture());
         assertEquals(2, steps.getAllValues().get(12).getQualityRound());
-        assertEquals("A better story", persisted.getFinalStory());
+        assertEquals("Scene 1: A Better Story\n\nA better story.", persisted.getFinalStory());
+        String reviserSystemPrompt = systemPrompts.stream()
+                .filter(prompt -> prompt.contains("System prompt for targeted-reviser"))
+                .findFirst().orElseThrow();
+        assertTrue(reviserSystemPrompt.contains("STORY_TEXT_BEGIN"));
+        assertTrue(reviserSystemPrompt.contains("禁止 Markdown"));
+    }
+
+    @Test
+    void failsRunAndPreservesRawOutputWhenWriterBreaksStoryContract() {
+        ArrayDeque<String> outputs = new ArrayDeque<>(List.of(
+                "word plan", "humor pitch", "adventure pitch", "wonder pitch", "blueprint",
+                "Here is the report:\n### Story\n**Not plain**"));
+        when(generationService.generateWithUsage(any(), anyString(), anyString(), any(Double.class), anyInt()))
+                .thenAnswer(call -> result(outputs.removeFirst(), 50));
+
+        service.createRun(new StartRunRequest(
+                List.of(new StoryWord("book", "书")), "三年级上册"));
+
+        ArgumentCaptor<StoryRunStep> steps = ArgumentCaptor.forClass(StoryRunStep.class);
+        verify(stepRepository, org.mockito.Mockito.times(6)).save(steps.capture());
+        StoryRunStep writerStep = steps.getAllValues().get(5);
+        assertEquals("story-writer", writerStep.getAgentKey());
+        assertEquals("FAILED", writerStep.getStatus());
+        assertEquals("Here is the report:\n### Story\n**Not plain**", writerStep.getOutputText());
+        assertEquals("FAILED", persisted.getStatus());
+        assertNull(persisted.getFinalStory());
+        assertEquals("故事输出格式错误：只允许纯英文场景标题和故事正文", persisted.getErrorMessage());
     }
 
     @Test
     void routesRewriteDecisionBackToWriterWithinBudget() {
         ArrayDeque<String> outputs = successfulOutputs("After reviewing the evidence, the only action is REWRITE.");
-        outputs.add("STORY_TEXT_BEGIN\nA rewritten story\nSTORY_TEXT_END");
+        outputs.add("STORY_TEXT_BEGIN\nScene 1: A Rewritten Story\n\nA rewritten story.\nSTORY_TEXT_END");
         outputs.add("fun review 2");
         outputs.add("language review 2");
         outputs.add("continuity review 2");
@@ -164,7 +274,7 @@ class StoryRunExecutionServiceTest {
                 .filter(step -> "story-writer".equals(step.getAgentKey())).count());
         assertEquals(0, steps.getAllValues().stream()
                 .filter(step -> "targeted-reviser".equals(step.getAgentKey())).count());
-        assertEquals("A rewritten story", persisted.getFinalStory());
+        assertEquals("Scene 1: A Rewritten Story\n\nA rewritten story.", persisted.getFinalStory());
     }
 
     @Test
@@ -261,7 +371,7 @@ class StoryRunExecutionServiceTest {
     private ArrayDeque<String> successfulOutputs(String decision) {
         return new ArrayDeque<>(List.of(
                 "word plan", "humor pitch", "adventure pitch", "wonder pitch", "blueprint",
-                "STORY_TEXT_BEGIN\nA funny final story\nSTORY_TEXT_END", "fun review",
+                "STORY_TEXT_BEGIN\nScene 1: A Funny Story\n\nA funny final story.\nSTORY_TEXT_END", "fun review",
                 "language review", "continuity review", "score", decision));
     }
 
