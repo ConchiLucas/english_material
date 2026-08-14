@@ -20,7 +20,7 @@ summary: 维护数据库、AI、故事 Agent 配置与有界故事执行，并�
 - `StoryAgentController` 提供故事 Agent 流程、Prompt 版本和质量预算的配置接口；`StoryAgentService` 负责拼装固定流程、校验可编辑节点与文本生成 Provider、保存 Agent 配置、生成 Prompt 版本快照、恢复历史版本和维护流程预算。
 - `StoryAgentCatalog` 固定定义 4 个阶段、12 个可编辑 Agent 和 5 个只读程序/人工节点；`StoryAgentInitializer` 启动时只在某个 Agent 配置缺失时创建该配置及其 v1 快照，已有 Agent 即使缺少历史快照也不补建；默认流程预算缺失时才创建，且不覆盖已有配置。
 - `StoryRunController`、`StoryRunExecutionService` 与 `StoryRunQueryService` 创建异步故事运行批次，按固定 Agent 链路执行创作、审核、评分和决策，保存每次实际模型调用的完整输入/输出，并提供批次与详情查询。
-- `StoryRunExecutionService` 为 `story-writer` 和 `targeted-reviser` 追加不可编辑的运行时输出协议：步骤表保留模型原始响应，但只有通过边界和纯文本校验的英文场景故事会进入后续审核及 `tb_story_run.final_story`。协议缺失、Markdown、中文说明或清单输出会使该步骤和批次失败，不会把完整报告冒充最终故事。
+- `StoryRunExecutionService` 为 `story-writer` 和 `targeted-reviser` 追加不可编辑的运行时输出协议：步骤表保留模型原始响应，但只有唯一边界内通过纯文本校验的英文场景故事会进入后续审核及 `tb_story_run.final_story`。模型在结束边界外追加的清单或修订说明仅留在原始步骤详情；边界缺失/歧义或故事块内部出现 Markdown、中文说明或清单会使该步骤和批次失败，不会把完整报告冒充最终故事。
 - 质量决策支持 `REVISE`、`REWRITE`、`REDIRECT`、`REPITCH`、`REPLAN` 和 `PASS`；每种回退次数、质量轮次和总 Token 都受 `tb_story_flow_config` 的确定性预算限制。Provider 未返回用量时，以输入输出长度估算用量，预算仍然生效。
 - `WordCleanController` 根据已保存的连接 ID 查询去重单词、筛选项和例句。
 - `StoryWordSourceService` 可从已保存连接中的 `word_library`/`word` 参数化随机读取 1—50 个单词；外部材料库始终只读。

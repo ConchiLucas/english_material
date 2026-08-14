@@ -36,8 +36,8 @@ import org.springframework.util.StringUtils;
 @Service
 public class StoryRunExecutionService {
     private static final Pattern STORY_BLOCK = Pattern.compile(
-            "\\A\\s*STORY_TEXT_BEGIN[ \\t]*\\R(.*?)\\R[ \\t]*STORY_TEXT_END\\s*\\z",
-            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+            "^[ \\t]*STORY_TEXT_BEGIN[ \\t]*\\R(.*?)\\R[ \\t]*STORY_TEXT_END[ \\t]*(?:\\R|\\z)",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL | Pattern.MULTILINE);
     private static final Pattern MARKDOWN = Pattern.compile(
             "(?m)^\\s*(?:#{1,6}\\s+|[-*+]\\s+|>\\s*|\\d+[.)]\\s+|(?:-{3,}|={3,})\\s*$)|"
                     + "!?\\[[^]\\r\\n]+]\\([^)\\r\\n]+\\)|[*_`~]");
@@ -451,8 +451,15 @@ public class StoryRunExecutionService {
 
     static String extractStory(String output) {
         String value = output == null ? "" : output.trim();
+        String normalizedValue = value.toLowerCase(Locale.ROOT);
+        if (normalizedValue.indexOf("story_text_begin")
+                        != normalizedValue.lastIndexOf("story_text_begin")
+                || normalizedValue.indexOf("story_text_end")
+                        != normalizedValue.lastIndexOf("story_text_end")) {
+            throw invalidStoryOutput();
+        }
         Matcher matcher = STORY_BLOCK.matcher(value);
-        if (!matcher.matches()) {
+        if (!matcher.find()) {
             throw invalidStoryOutput();
         }
         String story = matcher.group(1).trim();

@@ -102,6 +102,27 @@ class StoryRunExecutionServiceTest {
     }
 
     @Test
+    void extractsUniqueCleanStoryBlockWhileLeavingTrailingAuditInRawOutput() {
+        String output = """
+                STORY_TEXT_BEGIN
+                Scene 1: A Better Story
+
+                A better story.
+                STORY_TEXT_END
+
+                ### Target Words
+                1. book
+
+                ### Revision Notes
+                Fixed the ending.
+                """;
+
+        assertEquals(
+                "Scene 1: A Better Story\n\nA better story.",
+                StoryRunExecutionService.extractStory(output));
+    }
+
+    @Test
     void rejectsUnframedOrNonPlainStoryOutput() {
         for (String invalid : List.of(
                 "Here is the story:\nScene 1: A Story",
@@ -250,7 +271,9 @@ class StoryRunExecutionServiceTest {
     @Test
     void repeatsReviewRoundAfterTargetedRevisionUntilPass() {
         ArrayDeque<String> outputs = successfulOutputs("ACTION: REVISE\nTARGET_NODE: targeted-reviser");
-        outputs.add("STORY_TEXT_BEGIN\nScene 1: A Better Story\n\nA better story.\nSTORY_TEXT_END");
+        String rawRevision = "STORY_TEXT_BEGIN\nScene 1: A Better Story\n\nA better story.\n"
+                + "STORY_TEXT_END\n\n### Revision Notes\nFixed the ending.";
+        outputs.add(rawRevision);
         outputs.add("fun review 2");
         outputs.add("language review 2");
         outputs.add("continuity review 2");
@@ -269,6 +292,7 @@ class StoryRunExecutionServiceTest {
         verify(stepRepository, org.mockito.Mockito.times(17)).save(steps.capture());
         assertEquals(2, steps.getAllValues().get(12).getQualityRound());
         assertEquals("Scene 1: A Better Story\n\nA better story.", persisted.getFinalStory());
+        assertEquals(rawRevision, steps.getAllValues().get(11).getOutputText());
         String reviserSystemPrompt = systemPrompts.stream()
                 .filter(prompt -> prompt.contains("System prompt for targeted-reviser"))
                 .findFirst().orElseThrow();

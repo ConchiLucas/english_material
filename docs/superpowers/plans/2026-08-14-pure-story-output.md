@@ -119,14 +119,14 @@ private static boolean producesStory(String agentKey) {
 
 Build `effectiveSystemPrompt` from the editable prompt plus this contract for the two story-producing Agents. Use that effective prompt for budget reservation, generation and token estimation.
 
-After generation, preserve the raw response in `StoryRunStep.outputText`, but return `extractStory(rawOutput)` from `call` for story-producing Agents. On format validation failure, preserve the raw response, mark the step `FAILED`, account for its actual or estimated tokens exactly once, and let the run become `FAILED` with the bounded format message.
+After generation, preserve the raw response in `StoryRunStep.outputText`, but return `extractStory(rawOutput)` from `call` for story-producing Agents. Accept one unique, clean story block even if a Provider ignores the instruction and appends audit text outside the closing marker; that audit text remains available only in the raw step output. On a missing/ambiguous block or validation failure inside the story block, preserve the raw response, mark the step `FAILED`, account for its actual or estimated tokens exactly once, and let the run become `FAILED` with the bounded format message.
 
-Replace the permissive extractor with an anchored block parser and explicit plain-text validation:
+Replace the permissive extractor with a unique standalone block parser and explicit plain-text validation:
 
 ```java
 private static final Pattern STORY_BLOCK = Pattern.compile(
-        "\\A\\s*STORY_TEXT_BEGIN\\s*(.*?)\\s*STORY_TEXT_END\\s*\\z",
-        Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+        "^[ \\t]*STORY_TEXT_BEGIN[ \\t]*\\R(.*?)\\R[ \\t]*STORY_TEXT_END[ \\t]*(?:\\R|\\z)",
+        Pattern.CASE_INSENSITIVE | Pattern.DOTALL | Pattern.MULTILINE);
 private static final Pattern CJK = Pattern.compile("[\\p{IsHan}\\p{IsHiragana}\\p{IsKatakana}\\p{IsHangul}]");
 private static final Pattern MARKDOWN = Pattern.compile(
         "(?m)^\\s*(?:#{1,6}\\s+|[-*+]\\s+|\\|)|\\*\\*|```|^.*\\|.*\\|.*$");
