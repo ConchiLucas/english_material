@@ -1,6 +1,8 @@
 package com.aitaskcenter.config;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 import java.util.Set;
@@ -70,5 +72,16 @@ class StoryAgentCatalogTest {
                         "pitch-wonder",
                         "vocabulary-planner"),
                 StoryAgentCatalog.require("quality-decider").downstream());
+    }
+
+    @Test
+    void storyProducingDefaultsRequestOnlyTheEnglishStory() {
+        String writerPrompt = StoryAgentCatalog.require("story-writer").defaultPrompt();
+        String reviserPrompt = StoryAgentCatalog.require("targeted-reviser").defaultPrompt();
+
+        assertTrue(writerPrompt.contains("只输出完整英文故事正文"));
+        assertFalse(writerPrompt.contains("位置清单"));
+        assertTrue(reviserPrompt.contains("只输出修订后的完整英文故事正文"));
+        assertFalse(reviserPrompt.contains("变更记录"));
     }
 }
