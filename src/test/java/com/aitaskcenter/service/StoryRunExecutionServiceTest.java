@@ -118,6 +118,25 @@ class StoryRunExecutionServiceTest {
     }
 
     @Test
+    void rejectsAmbiguousMarkersAndAuditContentInsideOtherwiseValidStories() {
+        for (String invalid : List.of(
+                "STORY_TEXT_BEGINfoo\nScene 1: A Story\n\nA story.\nSTORY_TEXT_END",
+                "STORY_TEXT_BEGIN\nScene 1: A Story\n\nSTORY_TEXT_BEGIN\nA story.\nSTORY_TEXT_END",
+                "STORY_TEXT_BEGIN\nScene 1: A Story\n\nA story.\nSTORY_TEXT_END\nSTORY_TEXT_END",
+                framedStory("Target Words: book, green"),
+                framedStory("Score: 95"),
+                framedStory("Changes: fixed the ending"),
+                framedStory("_A quiet story._"),
+                framedStory("Word | Meaning | Scene"),
+                framedStory("The child says Привет."))) {
+            IllegalArgumentException error = assertThrows(
+                    IllegalArgumentException.class,
+                    () -> StoryRunExecutionService.extractStory(invalid));
+            assertEquals("故事输出格式错误：只允许纯英文场景标题和故事正文", error.getMessage());
+        }
+    }
+
+    @Test
     void runsFixedAgentsInInvocationOrderAndStoresFinalStory() {
         ArrayDeque<String> outputs = successfulOutputs("FINAL_DECISION: PASS");
         when(generationService.generateWithUsage(any(), anyString(), anyString(), any(Double.class), anyInt()))
@@ -163,6 +182,8 @@ class StoryRunExecutionServiceTest {
         String reviewInput = inputJsonValues.get(6);
         assertTrue(reviewInput.contains("A funny final story."));
         assertFalse(reviewInput.contains("STORY_TEXT_BEGIN"));
+        assertTrue(reviewInput.contains("直接从 candidateStory 核对目标词"));
+        assertFalse(reviewInput.contains("位置清单"));
 
         ArgumentCaptor<StoryRunStep> steps = ArgumentCaptor.forClass(StoryRunStep.class);
         verify(stepRepository, org.mockito.Mockito.times(11)).save(steps.capture());
@@ -252,6 +273,50 @@ class StoryRunExecutionServiceTest {
         assertEquals("FAILED", persisted.getStatus());
         assertNull(persisted.getFinalStory());
         assertEquals("故事输出格式错误：只允许纯英文场景标题和故事正文", persisted.getErrorMessage());
+        assertEquals(300, persisted.getTotalTokens());
+        assertEquals(50, writerStep.getTotalTokens());
+    }
+
+    @Test
+    void failsRevisionAndKeepsLastValidStoryWhenReviserBreaksContract() {
+        ArrayDeque<String> outputs = successfulOutputs("ACTION: REVISE\nTARGET_NODE: targeted-reviser");
+        outputs.add("Here is the revision report:\nChanges: rewrote everything");
+        when(generationService.generateWithUsage(any(), anyString(), anyString(), any(Double.class), anyInt()))
+                .thenAnswer(call -> result(outputs.removeFirst(), 50));
+
+        service.createRun(new StartRunRequest(
+                List.of(new StoryWord("book", "书")), "三年级上册"));
+
+        ArgumentCaptor<StoryRunStep> steps = ArgumentCaptor.forClass(StoryRunStep.class);
+        verify(stepRepository, org.mockito.Mockito.times(12)).save(steps.capture());
+        StoryRunStep reviserStep = steps.getAllValues().get(11);
+        assertEquals("targeted-reviser", reviserStep.getAgentKey());
+        assertEquals("FAILED", reviserStep.getStatus());
+        assertEquals("Here is the revision report:\nChanges: rewrote everything", reviserStep.getOutputText());
+        assertEquals(50, reviserStep.getTotalTokens());
+        assertEquals(600, persisted.getTotalTokens());
+        assertEquals("FAILED", persisted.getStatus());
+        assertEquals("Scene 1: A Funny Story\n\nA funny final story.", persisted.getFinalStory());
+    }
+
+    @Test
+    void keepsExtractedStoryWhenWriterCallReachesTokenLimit() {
+        when(agentService.getFlow()).thenReturn(flow(3, 1_000));
+        when(generationService.generateWithUsage(any(), anyString(), anyString(), any(Double.class), anyInt()))
+                .thenAnswer(call -> {
+                    String systemPrompt = call.getArgument(1);
+                    if (systemPrompt.contains("story-writer")) {
+                        return result(framedStory("The story is ready."), 1_000);
+                    }
+                    return result("short", 1);
+                });
+
+        service.createRun(new StartRunRequest(
+                List.of(new StoryWord("book", "书")), "三年级上册"));
+
+        assertEquals("LIMIT_REACHED", persisted.getStatus());
+        assertEquals("Scene 1: A Story\n\nThe story is ready.", persisted.getFinalStory());
+        assertEquals(1_005, persisted.getTotalTokens());
     }
 
     @Test
@@ -373,6 +438,10 @@ class StoryRunExecutionServiceTest {
                 "word plan", "humor pitch", "adventure pitch", "wonder pitch", "blueprint",
                 "STORY_TEXT_BEGIN\nScene 1: A Funny Story\n\nA funny final story.\nSTORY_TEXT_END", "fun review",
                 "language review", "continuity review", "score", decision));
+    }
+
+    private static String framedStory(String body) {
+        return "STORY_TEXT_BEGIN\nScene 1: A Story\n\n" + body + "\nSTORY_TEXT_END";
     }
 
     private AiTextGenerationService.GenerationResult result(String text, long tokens) {

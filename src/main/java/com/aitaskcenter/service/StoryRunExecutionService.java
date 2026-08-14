@@ -36,12 +36,16 @@ import org.springframework.util.StringUtils;
 @Service
 public class StoryRunExecutionService {
     private static final Pattern STORY_BLOCK = Pattern.compile(
-            "\\A\\s*STORY_TEXT_BEGIN\\s*(.*?)\\s*STORY_TEXT_END\\s*\\z",
+            "\\A\\s*STORY_TEXT_BEGIN[ \\t]*\\R(.*?)\\R[ \\t]*STORY_TEXT_END\\s*\\z",
             Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
-    private static final Pattern CJK = Pattern.compile(
-            "[\\p{IsHan}\\p{IsHiragana}\\p{IsKatakana}\\p{IsHangul}]");
     private static final Pattern MARKDOWN = Pattern.compile(
-            "(?m)^\\s*(?:#{1,6}\\s+|[-*+]\\s+|\\|.*\\|\\s*$)|\\*\\*|```");
+            "(?m)^\\s*(?:#{1,6}\\s+|[-*+]\\s+)|[*_]|```");
+    private static final Pattern TABLE_ROW = Pattern.compile(
+            "(?m)^\\s*[^\\r\\n|]+\\|[^\\r\\n|]+\\|[^\\r\\n|]+\\s*$");
+    private static final Pattern AUDIT_SECTION = Pattern.compile(
+            "(?im)^\\s*(?:target\\s+words?(?:\\s+checklist)?|word\\s+usage(?:\\s+map)?|"
+                    + "score(?:s|\\s+report)?|scoring|changes?|change\\s+log|revision(?:\\s+log)?|"
+                    + "analysis|explanation)\\s*[:：]");
     private static final Pattern SCENE_TITLE = Pattern.compile(
             "(?im)^\\s*Scene\\s+1\\s*:\\s*\\S.*$");
     private static final String STORY_OUTPUT_CONTRACT = """
@@ -169,7 +173,7 @@ public class StoryRunExecutionService {
                     Map<String, Object> input = new LinkedHashMap<>();
                     input.put("candidateStory", candidate);
                     input.put("targetWords", targetWords);
-                    input.put("wordUsageMap", "由故事正文中的使用位置清单提供");
+                    input.put("wordUsageMap", "直接从 candidateStory 核对目标词及其实际词形和语境");
                     input.put("targetGrade", run.getTargetGrade());
                     input.put("storyBlueprint", blueprint);
                     input.put("qualityRound", qualityRound);
@@ -453,8 +457,12 @@ public class StoryRunExecutionService {
         String normalized = story.toLowerCase(Locale.ROOT);
         if (story.isEmpty()
                 || !SCENE_TITLE.matcher(story).find()
-                || CJK.matcher(story).find()
+                || normalized.contains("story_text_begin")
+                || normalized.contains("story_text_end")
                 || MARKDOWN.matcher(story).find()
+                || TABLE_ROW.matcher(story).find()
+                || AUDIT_SECTION.matcher(story).find()
+                || containsNonLatinText(story)
                 || normalized.contains("target words checklist")
                 || normalized.contains("revision log")) {
             throw invalidStoryOutput();
@@ -464,6 +472,19 @@ public class StoryRunExecutionService {
 
     private static boolean producesStory(String agentKey) {
         return "story-writer".equals(agentKey) || "targeted-reviser".equals(agentKey);
+    }
+
+    private static boolean containsNonLatinText(String story) {
+        return story.codePoints().anyMatch(codePoint -> {
+            if (Character.isLetter(codePoint)) {
+                return Character.UnicodeScript.of(codePoint) != Character.UnicodeScript.LATIN;
+            }
+            int type = Character.getType(codePoint);
+            return type == Character.MATH_SYMBOL
+                    || type == Character.CURRENCY_SYMBOL
+                    || type == Character.MODIFIER_SYMBOL
+                    || type == Character.OTHER_SYMBOL;
+        });
     }
 
     private static IllegalArgumentException invalidStoryOutput() {
