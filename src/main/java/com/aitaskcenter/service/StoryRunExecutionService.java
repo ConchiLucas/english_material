@@ -47,7 +47,7 @@ public class StoryRunExecutionService {
                     + "review(?:er)?(?:\\s+(?:notes?|report|summary))?|changes?|"
                     + "change\\s+(?:log|notes?|history|summary)|"
                     + "revision(?:\\s+(?:log|notes?|history|summary))?|"
-                    + "analysis|explanation)\\s*[:：]");
+                    + "analysis|explanation)[ \\t]*(?:[:：]|$)");
     private static final Pattern SCENE_TITLE = Pattern.compile(
             "(?im)^\\s*Scene\\s+1\\s*:\\s*\\S.*$");
     private static final String STORY_OUTPUT_CONTRACT = """
