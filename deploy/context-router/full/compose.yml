@@ -24,6 +24,7 @@ services:
       TASK_CENTER_DB_URL: ${TASK_CENTER_DB_URL:?Set TASK_CENTER_DB_URL in .env.local}
       TASK_CENTER_DB_USER: ${TASK_CENTER_DB_USER:?Set TASK_CENTER_DB_USER in .env.local}
       TASK_CENTER_DB_PASSWORD: ${TASK_CENTER_DB_PASSWORD:?Set TASK_CENTER_DB_PASSWORD in .env.local}
+      TASK_CENTER_EXTERNAL_HOST_ALIAS: host.docker.internal
       JAVA_TOOL_OPTIONS: >-
         -XX:MaxRAMPercentage=${JAVA_MAX_RAM_PERCENTAGE:-75.0}
         -XX:+ExitOnOutOfMemoryError
