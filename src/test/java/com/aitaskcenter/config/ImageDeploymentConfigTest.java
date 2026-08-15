@@ -156,16 +156,22 @@ class ImageDeploymentConfigTest {
     }
 
     @Test
-    void frontendFullBuildUsesAnonymousDockerConfigWithBuildx() throws Exception {
+    void frontendFastAndFullBuildsUseAnonymousDockerConfigWithBuildx() throws Exception {
+        for (String mode : new String[] {"fast", "full"}) {
+            assertFrontendBuildUsesAnonymousDockerConfig(mode);
+        }
+    }
+
+    private void assertFrontendBuildUsesAnonymousDockerConfig(String mode) throws Exception {
         String frontendDeploy = Files.readString(
-                Path.of("web-react/deploy/context-router/full/deploy.sh"));
+                Path.of("web-react/deploy/context-router", mode, "deploy.sh"));
         int helperStart = frontendDeploy.indexOf("registry_docker() {");
         int helperEnd = frontendDeploy.indexOf("remove_legacy_container() {");
         assertTrue(helperStart >= 0 && helperEnd > helperStart);
         String helperFunctions = frontendDeploy.substring(helperStart, helperEnd);
         assertTrue(frontendDeploy.contains("DOCKER_BUILDKIT=1 registry_docker build"));
 
-        Path tempDir = Files.createTempDirectory("frontend-buildx-test-");
+        Path tempDir = Files.createTempDirectory("frontend-" + mode + "-buildx-test-");
         Path originalConfig = tempDir.resolve("original-config");
         Path plugin = originalConfig.resolve("cli-plugins/docker-buildx");
         Files.createDirectories(plugin.getParent());

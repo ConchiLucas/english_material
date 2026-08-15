@@ -20,7 +20,7 @@ Java Full 从当前本地代码完整打包 Spring Boot JAR，提取 `dependenci
 
 Java Full 拉取 Java 与 Node 基础镜像时使用有界等待，默认上限为 120 秒，可用正整数秒数 `ENGLISH_MATERIAL_IMAGE_PULL_TIMEOUT` 覆盖。公开基础镜像的拉取与基线构建使用临时无凭据 Docker 配置并复用当前 Docker Context 的守护进程地址，避免本机凭据助手故障阻塞；不会读取或复制用户的 Registry 凭据。部署会把 `linux/aarch64` 等平台别名规范化，并校验缓存镜像的 OS、Architecture 和可用 Variant；拉取失败或超时后，只有对应 tag 已存在且与目标平台兼容时才会输出警告并继续，否则部署失败。超时会先终止并回收拉取进程，避免 Host Runtime Runner 长时间卡在无界 `docker pull`。
 
-React Fast 使用锁文件哈希隔离的 `node_modules` Volume 和源码挂载运行 Vite；React Full 执行 `npm ci`、生产构建并生成只读 Nginx 镜像。React Full 构建公开 Node/Nginx 基础镜像时同样使用临时无凭据 Docker 配置、当前 Docker Context 地址和显式探测过的 buildx 插件，避免本机 Registry 凭据助手故障阻塞构建；不会读取或复制用户的 Registry 凭据。Fast/Full 替换同一个前端容器并保持宿主机端口 `19638` 不变。
+React Fast 使用锁文件哈希隔离的 `node_modules` Volume 和源码挂载运行 Vite；React Full 执行 `npm ci`、生产构建并生成只读 Nginx 镜像。React Fast/Full 构建公开基础镜像时都使用临时无凭据 Docker 配置、当前 Docker Context 地址和显式探测过的 buildx 插件，避免本机 Registry 凭据助手故障阻塞构建；不会读取或复制用户的 Registry 凭据。Fast/Full 替换同一个前端容器并保持宿主机端口 `19638` 不变。
 
 后端和前端都加入 `vibedeploy-shared`。Workspace 启动依次执行后端 Full 和前端 Full，每一步都等待容器健康。
 

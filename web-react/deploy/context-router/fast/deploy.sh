@@ -29,6 +29,38 @@ ensure_shared_network() {
     docker network create --driver bridge vibedeploy-shared >/dev/null
 }
 
+registry_docker() {
+  DOCKER_CONFIG="$ANONYMOUS_DOCKER_CONFIG" \
+    DOCKER_HOST="$DOCKER_ENDPOINT" \
+    docker "$@"
+}
+
+prepare_anonymous_docker_config() {
+  mkdir -p "$ANONYMOUS_DOCKER_CONFIG"
+  printf '{}\n' > "$ANONYMOUS_DOCKER_CONFIG/config.json"
+  if registry_docker buildx version >/dev/null 2>&1; then
+    return 0
+  fi
+
+  mkdir -p "$ANONYMOUS_DOCKER_CONFIG/cli-plugins"
+  for buildx_candidate in \
+    "$ORIGINAL_DOCKER_CONFIG/cli-plugins/docker-buildx" \
+    /Applications/Docker.app/Contents/Resources/cli-plugins/docker-buildx \
+    /usr/local/lib/docker/cli-plugins/docker-buildx \
+    /usr/libexec/docker/cli-plugins/docker-buildx; do
+    if [ -x "$buildx_candidate" ]; then
+      ln -s "$buildx_candidate" \
+        "$ANONYMOUS_DOCKER_CONFIG/cli-plugins/docker-buildx"
+      break
+    fi
+  done
+
+  if ! registry_docker buildx version >/dev/null 2>&1; then
+    echo "[ERROR] 临时无凭据 Docker 配置无法使用 buildx 插件" >&2
+    return 1
+  fi
+}
+
 remove_legacy_container() {
   if docker container inspect english-material-frontend-1 >/dev/null 2>&1; then
     echo "[STEP] 移除旧统一 Compose 前端容器 english-material-frontend-1"
@@ -48,12 +80,21 @@ NODE_MODULES_VOLUME="english-material-frontend-node-modules-$LOCK_HASH"
 export PROJECT_ROOT PROJECT_HOST_ROOT="$PROJECT_ROOT" NODE_MODULES_VOLUME
 DOCKER_ARCH=$(docker version --format '{{.Server.Arch}}')
 DOCKER_PLATFORM=${ENGLISH_MATERIAL_DOCKER_PLATFORM:-linux/$DOCKER_ARCH}
+DOCKER_CONTEXT=$(docker context show)
+DOCKER_ENDPOINT=$(docker context inspect --format '{{.Endpoints.docker.Host}}' "$DOCKER_CONTEXT")
+[ -n "$DOCKER_ENDPOINT" ] || {
+  echo "[ERROR] 无法解析当前 Docker Context 的守护进程地址" >&2
+  exit 1
+}
+ORIGINAL_DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
+ANONYMOUS_DOCKER_CONFIG="$WORKSPACE_ROOT/target/context-router-frontend-docker-anonymous"
+prepare_anonymous_docker_config
 
 docker volume inspect "$NODE_MODULES_VOLUME" >/dev/null 2>&1 ||
   docker volume create "$NODE_MODULES_VOLUME" >/dev/null
 
 echo "[STEP] 使用锁文件构建英语材料前端 Fast 依赖镜像"
-DOCKER_BUILDKIT=1 docker build \
+DOCKER_BUILDKIT=1 registry_docker build \
   --platform "$DOCKER_PLATFORM" \
   -f "$SCRIPT_DIR/Dockerfile.dev" \
   -t english-material/frontend:dev "$PROJECT_ROOT"
