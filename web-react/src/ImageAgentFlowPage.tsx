@@ -10,6 +10,7 @@ import {
 import type {
   ImageAgentFlow, ImageAgentNode, ImagePromptVersion, ImageSourceStory, ImageStylePreset,
 } from './image-story-types';
+import ImageRunHistory from './ImageRunHistory';
 
 interface ImageAgentFlowPageProps { providers: AIProviderConfigItem[]; onDirtyChange: (dirty: boolean) => void; }
 interface AgentDraft { systemPrompt: string; aiProviderId: string; temperature: number; enabled: boolean; updatedAt: string | null; }
@@ -57,6 +58,7 @@ export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAg
   const [startOpen, setStartOpen] = useState(false);
   const [sources, setSources] = useState<ImageSourceStory[]>([]); const [sourcesLoading, setSourcesLoading] = useState(false); const [sourcesError, setSourcesError] = useState('');
   const [storyRunId, setStoryRunId] = useState(''); const [stylePresetId, setStylePresetId] = useState<number | null>(null); const [creating, setCreating] = useState(false); const [createdRunId, setCreatedRunId] = useState('');
+  const [historyOpen, setHistoryOpen] = useState(false);
   const flowRef = useRef<ImageAgentFlow | null>(null); const selectedKeyRef = useRef(''); const draftRef = useRef<AgentDraft | null>(null); const agentCleanBaselineRef = useRef<AgentDraft | null>(null);
   const modelDraftRef = useRef<ModelDraft>({ providerId: '', updatedAt: null }); const modelCleanBaselineRef = useRef<ModelDraft>({ providerId: '', updatedAt: null });
   const dirtyRef = useRef(false); const confirmOpenRef = useRef(false); const versionRequestRef = useRef(0); const sourceRequestRef = useRef(0); const loadRequestRef = useRef(0); const detailRef = useRef<HTMLElement | null>(null); const onDirtyRef = useRef(onDirtyChange);
@@ -216,7 +218,7 @@ export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAg
     if (creating) return;
     if (!selectedStoryValid || !selectedStyleValid || !savedImageProviderValid || requiredAgentProblems.length > 0) return void message.error('当前故事、画风或模型配置已失效，请重新选择后再创建');
     setCreating(true);
-    try { const created = await createImageRun({ storyRunId, stylePresetId }); setCreatedRunId(created.runId); message.success('图片批次已创建'); }
+    try { const created = await createImageRun({ storyRunId, stylePresetId }); setCreatedRunId(created.runId); setStartOpen(false); setHistoryOpen(true); message.success('图片批次已创建'); }
     catch (error) { message.error(errorText(error)); } finally { setCreating(false); }
   };
 
@@ -281,13 +283,13 @@ export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAg
       {stylePresetId !== null && !selectedStyleValid && <Alert type="warning" showIcon message="之前选择的画风已停用或不存在，请重新选择画风。" />}
       {!savedImageProviderValid && <Alert type="warning" showIcon message="尚未配置可用的图片 Provider，请先在图片模型中保存配置。" />}
       {requiredAgentProblems.length > 0 && <Alert type="warning" showIcon message="必需 Agent 尚未就绪" description={<ul>{requiredAgentProblems.map((problem) => <li key={problem}>{problem}</li>)}</ul>} />}
-      {createdRunId && <Alert type="success" showIcon message={`批次已创建：${createdRunId}`} description="图片记录将在下一步接入；当前可继续留在本页查看批次编号。" />}
       <Button type="primary" loading={creating} disabled={creating || !selectedStoryValid || !selectedStyleValid || !savedImageProviderValid || requiredAgentProblems.length > 0} onClick={() => void createRun()}>创建图片批次</Button>
     </Form>}
   </div>;
 
-  return <section className="image-agent-workbench" aria-label="图片 Agent 工作台"><header className="image-workbench-head"><div><span className="page-eyebrow">IMAGE STORY WORKBENCH</span><h2>图片工作台</h2><p>优化九个规划 Agent、画风和固定图片模型，并从已有故事创建绘本批次。</p></div><div><Button onClick={() => confirmDiscard(() => setStartOpen(true))}>开始生成</Button></div></header><div className="image-story-tabs" role="tablist" aria-label="图片工作台页面">{([['agents', 'Agent 配置'], ['styles', '画风预设'], ['model', '图片模型']] as const).map(([key, label]) => <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? 'is-active' : ''} onClick={() => changeTab(key)}>{label}</button>)}</div>{tab === 'agents' ? renderAgentTab() : tab === 'styles' ? renderStyleTab() : renderModelTab()}
+  return <section className="image-agent-workbench" aria-label="图片 Agent 工作台"><header className="image-workbench-head"><div><span className="page-eyebrow">IMAGE STORY WORKBENCH</span><h2>图片工作台</h2><p>优化九个规划 Agent、画风和固定图片模型，并从已有故事创建绘本批次。</p></div><div><Button onClick={() => setHistoryOpen(true)}>图片记录</Button><Button onClick={() => confirmDiscard(() => setStartOpen(true))}>开始生成</Button></div></header><div className="image-story-tabs" role="tablist" aria-label="图片工作台页面">{([['agents', 'Agent 配置'], ['styles', '画风预设'], ['model', '图片模型']] as const).map(([key, label]) => <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? 'is-active' : ''} onClick={() => changeTab(key)}>{label}</button>)}</div>{tab === 'agents' ? renderAgentTab() : tab === 'styles' ? renderStyleTab() : renderModelTab()}
     <Modal title="开始生成图片故事" open={startOpen} footer={null} onCancel={() => setStartOpen(false)} width={820} destroyOnHidden>{renderStartContent()}</Modal>
     <Modal title={`${selected?.name ?? 'Agent'} · 版本历史`} open={versionsOpen} footer={<Button onClick={closeVersions}>关闭</Button>} onCancel={closeVersions} width={760} destroyOnHidden>{versionsLoading ? <div aria-label="正在加载版本历史" className="image-story-version-loading"><Spin /><Skeleton active paragraph={{ rows: 3 }} /></div> : versionsError ? <Alert type="error" showIcon message="版本历史加载失败" description={versionsError} /> : versions.length === 0 ? <Empty description="暂无 Prompt 版本" /> : <div className="image-story-version-list">{versions.map((version) => <article key={version.version}><header><div><strong>{`Prompt v${version.version}`}</strong><span>{formatDate(version.createdAt)}</span></div><Button aria-label={`恢复 Prompt v${version.version}`} loading={restoring === version.version} onClick={() => restoreVersion(version)}>恢复</Button></header><p>{`${version.aiProviderId ?? '无 Provider'} · Temperature ${version.temperature} · ${version.enabled ? '启用' : '停用'}`}</p><pre>{version.systemPrompt}</pre></article>)}</div>}</Modal>
+    <ImageRunHistory open={historyOpen} initialRunId={createdRunId || undefined} onClose={() => setHistoryOpen(false)} />
   </section>;
 }

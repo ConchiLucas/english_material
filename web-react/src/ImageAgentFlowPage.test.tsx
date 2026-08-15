@@ -11,8 +11,18 @@ const apiMocks = vi.hoisted(() => ({
   restoreImageAgentVersion: vi.fn(), updateImageFlowConfig: vi.fn(), getImageStylePresets: vi.fn(),
   createImageStylePreset: vi.fn(), updateImageStylePreset: vi.fn(), getImageSourceStories: vi.fn(), createImageRun: vi.fn(),
 }));
+const historyMocks = vi.hoisted(() => ({ render: vi.fn() }));
 
 vi.mock('./api', async (importOriginal) => ({ ...await importOriginal<typeof import('./api')>(), ...apiMocks }));
+vi.mock('./ImageRunHistory', () => ({
+  default: (props: { open: boolean; initialRunId?: string; onClose: () => void }) => {
+    historyMocks.render(props);
+    return props.open ? <div role="dialog" aria-label="图片运行记录测试替身">
+      <span>{props.initialRunId || '无初始批次'}</span>
+      <button type="button" onClick={props.onClose}>关闭记录测试替身</button>
+    </div> : null;
+  },
+}));
 
 const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = new Promise<T>((done) => { resolve = done; }); return { promise, resolve }; };
 interface ConfirmLifecycle { title?: unknown; onCancel?: () => void; onOk?: () => void; afterClose?: () => void; }
@@ -263,7 +273,22 @@ describe('ImageAgentFlowPage', () => {
     const pending = deferred<{ runId: string }>(); apiMocks.createImageRun.mockReturnValue(pending.promise); const user = userEvent.setup(); renderPage(); await user.click(await screen.findByRole('button', { name: '开始生成' })); const dialogs = await screen.findAllByRole('dialog'); const startDialog = dialogs.at(-1)!;
     await user.click(within(startDialog).getByRole('combobox', { name: '故事批次' })); const storyOptions = await screen.findAllByText(/story-run-1/); await user.click(storyOptions.at(-1)!); expect(within(startDialog).getByText('book')).toBeInTheDocument(); expect(within(startDialog).getByText(/Amy opens the book/)).toBeInTheDocument(); expect(within(startDialog).getByText('16:9 · 每个 Scene 1–5 张 · 最多 20 张')).toBeInTheDocument();
     await user.click(within(startDialog).getByRole('combobox', { name: '画风预设' })); const styleOptions = screen.getAllByText('水彩绘本'); await user.click(styleOptions.at(-1)!); const create = within(startDialog).getByRole('button', { name: '创建图片批次' }); await user.click(create); await user.click(create); expect(apiMocks.createImageRun).toHaveBeenCalledTimes(1); expect(apiMocks.createImageRun).toHaveBeenCalledWith({ storyRunId: 'story-run-1', stylePresetId: 7 });
-    await act(async () => { pending.resolve({ runId: 'image-run-1' }); await pending.promise; }); expect(await screen.findByText('批次已创建：image-run-1')).toBeInTheDocument();
+    await act(async () => { pending.resolve({ runId: 'image-run-1' }); await pending.promise; });
+    const history = await screen.findByRole('dialog', { name: '图片运行记录测试替身' });
+    expect(history).toHaveTextContent('image-run-1');
+  });
+
+  it('opens read-only image records from the header without discarding a dirty configuration draft', async () => {
+    const modal = installConfirmHarness(); const dirty = vi.fn(); const user = userEvent.setup(); renderPage(makeFlow(), dirty);
+    const prompt = await screen.findByLabelText('System Prompt'); await user.type(prompt, ' unsaved history-safe draft');
+    await user.click(screen.getByRole('button', { name: '图片记录' }));
+
+    expect(modal.confirm).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog', { name: '图片运行记录测试替身' })).toHaveTextContent('无初始批次');
+    await user.click(screen.getByRole('button', { name: '关闭记录测试替身' }));
+    expect(screen.queryByRole('dialog', { name: '图片运行记录测试替身' })).not.toBeInTheDocument();
+    expect(prompt).toHaveValue('image-story-analyst prompt unsaved history-safe draft');
+    expect(dirty).toHaveBeenLastCalledWith(true);
   });
 
   it('blocks generation with explicit reasons when prerequisites are unavailable', async () => {
