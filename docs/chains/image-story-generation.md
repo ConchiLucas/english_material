@@ -57,11 +57,13 @@ React 一级导航中的“图片工作台”紧邻“Agent 工作台”。它�
 `AiImageGenerationService` 是 OpenAI Images-compatible 适配器：
 
 - 没有参考图时请求 Provider Base URL 下的 `/v1/images/generations`；
-- 分镜携带已生成参考图时请求 `/v1/images/edits` multipart 接口；
-- 响应必须包含 `b64_json`，返回图片会被解码并校验类型、尺寸和大小；
+- 分镜携带已生成参考图时请求 `/v1/images/edits` multipart 接口，图片字段依次命名为 `image`、`image1`、`image2`，兼容 Antigravity 多参考图协议；
+- 响应必须包含 `b64_json`，返回图片会被解码并校验类型、像素和大小；尺寸已精确匹配时保留原字节，否则中心裁剪并以高质量插值归一为请求的 `1536×864` PNG；
 - 角色参考图先于地点参考图生成；每个分镜只调用一次图片接口，并最多携带 8 张已声明参考图；任何图片调用失败都不自动重试。
 
 后端 `ImageProviderPolicy` 同时供流程配置保存和运行创建使用，避免“可保存但不可执行”的资格差异。Provider 必须具有非空 ID、模型和 Base URL；Base URL 是带 host 的绝对 HTTP(S) URI，不含用户信息、query 或 fragment，也不能直接指向 generations/edits 端点。可选 `options` 只允许不超过 64 字符的字符串 `responseFormat`、`quality`、`size`；分别限制为 `b64_json`、`auto|low|medium|high|standard|hd` 和 `1536x864`。前端用同一规则决定下拉项和失效状态。
+
+配置管理的“图片模型配置”仍保存到共享 `tb_ai_config`，可维护多个图片 Provider。`POST /api/ai/config/image/bootstrap` 只提交已有 Antigravity 来源 Provider ID，后端在持久化边界内复制地址和密钥，固定创建 `antigravity-gemini-image` / `gemini-3-pro-image` 以及双图片能力和固定 options；返回配置不含密钥。该引导和普通配置保存都不调用图片 Provider，也不消耗图片额度；若当前图片流程没有可执行 Provider，前端再以 `updatedAt` 将新配置选为流程图片模型。
 
 图片模型只接收无字画面提示词。`ImageTextCompositor` 读取分镜底图，在 Java2D 中将带说话人和锚点的对白排成气泡，将叙事排成底部安全区字幕，并输出最终 PNG。
 
@@ -104,6 +106,7 @@ QUEUED
 | 方法与路径 | 说明 |
 | --- | --- |
 | `GET /api/image-agents/flow` | 查询固定流程、节点、当前图片配置和画风 |
+| `POST /api/ai/config/image/bootstrap` | 复用服务端已有 Antigravity 凭据创建固定图片 Provider；请求和响应均不传来源密钥 |
 | `PUT /api/image-agents/{agentKey}` | 携带 `updatedAt` 保存 Agent 配置并追加版本 |
 | `GET /api/image-agents/{agentKey}/versions` | 倒序查询 Prompt 版本 |
 | `POST /api/image-agents/{agentKey}/versions/{version}/restore` | 恢复历史版本为新的最新版本 |

@@ -16,7 +16,7 @@ summary: 维护数据库、AI、故事与图片 Agent 配置及有界执行，�
 ## 当前职责
 
 - `ConnectionConfigController` 维护可访问的 PostgreSQL、MySQL、SQL Server、Oracle 或 SQLite 连接配置，并提供连接测试和表清单。
-- `AiConfigController` 维护 AI Provider、当前 Provider 和本地 CLI 配置。
+- `AiConfigController` 维护 AI Provider、当前 Provider和本地 CLI 配置；`POST /api/ai/config/image/bootstrap` 只接收来源 Provider ID，在后端从同一 `tb_ai_config` 安全复制 Antigravity 地址与密钥并创建固定图片 Provider，响应继续脱敏且不会调用外部模型。
 - `StoryAgentController` 提供故事 Agent 流程、Prompt 版本和质量预算的配置接口；`StoryAgentService` 负责拼装固定流程、校验可编辑节点与文本生成 Provider、保存 Agent 配置、生成 Prompt 版本快照、恢复历史版本和维护流程预算。
 - `StoryAgentCatalog` 固定定义 4 个阶段、12 个可编辑 Agent 和 5 个只读程序/人工节点；`StoryAgentInitializer` 启动时只在某个 Agent 配置缺失时创建该配置及其 v1 快照，已有 Agent 即使缺少历史快照也不补建；默认流程预算缺失时才创建，且不覆盖已有配置。
 - `StoryRunController`、`StoryRunExecutionService` 与 `StoryRunQueryService` 创建异步故事运行批次，按固定 Agent 链路执行创作、审核、评分和决策，保存每次实际模型调用的完整输入/输出，并提供批次与详情查询。
@@ -30,7 +30,7 @@ summary: 维护数据库、AI、故事与图片 Agent 配置及有界执行，�
 - 故事分析的每个 beat 都明确 `action`、实际出场 `characters` 和唯一 `location`。两个分镜提案必须以稳定 `shotKey` 覆盖全部 beat，并与来源 beat 的 Scene、action、characters 集合和 location 严格一致；最终分镜只能继承提案 `shotKey`，继续完整保留这五项语义。故事分析另限定每 Scene 1—5 个连续 beat、全篇最多 20 个，并要求角色和地点各至少一个、合计不超过 20。
 - 参考资产规划必须为每个角色和地点各生成且仅生成一份参考；分镜提示词与最终预检的 `referenceAssetKeys` 必须精确等于该镜头所属地点和全部出场角色的参考 key 集合，不允许缺少、多余或重复引用。所有这些结构约束都在 `PLANNING` 内完成校验，失败的 Agent 步骤和批次会在任何图片调用或 `PROGRAM` 步骤创建前终止。
 - `ImageAgentCatalog` 为 9 个文本 Agent 提供不可编辑的 `IMAGE_AGENT_RUNTIME_CONTRACT_V2`。它在 effective system prompt 中具有最终最高优先级，但覆盖范围只限于与其冲突的 JSON marker、schema、字段、beat 覆盖和精确 reference 要求；前文不冲突的业务创作要求继续生效。运行时将该合同附加到数据库中现有或自定义 Prompt（已包含相同合同则不重复），包括真实已持久化的旧版默认 Prompt 在内都无需由初始化覆盖或迁移；批次 Agent 快照保存实际送给模型的 effective system prompt，供历史审计。
-- `ImageProviderPolicy` 是图片流程配置与运行创建共用的后端资格策略；只有 ID、模型、Base URL 完整，已启用、类型为 `openai-compatible` 且同时声明 `IMAGE_GENERATION`、`IMAGE_REFERENCE` 的 Provider 才可用。`AiImageGenerationService` 无参考图调用 `/v1/images/generations`，携带参考图调用 `/v1/images/edits`，只接受 `b64_json` 图片结果。
+- `ImageProviderPolicy` 是图片流程配置、固定 Antigravity 引导与运行创建共用的后端资格策略；只有 ID、模型、Base URL 完整，已启用、类型为 `openai-compatible` 且同时声明 `IMAGE_GENERATION`、`IMAGE_REFERENCE` 的 Provider 才可用。`AiImageGenerationService` 无参考图调用 `/v1/images/generations`，携带参考图调用 `/v1/images/edits`，multipart 图片字段按 `image`、`image1`、`image2` 递增，只接受 `b64_json` 图片结果。
 - 图片执行固定输出 `1536×864`，每个 Scene 1—5 张、全篇最多 20 张；先生成角色和地点参考图，再按 Scene/Shot 顺序为每个分镜调用一次图片模型，最后由 `ImageTextCompositor` 以 Java2D 合成角色对话气泡和底部叙事字幕。
 - 故事与图片运行都使用进程内有界线程池，不包含 Python Worker、分布式队列、暂停、删除、跨重启续跑或图片重试。第一版也没有视觉评审、自动/手工重绘或审核写入能力。
 
@@ -45,6 +45,7 @@ summary: 维护数据库、AI、故事与图片 Agent 配置及有界执行，�
 | `/api/connection/testConnectionPayload` | 测试尚未保存的连接配置 |
 | `/api/connection/listTables` | 列出已配置连接中的表 |
 | `/api/ai/config` | 读取或保存 AI Provider 配置 |
+| `POST /api/ai/config/image/bootstrap` | 按来源 Provider ID 在服务端复用 Antigravity 凭据并创建固定 `gemini-3-pro-image` 图片 Provider；不回传密钥或调用模型 |
 | `/api/ai/cli/config` | 读取或保存本地 CLI 配置 |
 | `GET /api/story-agents/flow` | 读取固定四阶段流程、节点配置和质量预算 |
 | `PUT /api/story-agents/{agentKey}` | 保存指定可编辑 Agent 的 Prompt、Provider ID、温度和启用状态 |

@@ -14,7 +14,7 @@ summary: 提供配置管理、故事与图片 Agent 编排和运行审计，以�
 
 ## 页面边界
 
-- 配置管理包含数据库配置、AI 配置和本地 CLI 配置。
+- 配置管理依次包含数据库配置、AI 配置、本地 CLI 配置和图片模型配置。图片模型配置仍读写共享 `tb_ai_config`，只筛选图片能力 Provider；可新增多个配置，也可通过来源 Provider ID 请求后端复用现有 Antigravity 地址与密钥，页面不读取或提交来源密钥。
 - 一级导航包含“Agent 工作台”。工作台画布固定展示策划与创意、写作与候选、独立质量委员会、修订与交付四个阶段，全部节点均可点击查看。
 - 画布右侧使用页面内联的 Prompt 配置中心，不使用 Drawer；可编辑 Agent 展示并保存 AI Provider、Temperature、启用状态和 System Prompt，同时展示上下游、动态变量、当前版本与更新时间。
 - Prompt 版本弹窗支持查看历史并将选定版本恢复为新的最新版本；质量预算弹窗配置轮次、回退次数和总 Token 上限。
@@ -38,7 +38,7 @@ summary: 提供配置管理、故事与图片 Agent 编排和运行审计，以�
 
 请求统一定义在 `web-react/src/api.ts`。开发环境默认访问 `http://127.0.0.1:18744/api`；容器生产环境使用同源 `/api`。
 
-主要请求包括 `/connection/*`、`/ai/config`、`/ai/cli/config`、`/story-agents/*`、`/story-runs*`、`/image-agents/*`、`/image-style-presets*`、`/image-runs*`、`/image-assets/{id}/content` 和 `/word-clean*`。图片请求覆盖配置/版本、画风、故事来源、批次创建/列表/详情和受控资产内容。
+主要请求包括 `/connection/*`、`/ai/config`、`POST /ai/config/image/bootstrap`、`/ai/cli/config`、`/story-agents/*`、`/story-runs*`、`/image-agents/*`、`/image-style-presets*`、`/image-runs*`、`/image-assets/{id}/content` 和 `/word-clean*`。图片 Provider 引导固定创建 `gemini-3-pro-image`、双图片能力、`b64_json`、`hd` 和 `1536x864`；配置与引导本身不调用图片模型、不消耗图片额度。
 
 ## 部署
 
