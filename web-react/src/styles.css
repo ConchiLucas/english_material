@@ -250,6 +250,15 @@ button, input, textarea, select { font: inherit; }
 .ant-form-item-extra,
 .ant-form-item-explain { font-size: 12px; line-height: 1.55; }
 .full-field { width: 100%; }
+.image-model-bootstrap { margin-bottom: 18px; }
+.image-model-bootstrap .ant-card-body { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.image-model-bootstrap .ant-card-body > div:first-child { display: grid; gap: 4px; }
+.image-model-feedback { margin-bottom: 18px; }
+.image-model-fixed-spec { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 14px 16px; background: var(--color-surface-2); border: 1px solid var(--color-hairline); border-radius: 8px; }
+@media (max-width: 900px) {
+  .image-model-bootstrap .ant-card-body { align-items: stretch; flex-direction: column; }
+  .image-model-bootstrap .ant-select { width: 100%; min-width: 0 !important; }
+}
 .mono-field,
 .mono-field input,
 .mono-field .ant-input,
