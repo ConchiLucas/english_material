@@ -829,7 +829,9 @@ export default function App() {
             onBootstrap={bootstrapImageModel}
           />
         )
-        : renderEditor(tab);
+        : tab === 'ai' || tab === 'cli'
+          ? renderEditor(tab)
+          : null;
 
   return (
     <Layout className="app-shell">
