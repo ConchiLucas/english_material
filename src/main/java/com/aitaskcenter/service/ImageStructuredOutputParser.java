@@ -23,11 +23,14 @@ public final class ImageStructuredOutputParser {
     private static final int MAX_CAPTION_LENGTH = 180;
     private static final Pattern DUPLICATE_FIELD = Pattern.compile("Duplicate field '([^']+)'");
     private static final Pattern NO_RENDERED_TEXT = Pattern.compile(
-            "(?i)\\b(?:no|without)\\s+(?:(?:visible|written)\\s+)?(?:text|words?|letters?|captions?|subtitles?|signs?|logos?|watermarks?)\\b");
-    private static final Pattern RENDERED_TEXT = Pattern.compile(
-            "(?i)\\b(?:text|words?|letters?|captions?|subtitles?|signs?|logos?|watermarks?)\\b");
+            "(?i)\\b(?:no|without|avoid|exclude)\\s+(?:(?:visible|written|any)\\s+)?(?:text|words?|letters?|captions?|subtitles?|signs?|logos?|watermarks?)\\b");
+    private static final Pattern LITERAL_TEXT_INSTRUCTION = Pattern.compile(
+            "(?i)\\b(?:write|spell|print|type|inscribe)\\b\\s+(?:(?:the\\s+)?(?:text|words?|letters?|caption|subtitle)|[\\\"'“][^\\\"'”]{1,80}[\\\"'”]|[A-Z][A-Z0-9]{1,})");
+    private static final Pattern MEDIA_TEXT_INSTRUCTION = Pattern.compile(
+            "(?i)\\b(?:render|add|show|display|draw|include)\\b(?:\\s+(?:a|an|the|some|visible|written|large|small|bold|colorful|word|words|text|letters|caption|subtitle|sign|logo|watermark|speech|bubble)){0,8}\\s+(?:text|words?|letters?|captions?|subtitles?|signs?|logos?|watermarks?|speech\\s+bubble)\\b");
     private static final Pattern CONFLICTING_MOMENT = Pattern.compile(
-            "(?i)\\bbefore\\s+and\\s+after\\b|\\bat\\s+first\\b.*\\blater\\b|\\bthen\\b.*\\blater\\b");
+            "(?i)\\bbefore\\s+and\\s+after\\b|\\bat\\s+first\\b.*\\blater\\b|\\bthen\\b.*\\blater\\b"
+                    + "|\\b(?:asleep.*\\band\\b.*running|running.*\\band\\b.*asleep|open.*\\band\\b.*closed|closed.*\\band\\b.*open|sitting.*\\band\\b.*standing|standing.*\\band\\b.*sitting)\\b");
 
     private final ObjectMapper mapper;
 
@@ -159,7 +162,7 @@ public final class ImageStructuredOutputParser {
                         text(node, "speaker", "PREFLIGHT_PLAN.shots"), text(node, "dialogue", "PREFLIGHT_PLAN.shots"), text(node, "narration", "PREFLIGHT_PLAN.shots"), anchor(node, "PREFLIGHT_PLAN.shots")))
                 .toList();
         PreflightPlan plan = new PreflightPlan(assets, shots, text(root, "auditSummary", "PREFLIGHT_PLAN"));
-        validatePreflightShape(plan);
+        validatePreflight(plan);
         return plan;
     }
 
@@ -194,9 +197,13 @@ public final class ImageStructuredOutputParser {
     }
 
     public void validateProposalReferences(StoryAnalysis analysis, StoryboardProposal proposal) {
+        Set<String> beats = keys(analysis.beats(), Beat::beatKey);
         Set<String> characters = keys(analysis.characters(), Character::characterKey);
         Set<String> locations = keys(analysis.locations(), Location::locationKey);
         for (ProposalShot shot : proposal.shots()) {
+            if (!beats.contains(trimmed(shot.beat()))) {
+                throw error("StoryboardProposal 分镜引用了未知故事节拍: " + shot.beat());
+            }
             for (String character : shot.characters()) {
                 if (!characters.contains(trimmed(character))) throw error("StoryboardProposal characterKey 未在 StoryAnalysis 中声明: " + character);
             }
@@ -229,7 +236,7 @@ public final class ImageStructuredOutputParser {
         Set<String> assets = keys(plan.referenceAssets(), ReferenceAsset::assetKey);
         for (PreflightShot shot : plan.shots()) {
             for (String reference : shot.referenceAssetKeys()) {
-                if (!assets.contains(trimmed(reference))) throw error("PreflightPlan 引用了未知 referenceAssetKey: " + reference);
+                if (!assets.contains(trimmed(reference))) throw error("PreflightPlan 分镜引用了未知参考资产: " + reference);
             }
         }
     }
@@ -325,8 +332,7 @@ public final class ImageStructuredOutputParser {
     private static String text(JsonNode node, String name, String context) {
         verifyRequired(node, name, context);
         JsonNode value = node.get(name);
-        if (value.isNull()) return null;
-        if (!value.isTextual()) throw error(context + "." + name + " 必须是 string 或 null");
+        if (!value.isTextual()) throw error(context + "." + name + " 必须是 string");
         return value.textValue();
     }
 
@@ -418,7 +424,10 @@ public final class ImageStructuredOutputParser {
     private static void positivePrompt(String label, String prompt) {
         if (!hasText(prompt)) throw error(label + " 不能为空");
         String withoutNegativeConstraint = NO_RENDERED_TEXT.matcher(prompt).replaceAll("");
-        if (RENDERED_TEXT.matcher(withoutNegativeConstraint).find()) throw error(label + " 不得要求图片模型渲染文字");
+        if (LITERAL_TEXT_INSTRUCTION.matcher(withoutNegativeConstraint).find()
+                || MEDIA_TEXT_INSTRUCTION.matcher(withoutNegativeConstraint).find()) {
+            throw error("图片提示词不得要求模型绘制文字");
+        }
     }
 
     private static void noConflictingMoment(String label, String action) {

@@ -116,7 +116,7 @@ class ImageStructuredOutputParserTest {
         assertMessage("FinalStoryboard shotIndex 必须从 1 连续递增", () -> parser.finalStoryboard(wrap(
                 "FINAL_STORYBOARD", finalStoryboardJson().replace("\"shotIndex\":1", "\"shotIndex\":2"))));
         assertMessage("FinalStoryboard dialogue 非空时 speaker 不能为空", () -> parser.finalStoryboard(wrap(
-                "FINAL_STORYBOARD", finalStoryboardJson().replace("\"speaker\":\"amy\"", "\"speaker\":null"))));
+                "FINAL_STORYBOARD", finalStoryboardJson().replace("\"speaker\":\"amy\"", "\"speaker\":\"\""))));
         assertMessage("FinalStoryboard dialogue 非空时 textAnchor 不能为空", () -> parser.finalStoryboard(wrap(
                 "FINAL_STORYBOARD", finalStoryboardJson().replace("\"textAnchor\":{\"x\":0.2,\"y\":0.3}", "\"textAnchor\":null"))));
         assertMessage("textAnchor.x 必须在 0 到 1 之间", () -> parser.finalStoryboard(wrap(
@@ -149,7 +149,7 @@ class ImageStructuredOutputParserTest {
                 .replace("asset-amy", "asset-missing")));
         assertMessage("ShotPromptPlan 引用了未知 referenceAssetKey: asset-missing", () ->
                 parser.validateReferences(unknownReference, referencePlan()));
-        assertMessage("ShotPromptPlan prompt 不得要求图片模型渲染文字", () -> parser.shotPromptPlan(wrap(
+        assertMessage("图片提示词不得要求模型绘制文字", () -> parser.shotPromptPlan(wrap(
                 "SHOT_PROMPT_PLAN", shotPromptPlanJson().replace("Amy walks", "render text on a sign"))));
         assertDoesNotThrow(() -> parser.shotPromptPlan(wrap("SHOT_PROMPT_PLAN", shotPromptPlanJson()
                 .replace("no text", "without words, no text"))));
@@ -161,9 +161,47 @@ class ImageStructuredOutputParserTest {
                 "STORYBOARD_PROPOSAL", storyboardProposalJson().replace("Amy walks before lunch", "Amy walks before and after lunch"))));
         assertMessage("PreflightPlan shotIndex 必须从 1 连续递增", () -> parser.preflight(wrap(
                 "PREFLIGHT_PLAN", preflightJson().replace("\"shots\":[", "\"shots\":[" + preflightShot("shot-2", 1, 2) + ","))));
-        PreflightPlan unknownReference = parser.preflight(wrap("PREFLIGHT_PLAN", preflightJson().replace(
-                "\"referenceAssetKeys\":[\"asset-amy\"]", "\"referenceAssetKeys\":[\"asset-missing\"]")));
-        assertMessage("PreflightPlan 引用了未知 referenceAssetKey: asset-missing", () -> parser.validatePreflight(unknownReference));
+        assertMessage("PreflightPlan 分镜引用了未知参考资产: asset-missing", () -> parser.preflight(wrap(
+                "PREFLIGHT_PLAN", preflightJson().replace(
+                        "\"referenceAssetKeys\":[\"asset-amy\"]", "\"referenceAssetKeys\":[\"asset-missing\"]"))));
+    }
+
+    @Test
+    void rejectsJsonNullForEveryNonNullableCatalogStringField() {
+        assertMessage("STYLE_BIBLE.palette 必须是 string", () -> parser.styleBible(wrap(
+                "STYLE_BIBLE", styleBibleJson().replace("\"palette\":\"blue\"", "\"palette\":null"))));
+        assertMessage("STORYBOARD_PROPOSAL.shots.action 必须是 string", () -> parser.storyboardProposal(wrap(
+                "STORYBOARD_PROPOSAL", storyboardProposalJson().replace("\"action\":\"Amy walks before lunch\"", "\"action\":null"))));
+        assertMessage("SHOT_PROMPT_PLAN.shots.prompt 必须是 string", () -> parser.shotPromptPlan(wrap(
+                "SHOT_PROMPT_PLAN", shotPromptPlanJson().replace("\"prompt\":\"Amy walks, no text\"", "\"prompt\":null"))));
+    }
+
+    @Test
+    void rejectsExplicitPositivePromptTextInstructionsButAllowsNegativeConstraints() {
+        assertMessage("图片提示词不得要求模型绘制文字", () -> parser.shotPromptPlan(wrap(
+                "SHOT_PROMPT_PLAN", shotPromptPlanJson().replace("Amy walks, no text", "write HELLO on the image"))));
+        assertMessage("图片提示词不得要求模型绘制文字", () -> parser.shotPromptPlan(wrap(
+                "SHOT_PROMPT_PLAN", shotPromptPlanJson().replace("Amy walks, no text", "spell \\\"BOOK\\\" on a sign"))));
+        assertMessage("图片提示词不得要求模型绘制文字", () -> parser.shotPromptPlan(wrap(
+                "SHOT_PROMPT_PLAN", shotPromptPlanJson().replace("Amy walks, no text", "show the word CAT"))));
+        assertDoesNotThrow(() -> parser.shotPromptPlan(wrap("SHOT_PROMPT_PLAN", shotPromptPlanJson()
+                .replace("Amy walks, no text", "Amy walks, no text, no letters, no watermark"))));
+        assertDoesNotThrow(() -> parser.shotPromptPlan(wrap("SHOT_PROMPT_PLAN", shotPromptPlanJson()
+                .replace("\"negativePrompt\":\"text, words\"", "\"negativePrompt\":\"text, words, watermark\""))));
+    }
+
+    @Test
+    void rejectsOnlyExplicitlyConflictingActionsAndUnknownProposalBeats() {
+        assertMessage("StoryboardProposal 同一镜头包含互斥时间点", () -> parser.storyboardProposal(wrap(
+                "STORYBOARD_PROPOSAL", storyboardProposalJson().replace("Amy walks before lunch", "Amy is asleep and running at the same time"))));
+        assertMessage("StoryboardProposal 同一镜头包含互斥时间点", () -> parser.storyboardProposal(wrap(
+                "STORYBOARD_PROPOSAL", storyboardProposalJson().replace("Amy walks before lunch", "the door is open and closed simultaneously"))));
+        assertMessage("StoryboardProposal 同一镜头包含互斥时间点", () -> parser.storyboardProposal(wrap(
+                "STORYBOARD_PROPOSAL", storyboardProposalJson().replace("Amy walks before lunch", "he is sitting and standing"))));
+        StoryboardProposal proposal = parser.storyboardProposal(wrap("STORYBOARD_PROPOSAL", storyboardProposalJson()
+                .replace("\"beat-1\"", "\"beat-missing\"")));
+        assertMessage("StoryboardProposal 分镜引用了未知故事节拍: beat-missing", () ->
+                parser.validateProposalReferences(storyAnalysis(), proposal));
     }
 
     private StoryAnalysis storyAnalysis() {
