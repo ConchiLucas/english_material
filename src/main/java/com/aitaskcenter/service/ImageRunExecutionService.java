@@ -54,6 +54,11 @@ import org.springframework.util.StringUtils;
 public class ImageRunExecutionService {
     private static final int DEFAULT_MAX_TOKENS = 4096;
     private static final int MAX_ERROR_LENGTH = 600;
+    private static final int MAX_AGENT_RAW_CHARS = 512_000;
+    private static final String OVERSIZED_RAW_PLACEHOLDER = "图片规划原始输出超过最大长度，正文未保存";
+    private static final int MAX_IMAGE_OPTION_LENGTH = 64;
+    private static final Set<String> IMAGE_OPTION_KEYS = Set.of("responseFormat", "quality", "size");
+    private static final Set<String> IMAGE_QUALITIES = Set.of("auto", "low", "medium", "high", "standard", "hd");
     private static final List<String> FOUNDATION_KEYS = List.of(
             "image-story-analyst", "image-continuity-designer", "image-art-director");
     private static final List<String> STORYBOARD_KEYS = List.of(
@@ -107,14 +112,15 @@ public class ImageRunExecutionService {
 
     public RunSummary createRun(StartImageRunRequest request) {
         PreparedRun prepared = prepare(request);
-        ImageRun run = prepared.run();
+        ImageRun run = newRun(prepared.run());
         assetStore.assertWritable();
-        runRepository.saveAndFlush(run);
-        RunSummary queued = summary(run, prepared.style());
+        ImageRun persisted = runRepository.saveAndFlush(run);
+        String runId = persisted.getRunId();
+        RunSummary queued = summary(persisted, prepared.styleId(), prepared.styleName());
         try {
-            runExecutor.execute(() -> executePlanning(run, prepared));
+            runExecutor.execute(() -> executePlanning(runId, prepared));
         } catch (RejectedExecutionException exception) {
-            failRun(run, "图片运行队列已满，请稍后重试", prepared.state().totalTokens());
+            failRun(runId, "图片运行队列已满，请稍后重试", 0);
             throw new IllegalArgumentException("图片运行队列已满，请稍后重试");
         }
         return queued;
@@ -145,10 +151,12 @@ public class ImageRunExecutionService {
         ImageFlowConfig flow = flowRepository.findByFlowKey(ImageFlowConfig.DEFAULT_FLOW_KEY)
                 .orElseThrow(() -> new IllegalArgumentException("图片流程配置不存在"));
         validateFlow(flow);
-        AiProviderConfigItem imageProvider = requireImageProvider(flow.getImageProviderId());
+        AiProviderConfigItem imageProviderConfig = requireImageProvider(flow.getImageProviderId());
+        ProviderExecution imageProvider = providerExecution(imageProviderConfig,
+                normalizeImageOptions(imageProviderConfig.getOptions(), flow.getWidth(), flow.getHeight()));
         FlowSnapshot flowSnapshot = new FlowSnapshot(
                 flow.getWidth(), flow.getHeight(), flow.getMaxShotsPerScene(), flow.getMaxShotsPerStory(),
-                safeProviderSnapshot(imageProvider));
+                imageProviderSnapshot(imageProvider));
 
         Map<String, ImageAgentConfig> configured = configuredAgents();
         List<AgentExecution> executionAgents = new ArrayList<>();
@@ -157,7 +165,8 @@ public class ImageRunExecutionService {
         for (NodeDefinition definition : ImageAgentCatalog.agents()) {
             ImageAgentConfig config = configured.get(definition.key());
             validateAgent(definition, config);
-            AiProviderConfigItem provider = copyProvider(aiConfigService.getProviderForExecution(config.getAiProviderId()));
+            ProviderExecution provider = providerExecution(
+                    aiConfigService.getProviderForExecution(config.getAiProviderId()), Map.of());
             AgentExecution execution = new AgentExecution(
                     sequence++, stageKey(definition.key()), definition.key(), definition.name(),
                     config.getSystemPrompt(), config.getPromptVersion(), config.getTemperature(), provider);
@@ -165,57 +174,49 @@ public class ImageRunExecutionService {
             agentSnapshots.add(new AgentSnapshot(
                     execution.sequence(), execution.stageKey(), execution.key(), execution.name(),
                     execution.systemPrompt(), execution.promptVersion(), execution.temperature(),
-                    safeProviderSnapshot(provider)));
+                    textProviderSnapshot(provider)));
         }
 
-        ImageRun run = new ImageRun();
-        run.setRunId(UUID.randomUUID().toString());
-        run.setStoryRunId(storyRunId);
-        run.setStorySnapshot(finalStory);
-        run.setInputWordsJson(story.getInputWordsJson());
-        run.setTargetGrade(clean(story.getTargetGrade()));
-        run.setStylePresetId(String.valueOf(style.getId()));
-        run.setStyleSnapshotJson(writeJson(styleSnapshot));
-        run.setFlowSnapshotJson(writeJson(flowSnapshot));
-        run.setAgentSnapshotJson(writeJson(agentSnapshots));
-        run.setStatus("QUEUED");
-        run.setExpectedImageCount(0);
-        run.setGeneratedImageCount(0);
-        run.setTotalTextTokens(0);
-
-        JsonNode targetWords = readTree(story.getInputWordsJson(), "故事单词快照无效");
-        PlanningState state = new PlanningState(Map.copyOf(executionAgents.stream()
-                .collect(java.util.stream.Collectors.toMap(AgentExecution::key, Function.identity()))));
-        return new PreparedRun(run, style, styleSnapshot, flowSnapshot, targetWords, state,
-                copyProvider(imageProvider));
+        readTree(story.getInputWordsJson(), "故事单词快照无效");
+        RunSnapshot run = new RunSnapshot(UUID.randomUUID().toString(), storyRunId, finalStory,
+                story.getInputWordsJson(), clean(story.getTargetGrade()), String.valueOf(style.getId()),
+                writeJson(styleSnapshot), writeJson(flowSnapshot), writeJson(agentSnapshots));
+        Map<String, AgentExecution> executionSnapshot = executionAgents.stream()
+                .collect(java.util.stream.Collectors.toUnmodifiableMap(AgentExecution::key, Function.identity()));
+        return new PreparedRun(run, style.getId(), style.getName(), styleSnapshot, flowSnapshot,
+                story.getInputWordsJson(), executionSnapshot,
+                imageProvider);
     }
 
-    private void executePlanning(ImageRun run, PreparedRun prepared) {
-        PlanningState state = prepared.state();
-        run.setStatus("PLANNING");
-        run.setStartedAt(now());
-        runRepository.saveAndFlush(run);
+    private void executePlanning(String runId, PreparedRun prepared) {
+        PlanningState state = new PlanningState(prepared.agents());
         try {
+            ImageRun run = runRepository.findByRunId(runId)
+                    .orElseThrow(() -> new IllegalArgumentException("图片运行批次不存在"));
+            run.setStatus("PLANNING");
+            run.setStartedAt(now());
+            run = runRepository.saveAndFlush(run);
+            JsonNode targetWords = readTree(prepared.targetWordsJson(), "故事单词快照无效");
             Map<String, AgentCall> foundationCalls = new LinkedHashMap<>();
             foundationCalls.put(FOUNDATION_KEYS.get(0), new AgentCall(
-                    input("storySnapshot", run.getStorySnapshot(),
-                            "targetGrade", run.getTargetGrade(),
-                            "targetWords", prepared.targetWords(),
+                    input("storySnapshot", prepared.run().storySnapshot(),
+                            "targetGrade", prepared.run().targetGrade(),
+                            "targetWords", targetWords,
                             "imageSettings", prepared.flow()),
                     parser::storyAnalysis));
             foundationCalls.put(FOUNDATION_KEYS.get(1), new AgentCall(
-                    input("storySnapshot", run.getStorySnapshot(),
-                            "targetGrade", run.getTargetGrade(),
-                            "targetWords", prepared.targetWords(),
+                    input("storySnapshot", prepared.run().storySnapshot(),
+                            "targetGrade", prepared.run().targetGrade(),
+                            "targetWords", targetWords,
                             "imageSettings", prepared.flow()),
                     parser::continuityBible));
             foundationCalls.put(FOUNDATION_KEYS.get(2), new AgentCall(
-                    input("storySnapshot", run.getStorySnapshot(),
-                            "targetGrade", run.getTargetGrade(),
+                    input("storySnapshot", prepared.run().storySnapshot(),
+                            "targetGrade", prepared.run().targetGrade(),
                             "stylePreset", prepared.styleSnapshot(),
                             "imageSettings", prepared.flow()),
                     parser::styleBible));
-            Map<String, StepResult> foundation = callParallel(run, state, foundationCalls);
+            Map<String, StepResult> foundation = callParallel(runId, state, foundationCalls);
             StoryAnalysis analysis = foundation.get(FOUNDATION_KEYS.get(0)).parsed(StoryAnalysis.class);
             ContinuityBible continuity = foundation.get(FOUNDATION_KEYS.get(1)).parsed(ContinuityBible.class);
             StyleBible styleBible = foundation.get(FOUNDATION_KEYS.get(2)).parsed(StyleBible.class);
@@ -225,7 +226,7 @@ public class ImageRunExecutionService {
             Map<String, AgentCall> storyboardCalls = new LinkedHashMap<>();
             for (String key : STORYBOARD_KEYS) {
                 storyboardCalls.put(key, new AgentCall(
-                        input("storySnapshot", run.getStorySnapshot(),
+                        input("storySnapshot", prepared.run().storySnapshot(),
                                 "storyAnalysis", analysis,
                                 "continuityBible", continuity,
                                 "styleBible", styleBible,
@@ -236,12 +237,12 @@ public class ImageRunExecutionService {
                             return proposal;
                         }));
             }
-            Map<String, StepResult> storyboards = callParallel(run, state, storyboardCalls);
+            Map<String, StepResult> storyboards = callParallel(runId, state, storyboardCalls);
             StoryboardProposal actionProposal = storyboards.get(STORYBOARD_KEYS.get(0)).parsed(StoryboardProposal.class);
             StoryboardProposal learningProposal = storyboards.get(STORYBOARD_KEYS.get(1)).parsed(StoryboardProposal.class);
 
-            StepResult director = call(run, state, "image-storyboard-director",
-                    input("storySnapshot", run.getStorySnapshot(),
+            StepResult director = call(runId, state, "image-storyboard-director",
+                    input("storySnapshot", prepared.run().storySnapshot(),
                             "storyAnalysis", analysis,
                             "continuityBible", continuity,
                             "styleBible", styleBible,
@@ -255,7 +256,7 @@ public class ImageRunExecutionService {
                     });
             FinalStoryboard finalStoryboard = director.parsed(FinalStoryboard.class);
 
-            StepResult reference = call(run, state, "image-reference-planner",
+            StepResult reference = call(runId, state, "image-reference-planner",
                     input("storyAnalysis", analysis,
                             "continuityBible", continuity,
                             "styleBible", styleBible,
@@ -268,8 +269,8 @@ public class ImageRunExecutionService {
                     });
             ReferencePlan referencePlan = reference.parsed(ReferencePlan.class);
 
-            StepResult shotPrompts = call(run, state, "image-shot-prompt-engineer",
-                    input("storySnapshot", run.getStorySnapshot(),
+            StepResult shotPrompts = call(runId, state, "image-shot-prompt-engineer",
+                    input("storySnapshot", prepared.run().storySnapshot(),
                             "continuityBible", continuity,
                             "styleBible", styleBible,
                             "finalStoryboard", finalStoryboard,
@@ -283,8 +284,8 @@ public class ImageRunExecutionService {
                     });
             ShotPromptPlan shotPromptPlan = shotPrompts.parsed(ShotPromptPlan.class);
 
-            StepResult preflight = call(run, state, "image-prompt-preflight",
-                    input("storySnapshot", run.getStorySnapshot(),
+            StepResult preflight = call(runId, state, "image-prompt-preflight",
+                    input("storySnapshot", prepared.run().storySnapshot(),
                             "storyAnalysis", analysis,
                             "continuityBible", continuity,
                             "styleBible", styleBible,
@@ -302,17 +303,17 @@ public class ImageRunExecutionService {
             run.setTotalTextTokens(state.totalTokens());
             runRepository.saveAndFlush(run);
         } catch (Exception exception) {
-            failRun(run, bounded(exception.getMessage()), state.totalTokens());
+            failRun(runId, bounded(exception.getMessage()), state.totalTokens());
         }
     }
 
     private Map<String, StepResult> callParallel(
-            ImageRun run, PlanningState state, Map<String, AgentCall> calls) {
+            String runId, PlanningState state, Map<String, AgentCall> calls) {
         Map<String, CompletableFuture<StepResult>> futures = new LinkedHashMap<>();
         for (Map.Entry<String, AgentCall> entry : calls.entrySet()) {
             try {
                 futures.put(entry.getKey(), CompletableFuture.supplyAsync(
-                        () -> call(run, state, entry.getKey(), entry.getValue().input(), entry.getValue().parser()),
+                        () -> call(runId, state, entry.getKey(), entry.getValue().input(), entry.getValue().parser()),
                         command -> planningExecutor.execute(command)));
             } catch (RuntimeException exception) {
                 futures.put(entry.getKey(), CompletableFuture.failedFuture(exception));
@@ -333,7 +334,7 @@ public class ImageRunExecutionService {
     }
 
     private StepResult call(
-            ImageRun run,
+            String runId,
             PlanningState state,
             String key,
             Map<String, Object> input,
@@ -341,15 +342,15 @@ public class ImageRunExecutionService {
         AgentExecution agent = state.agent(key);
         String inputJson = writeJson(input);
         ImageRunStep step = new ImageRunStep();
-        step.setRunId(run.getRunId());
+        step.setRunId(runId);
         step.setSequence(agent.sequence());
         step.setStageKey(agent.stageKey());
         step.setNodeKey(agent.key());
         step.setNodeName(agent.name());
         step.setNodeKind("AGENT");
         step.setPromptVersion(agent.promptVersion());
-        step.setProviderId(agent.provider().getId());
-        step.setProviderModel(agent.provider().getModel());
+        step.setProviderId(agent.provider().id());
+        step.setProviderModel(agent.provider().model());
         step.setInputJson(inputJson);
         step.setStatus("RUNNING");
         step.setStartedAt(now());
@@ -357,23 +358,28 @@ public class ImageRunExecutionService {
 
         long started = System.nanoTime();
         try {
-            int maxTokens = agent.provider().getMaxTokens() == null || agent.provider().getMaxTokens() <= 0
-                    ? DEFAULT_MAX_TOKENS : agent.provider().getMaxTokens();
+            int maxTokens = agent.provider().maxTokens() == null || agent.provider().maxTokens() <= 0
+                    ? DEFAULT_MAX_TOKENS : agent.provider().maxTokens();
             AiTextGenerationService.GenerationResult generated = textGenerationService.generateWithUsage(
-                    agent.provider(), agent.systemPrompt(), inputJson, agent.temperature(), maxTokens);
+                    agent.provider().toConfig(), agent.systemPrompt(), inputJson, agent.temperature(), maxTokens);
             if (generated == null) throw new IllegalArgumentException("AI 返回内容为空");
             String raw = generated.text();
-            step.setRawOutput(raw);
             long inputTokens = generated.inputTokens() > 0
                     ? generated.inputTokens() : estimateTokens(agent.systemPrompt() + "\n" + inputJson);
             long outputTokens = generated.outputTokens() > 0
                     ? generated.outputTokens() : estimateTokens(raw);
-            long totalTokens = generated.totalTokens() > 0
-                    ? generated.totalTokens() : inputTokens + outputTokens;
+            long minimumTotal = saturatedAdd(inputTokens, outputTokens);
+            long totalTokens = generated.totalTokens() >= minimumTotal
+                    ? generated.totalTokens() : minimumTotal;
             step.setInputTokens(inputTokens);
             step.setOutputTokens(outputTokens);
             step.setTotalTokens(totalTokens);
             state.addTokens(totalTokens);
+            if (raw != null && raw.length() > MAX_AGENT_RAW_CHARS) {
+                step.setRawOutput(OVERSIZED_RAW_PLACEHOLDER);
+                throw new IllegalArgumentException("图片规划原始输出超过最大长度");
+            }
+            step.setRawOutput(raw);
             Object parsed = outputParser.apply(raw);
             step.setParsedOutputJson(writeJson(parsed));
             step.setStatus("COMPLETED");
@@ -382,7 +388,7 @@ public class ImageRunExecutionService {
             stepRepository.saveAndFlush(step);
             return new StepResult(step, parsed);
         } catch (Exception exception) {
-            String message = redact(bounded(exception.getMessage()), agent.provider().getApiKey());
+            String message = redact(bounded(exception.getMessage()), agent.provider().apiKey());
             step.setErrorMessage(message);
             step.setStatus("FAILED");
             step.setDurationMs(elapsedMillis(started));
@@ -464,7 +470,40 @@ public class ImageRunExecutionService {
             throw new IllegalArgumentException("图片 Provider 配置不完整");
         }
         validateImageProviderUrl(provider.getBaseUrl());
-        return copyProvider(provider);
+        return provider;
+    }
+
+    private Map<String, Object> normalizeImageOptions(Map<String, Object> options, int width, int height) {
+        if (options == null || options.isEmpty()) return Map.of();
+        Map<String, Object> normalized = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : options.entrySet()) {
+            String key = entry.getKey();
+            if (!IMAGE_OPTION_KEYS.contains(key) || !(entry.getValue() instanceof String text)) {
+                throw new IllegalArgumentException("图片 Provider options 只能包含受支持的字符串参数");
+            }
+            String value = text.trim();
+            if (value.isEmpty() || value.length() > MAX_IMAGE_OPTION_LENGTH) {
+                throw new IllegalArgumentException("图片 Provider option 值无效");
+            }
+            if ("responseFormat".equals(key)) {
+                value = value.toLowerCase(Locale.ROOT);
+                if (!"b64_json".equals(value)) {
+                    throw new IllegalArgumentException("图片 Provider responseFormat 必须为 b64_json");
+                }
+            } else if ("quality".equals(key)) {
+                value = value.toLowerCase(Locale.ROOT);
+                if (!IMAGE_QUALITIES.contains(value)) {
+                    throw new IllegalArgumentException("图片 Provider quality 无效");
+                }
+            } else {
+                if (!value.matches("[1-9][0-9]{0,4}x[1-9][0-9]{0,4}")
+                        || !(width + "x" + height).equals(value)) {
+                    throw new IllegalArgumentException("图片 Provider size 必须与图片流程尺寸一致");
+                }
+            }
+            normalized.put(key, value);
+        }
+        return Map.copyOf(normalized);
     }
 
     private void validateImageProviderUrl(String baseUrl) {
@@ -482,7 +521,24 @@ public class ImageRunExecutionService {
         }
     }
 
-    private void failRun(ImageRun run, String error, long totalTokens) {
+    private ImageRun newRun(RunSnapshot snapshot) {
+        ImageRun run = new ImageRun();
+        run.setRunId(snapshot.runId());
+        run.setStoryRunId(snapshot.storyRunId());
+        run.setStorySnapshot(snapshot.storySnapshot());
+        run.setInputWordsJson(snapshot.inputWordsJson());
+        run.setTargetGrade(snapshot.targetGrade());
+        run.setStylePresetId(snapshot.stylePresetId());
+        run.setStyleSnapshotJson(snapshot.styleSnapshotJson());
+        run.setFlowSnapshotJson(snapshot.flowSnapshotJson());
+        run.setAgentSnapshotJson(snapshot.agentSnapshotJson());
+        run.setStatus("QUEUED");
+        return run;
+    }
+
+    private void failRun(String runId, String error, long totalTokens) {
+        ImageRun run = runRepository.findByRunId(runId)
+                .orElseThrow(() -> new IllegalArgumentException("图片运行批次不存在"));
         run.setStatus("FAILED");
         run.setErrorMessage(bounded(error));
         run.setTotalTextTokens(totalTokens);
@@ -490,8 +546,8 @@ public class ImageRunExecutionService {
         runRepository.saveAndFlush(run);
     }
 
-    private RunSummary summary(ImageRun run, ImageStylePreset style) {
-        return new RunSummary(run.getRunId(), run.getStoryRunId(), style.getId(), style.getName(),
+    private RunSummary summary(ImageRun run, Long styleId, String styleName) {
+        return new RunSummary(run.getRunId(), run.getStoryRunId(), styleId, styleName,
                 run.getTargetGrade(), run.getStatus(), run.getExpectedImageCount(), run.getGeneratedImageCount(),
                 run.getTotalTextTokens(), run.getCreatedAt(), run.getStartedAt(), run.getFinishedAt());
     }
@@ -537,33 +593,23 @@ public class ImageRunExecutionService {
                 .anyMatch(capability::equals);
     }
 
-    private static AiProviderConfigItem copyProvider(AiProviderConfigItem source) {
-        AiProviderConfigItem copy = new AiProviderConfigItem();
-        copy.setId(clean(source.getId()));
-        copy.setLabel(clean(source.getLabel()));
-        copy.setType(clean(source.getType()));
-        copy.setBaseUrl(clean(source.getBaseUrl()));
-        copy.setApiKey(source.getApiKey());
-        copy.setModel(clean(source.getModel()));
-        copy.setMaxTokens(source.getMaxTokens());
-        copy.setVoice(null);
-        copy.setCapabilities(source.getCapabilities() == null ? List.of() : List.copyOf(source.getCapabilities()));
-        copy.setOptions(source.getOptions() == null ? Map.of() : new LinkedHashMap<>(source.getOptions()));
-        copy.setEnabled(source.isEnabled());
-        copy.setActive(source.isActive());
-        return copy;
+    private static ProviderExecution providerExecution(AiProviderConfigItem source, Map<String, Object> options) {
+        return new ProviderExecution(clean(source.getId()), clean(source.getLabel()), clean(source.getType()),
+                clean(source.getBaseUrl()), source.getApiKey(), clean(source.getModel()), source.getMaxTokens(),
+                source.getCapabilities(), options);
     }
 
-    private static ProviderSnapshot safeProviderSnapshot(AiProviderConfigItem provider) {
-        Map<String, Object> safeOptions = new LinkedHashMap<>();
-        if (provider.getOptions() != null) {
-            for (String key : List.of("responseFormat", "quality", "size")) {
-                Object value = provider.getOptions().get(key);
-                if (value != null) safeOptions.put(key, value);
-            }
-        }
-        return new ProviderSnapshot(provider.getId(), provider.getLabel(), provider.getType(),
-                provider.getModel(), provider.getMaxTokens(), provider.getCapabilities(), Map.copyOf(safeOptions));
+    private static ProviderSnapshot textProviderSnapshot(ProviderExecution provider) {
+        return providerSnapshot(provider, Map.of());
+    }
+
+    private static ProviderSnapshot imageProviderSnapshot(ProviderExecution provider) {
+        return providerSnapshot(provider, provider.options());
+    }
+
+    private static ProviderSnapshot providerSnapshot(ProviderExecution provider, Map<String, Object> options) {
+        return new ProviderSnapshot(provider.id(), provider.label(), provider.type(),
+                provider.model(), provider.maxTokens(), provider.capabilities(), options);
     }
 
     private static RuntimeException asRuntime(Throwable throwable) {
@@ -574,6 +620,11 @@ public class ImageRunExecutionService {
     private static long estimateTokens(String text) {
         if (text == null || text.isEmpty()) return 0;
         return Math.max(1, (text.length() + 3L) / 4L);
+    }
+
+    private static long saturatedAdd(long left, long right) {
+        if (left < 0 || right < 0) throw new IllegalArgumentException("Token 用量不能为负数");
+        return left > Long.MAX_VALUE - right ? Long.MAX_VALUE : left + right;
     }
 
     private static long elapsedMillis(long started) {
@@ -599,13 +650,29 @@ public class ImageRunExecutionService {
     }
 
     private record PreparedRun(
-            ImageRun run,
-            ImageStylePreset style,
+            RunSnapshot run,
+            Long styleId,
+            String styleName,
             StyleSnapshot styleSnapshot,
             FlowSnapshot flow,
-            JsonNode targetWords,
-            PlanningState state,
-            AiProviderConfigItem imageProvider) {
+            String targetWordsJson,
+            Map<String, AgentExecution> agents,
+            ProviderExecution imageProvider) {
+        private PreparedRun {
+            agents = Map.copyOf(agents);
+        }
+    }
+
+    private record RunSnapshot(
+            String runId,
+            String storyRunId,
+            String storySnapshot,
+            String inputWordsJson,
+            String targetGrade,
+            String stylePresetId,
+            String styleSnapshotJson,
+            String flowSnapshotJson,
+            String agentSnapshotJson) {
     }
 
     private record PlanningState(Map<String, AgentExecution> agents, AtomicLong tokens) {
@@ -620,7 +687,7 @@ public class ImageRunExecutionService {
         }
 
         private void addTokens(long value) {
-            tokens.addAndGet(value);
+            tokens.updateAndGet(current -> saturatedAdd(current, value));
         }
 
         private long totalTokens() {
@@ -636,7 +703,7 @@ public class ImageRunExecutionService {
             String systemPrompt,
             int promptVersion,
             double temperature,
-            AiProviderConfigItem provider) {
+            ProviderExecution provider) {
     }
 
     private record AgentCall(Map<String, Object> input, Function<String, Object> parser) {
@@ -674,6 +741,38 @@ public class ImageRunExecutionService {
             int promptVersion,
             double temperature,
             ProviderSnapshot provider) {
+    }
+
+    private record ProviderExecution(
+            String id,
+            String label,
+            String type,
+            String baseUrl,
+            String apiKey,
+            String model,
+            Integer maxTokens,
+            List<String> capabilities,
+            Map<String, Object> options) {
+        private ProviderExecution {
+            capabilities = capabilities == null ? List.of() : capabilities.stream()
+                    .filter(Objects::nonNull).map(String::trim).toList();
+            options = options == null ? Map.of() : Map.copyOf(options);
+        }
+
+        private AiProviderConfigItem toConfig() {
+            AiProviderConfigItem provider = new AiProviderConfigItem();
+            provider.setId(id);
+            provider.setLabel(label);
+            provider.setType(type);
+            provider.setBaseUrl(baseUrl);
+            provider.setApiKey(apiKey);
+            provider.setModel(model);
+            provider.setMaxTokens(maxTokens);
+            provider.setCapabilities(capabilities);
+            provider.setOptions(options);
+            provider.setEnabled(true);
+            return provider;
+        }
     }
 
     private record ProviderSnapshot(

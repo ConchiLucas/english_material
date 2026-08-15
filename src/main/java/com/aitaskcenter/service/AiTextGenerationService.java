@@ -3,6 +3,9 @@ package com.aitaskcenter.service;
 import com.aitaskcenter.dto.AiProviderConfigItem;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -16,6 +19,7 @@ import org.springframework.util.StringUtils;
 
 @Service
 public class AiTextGenerationService {
+    private static final long MAX_RESPONSE_BYTES = 2L * 1024 * 1024;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(20)).build();
 
@@ -49,13 +53,16 @@ public class AiTextGenerationService {
             } else if (StringUtils.hasText(provider.getApiKey())) {
                 request.header("Authorization", "Bearer " + provider.getApiKey());
             }
-            HttpResponse<String> response = httpClient.send(
+            HttpResponse<InputStream> response = httpClient.send(
                     request.POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(payload))).build(),
-                    HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new IllegalArgumentException("AI 调用失败（HTTP " + response.statusCode() + "）");
+                    HttpResponse.BodyHandlers.ofInputStream());
+            JsonNode root;
+            try (InputStream responseBody = response.body()) {
+                if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                    throw new IllegalArgumentException("AI 调用失败（HTTP " + response.statusCode() + "）");
+                }
+                root = objectMapper.readTree(readBounded(response, responseBody));
             }
-            JsonNode root = objectMapper.readTree(response.body());
             String content = anthropic ? anthropicContent(root) : openAiContent(root);
             if (!StringUtils.hasText(content)) throw new IllegalArgumentException("AI 返回内容为空");
             JsonNode usage = root.path("usage");
@@ -65,7 +72,7 @@ public class AiTextGenerationService {
             long outputTokens = anthropic
                     ? usage.path("output_tokens").asLong(0)
                     : usage.path("completion_tokens").asLong(0);
-            long totalTokens = usage.path("total_tokens").asLong(inputTokens + outputTokens);
+            long totalTokens = usage.path("total_tokens").asLong(saturatedAdd(inputTokens, outputTokens));
             return new GenerationResult(content.trim(), inputTokens, outputTokens, totalTokens);
         } catch (IllegalArgumentException ex) {
             throw ex;
@@ -75,6 +82,27 @@ public class AiTextGenerationService {
     }
 
     public record GenerationResult(String text, long inputTokens, long outputTokens, long totalTokens) {
+    }
+
+    private byte[] readBounded(HttpResponse<?> response, InputStream input) throws IOException {
+        long contentLength = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
+        if (contentLength > MAX_RESPONSE_BYTES) throw new IllegalArgumentException("AI 响应超过最大长度");
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        long total = 0;
+        int count;
+        while ((count = input.read(buffer)) != -1) {
+            total += count;
+            if (total > MAX_RESPONSE_BYTES) throw new IllegalArgumentException("AI 响应超过最大长度");
+            output.write(buffer, 0, count);
+        }
+        return output.toByteArray();
+    }
+
+    private long saturatedAdd(long left, long right) {
+        if (left < 0 || right < 0) return 0;
+        if (Long.MAX_VALUE - left < right) return Long.MAX_VALUE;
+        return left + right;
     }
 
     private Map<String, Object> openAiPayload(AiProviderConfigItem provider, String systemPrompt,

@@ -3,6 +3,8 @@ package com.aitaskcenter.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -44,6 +46,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -70,6 +73,7 @@ class ImageRunExecutionServiceTest {
     private Map<String, String> generationOutputs;
     private List<ImageRunStep> savedSteps;
     private Map<String, ImageRunStep> startedSteps;
+    private AtomicReference<ImageRun> currentRun;
     private ExecutorService pool;
 
     @BeforeEach
@@ -87,6 +91,7 @@ class ImageRunExecutionServiceTest {
         mapper = new ObjectMapper().findAndRegisterModules();
         savedSteps = Collections.synchronizedList(new ArrayList<>());
         startedSteps = new ConcurrentHashMap<>();
+        currentRun = new AtomicReference<>();
 
         story = story("A child walks in the park.");
         style = style();
@@ -94,6 +99,10 @@ class ImageRunExecutionServiceTest {
         textProvider = provider("text-provider", "text-model", List.of("TEXT_GENERATION"));
         imageProvider = provider("image-provider", "image-model", List.of("IMAGE_GENERATION", "IMAGE_REFERENCE"));
         imageProvider.setType("  OPENAI-COMPATIBLE  ");
+        imageProvider.setOptions(Map.of(
+                "responseFormat", "  B64_JSON  ",
+                "quality", "  HIGH  ",
+                "size", "1536x864"));
         generationOutputs = validOutputs();
 
         when(stories.findByRunId("story-run-1")).thenReturn(java.util.Optional.of(story));
@@ -105,7 +114,12 @@ class ImageRunExecutionServiceTest {
         allProviders.setActive(textProvider.getId());
         allProviders.setProviders(List.of(textProvider, imageProvider));
         when(aiConfigs.getConfig()).thenReturn(allProviders);
-        when(runs.saveAndFlush(any(ImageRun.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(runs.saveAndFlush(any(ImageRun.class))).thenAnswer(invocation -> {
+            ImageRun run = invocation.getArgument(0);
+            currentRun.set(run);
+            return run;
+        });
+        when(runs.findByRunId(anyString())).thenAnswer(invocation -> java.util.Optional.ofNullable(currentRun.get()));
         when(runs.save(any(ImageRun.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(steps.saveAndFlush(any(ImageRunStep.class))).thenAnswer(invocation -> {
             ImageRunStep step = invocation.getArgument(0);
@@ -150,6 +164,21 @@ class ImageRunExecutionServiceTest {
         assertFalse(run.getAgentSnapshotJson().contains("secret-key"));
         assertTrue(run.getAgentSnapshotJson().contains("text-model"));
         assertTrue(run.getFlowSnapshotJson().contains("image-model"));
+        assertTrue(run.getFlowSnapshotJson().contains("\"responseFormat\":\"b64_json\""));
+        assertTrue(run.getFlowSnapshotJson().contains("\"quality\":\"high\""));
+    }
+
+    @Test
+    void neverPersistsTextProviderOptionsInAgentSnapshots() {
+        textProvider.setOptions(Map.of("quality", "text-option-secret"));
+
+        service(command -> { }, new SyncTaskExecutor())
+                .createRun(new StartImageRunRequest("story-run-1", 7L));
+
+        var captor = org.mockito.ArgumentCaptor.forClass(ImageRun.class);
+        verify(runs).saveAndFlush(captor.capture());
+        assertFalse(captor.getValue().getAgentSnapshotJson().contains("text-option-secret"));
+        assertTrue(captor.getValue().getAgentSnapshotJson().contains("\"options\":{}"));
     }
 
     @Test
@@ -188,16 +217,47 @@ class ImageRunExecutionServiceTest {
     }
 
     @Test
-    void acceptsNullOptionalImageProviderOptionsAsAdapterDefaults() {
+    void rejectsNullImageProviderOptionValues() {
         Map<String, Object> options = new LinkedHashMap<>();
         options.put("quality", null);
         imageProvider.setOptions(options);
 
-        var summary = service(command -> { }, new SyncTaskExecutor())
-                .createRun(new StartImageRunRequest("story-run-1", 7L));
+        assertThrows(IllegalArgumentException.class,
+                () -> service(command -> { }, new SyncTaskExecutor())
+                        .createRun(new StartImageRunRequest("story-run-1", 7L)));
 
-        assertEquals("QUEUED", summary.status());
-        verify(runs).saveAndFlush(any(ImageRun.class));
+        verify(runs, never()).saveAndFlush(any(ImageRun.class));
+    }
+
+    @Test
+    void rejectsNestedImageOptionsWithoutPersistingTheirSecret() {
+        String nestedSecret = "nested-image-secret";
+        imageProvider.setOptions(Map.of("quality", Map.of("secret", nestedSecret)));
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> service(command -> { }, new SyncTaskExecutor())
+                        .createRun(new StartImageRunRequest("story-run-1", 7L)));
+
+        assertFalse(error.getMessage().contains(nestedSecret));
+        verify(runs, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void rejectsUnknownOrInvalidImageOptionValues() {
+        List<Map<String, Object>> invalidOptions = List.of(
+                Map.of("unknown", "secret-value"),
+                Map.of("responseFormat", "url"),
+                Map.of("quality", "ultra"),
+                Map.of("size", "1024x1024"),
+                Map.of("quality", "x".repeat(200)));
+
+        for (Map<String, Object> invalid : invalidOptions) {
+            imageProvider.setOptions(invalid);
+            assertThrows(IllegalArgumentException.class,
+                    () -> service(command -> { }, new SyncTaskExecutor())
+                            .createRun(new StartImageRunRequest("story-run-1", 7L)));
+        }
+        verify(runs, never()).saveAndFlush(any());
     }
 
     @Test
@@ -263,6 +323,20 @@ class ImageRunExecutionServiceTest {
     }
 
     @Test
+    void continuesWithMergedPlanningEntityReturnedBySaveAndFlush() {
+        RunMergeTracker tracker = simulateMergedPlanningEntity();
+
+        service(new SyncTaskExecutor(), new SyncTaskExecutor())
+                .createRun(new StartImageRunRequest("story-run-1", 7L));
+
+        assertNotNull(tracker.queued().get());
+        assertNotNull(tracker.merged().get());
+        assertNotNull(tracker.finalSave().get());
+        assertNotSame(tracker.queued().get(), tracker.merged().get());
+        assertSame(tracker.merged().get(), tracker.finalSave().get());
+    }
+
+    @Test
     void runsBothDeclaredParallelLayersConcurrentlyAndKeepsLaterAgentsSequential() throws Exception {
         CountDownLatch foundation = new CountDownLatch(3);
         CountDownLatch storyboards = new CountDownLatch(2);
@@ -316,9 +390,122 @@ class ImageRunExecutionServiceTest {
         verifyNoInteractions(imageGeneration);
     }
 
+    @Test
+    void neverPersistsOversizedAgentRawOutput() {
+        String secretTail = "secret-tail-must-not-be-stored";
+        generationOutputs.put("image-story-analyst", "x".repeat(600_000) + secretTail);
+
+        service(new SyncTaskExecutor(), new SyncTaskExecutor())
+                .createRun(new StartImageRunRequest("story-run-1", 7L));
+
+        ImageRunStep failed = savedSteps.stream()
+                .filter(step -> step.getNodeKey().equals("image-story-analyst"))
+                .findFirst().orElseThrow();
+        assertEquals("FAILED", failed.getStatus());
+        assertNotNull(failed.getRawOutput());
+        assertTrue(failed.getRawOutput().length() <= 512_000);
+        assertFalse(failed.getRawOutput().contains(secretTail));
+    }
+
+    @Test
+    void estimatesNegativeProviderTokenUsage() {
+        stubUsage(-1, -2, -3);
+
+        service(new SyncTaskExecutor(), new SyncTaskExecutor())
+                .createRun(new StartImageRunRequest("story-run-1", 7L));
+
+        for (ImageRunStep step : savedSteps) {
+            assertTrue(step.getInputTokens() > 0);
+            assertTrue(step.getOutputTokens() > 0);
+            assertEquals(step.getInputTokens() + step.getOutputTokens(), step.getTotalTokens());
+        }
+    }
+
+    @Test
+    void replacesUnderreportedProviderTotalWithInputAndOutputSum() {
+        stubUsage(10, 20, 5);
+
+        service(new SyncTaskExecutor(), new SyncTaskExecutor())
+                .createRun(new StartImageRunRequest("story-run-1", 7L));
+
+        assertTrue(savedSteps.stream().allMatch(step -> step.getTotalTokens() == 30));
+        assertEquals(270, currentRun.get().getTotalTextTokens());
+    }
+
+    @Test
+    void saturatesStepAndRunTokenAdditionInsteadOfOverflowing() {
+        stubUsage(Long.MAX_VALUE, Long.MAX_VALUE, 0);
+
+        service(new SyncTaskExecutor(), new SyncTaskExecutor())
+                .createRun(new StartImageRunRequest("story-run-1", 7L));
+
+        assertTrue(savedSteps.stream().allMatch(step -> step.getTotalTokens() == Long.MAX_VALUE));
+        assertEquals(Long.MAX_VALUE, currentRun.get().getTotalTextTokens());
+    }
+
+    @Test
+    void reloadsTheLatestRunBeforePersistingStructuredFailure() {
+        generationOutputs.put("image-storyboard-director", "not-json");
+        RunMergeTracker tracker = simulateMergedPlanningEntity();
+
+        service(new SyncTaskExecutor(), new SyncTaskExecutor())
+                .createRun(new StartImageRunRequest("story-run-1", 7L));
+
+        assertNotNull(tracker.merged().get());
+        assertNotNull(tracker.failedSave().get());
+        assertSame(tracker.merged().get(), tracker.failedSave().get());
+        assertEquals("FAILED", tracker.failedSave().get().getStatus());
+        verify(runs, org.mockito.Mockito.atLeast(2)).findByRunId(anyString());
+    }
+
     private ImageRunExecutionService service(TaskExecutor runExecutor, TaskExecutor planningExecutor) {
         return new ImageRunExecutionService(stories, runs, steps, agents, styles, flows, aiConfigs,
                 textGeneration, imageGeneration, assetStore, mapper, runExecutor, planningExecutor);
+    }
+
+    private RunMergeTracker simulateMergedPlanningEntity() {
+        RunMergeTracker tracker = new RunMergeTracker(new AtomicReference<>(), new AtomicReference<>(),
+                new AtomicReference<>(), new AtomicReference<>());
+        org.mockito.Mockito.doAnswer(invocation -> {
+            ImageRun run = invocation.getArgument(0);
+            if ("QUEUED".equals(run.getStatus())) {
+                tracker.queued().set(run);
+                currentRun.set(run);
+                return run;
+            }
+            if ("PLANNING".equals(run.getStatus()) && run.getExpectedImageCount() == 0
+                    && tracker.merged().get() == null) {
+                ImageRun merged = mergedRun(run);
+                tracker.merged().set(merged);
+                currentRun.set(merged);
+                return merged;
+            }
+            if ("FAILED".equals(run.getStatus())) tracker.failedSave().set(run);
+            else tracker.finalSave().set(run);
+            currentRun.set(run);
+            return run;
+        }).when(runs).saveAndFlush(any(ImageRun.class));
+        return tracker;
+    }
+
+    private static ImageRun mergedRun(ImageRun source) {
+        ImageRun merged = new ImageRun();
+        merged.setRunId(source.getRunId());
+        merged.setStoryRunId(source.getStoryRunId());
+        merged.setStorySnapshot(source.getStorySnapshot());
+        merged.setInputWordsJson(source.getInputWordsJson());
+        merged.setTargetGrade(source.getTargetGrade());
+        merged.setStylePresetId(source.getStylePresetId());
+        merged.setStyleSnapshotJson(source.getStyleSnapshotJson());
+        merged.setFlowSnapshotJson(source.getFlowSnapshotJson());
+        merged.setAgentSnapshotJson(source.getAgentSnapshotJson());
+        merged.setStatus(source.getStatus());
+        merged.setExpectedImageCount(source.getExpectedImageCount());
+        merged.setGeneratedImageCount(source.getGeneratedImageCount());
+        merged.setTotalTextTokens(source.getTotalTextTokens());
+        merged.setStartedAt(source.getStartedAt());
+        merged.setVersion(source.getVersion() + 1);
+        return merged;
     }
 
     private AiTextGenerationService.GenerationResult generationResult(String systemPrompt) {
@@ -328,6 +515,15 @@ class ImageRunExecutionServiceTest {
         assertEquals("RUNNING", started.getStatus());
         assertFalse(started.getInputJson().isBlank());
         return new AiTextGenerationService.GenerationResult(generationOutputs.get(key), 11, 7, 18);
+    }
+
+    private void stubUsage(long inputTokens, long outputTokens, long totalTokens) {
+        org.mockito.Mockito.doAnswer(invocation -> {
+            String key = keyFromPrompt(invocation.getArgument(1));
+            assertNotNull(startedSteps.get(key));
+            return new AiTextGenerationService.GenerationResult(
+                    generationOutputs.get(key), inputTokens, outputTokens, totalTokens);
+        }).when(textGeneration).generateWithUsage(any(), anyString(), anyString(), anyDouble(), anyInt());
     }
 
     private String inputFor(String key) {
@@ -453,5 +649,12 @@ class ImageRunExecutionServiceTest {
     private static String preflightJson() {
         return "{\"referenceAssets\":[{\"assetKey\":\"asset-amy\",\"type\":\"CHARACTER\",\"target\":\"amy\",\"prompt\":\"Amy portrait, no text\",\"negativePrompt\":\"text\"}],"
                 + "\"shots\":[{\"shotKey\":\"shot-1\",\"sceneIndex\":1,\"shotIndex\":1,\"prompt\":\"Amy walks, no text\",\"negativePrompt\":\"text\",\"referenceAssetKeys\":[\"asset-amy\"],\"speaker\":\"amy\",\"dialogue\":\"Hello!\",\"narration\":\"a short narration\",\"textAnchor\":{\"x\":0.2,\"y\":0.3}}],\"auditSummary\":\"checked\"}";
+    }
+
+    private record RunMergeTracker(
+            AtomicReference<ImageRun> queued,
+            AtomicReference<ImageRun> merged,
+            AtomicReference<ImageRun> finalSave,
+            AtomicReference<ImageRun> failedSave) {
     }
 }
