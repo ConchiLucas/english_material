@@ -22,15 +22,17 @@ React 一级导航中的“图片工作台”紧邻“Agent 工作台”。它�
 | 出图提示词准备 | `image-reference-planner`、`image-shot-prompt-engineer`、`image-prompt-preflight` | 三个文本 Agent 顺序规划参考资产、分镜提示词并执行一次预检 |
 | 图片生成与文字合成 | `reference-image-generator`、`shot-image-generator`、`text-compositor` | 三个程序节点顺序生成参考图、分镜底图和最终文字图层 |
 
-九个文本 Agent 都有独立结构化合同。后端保存完整输入、模型原始输出和解析结果，拒绝重复/未知 key、缺失 Scene、图片数量越界、参考资产错绑、同镜互斥动作、图片内文字指令、无说话人的对白和无法安全排版的文本。预检只输出一份最终计划，不循环回退。
+九个文本 Agent 都有独立结构化合同。`ImageAgentCatalog` 将不可编辑的 `IMAGE_AGENT_RUNTIME_CONTRACT_V2` 与数据库中当前 Prompt 组合成 effective system prompt；旧 Prompt 和自定义 Prompt 无需被初始化覆盖，若已包含完全相同的合同则不会重复附加。批次 Agent 快照保存这个实际执行 Prompt；配置页和 Prompt 版本仍直接维护数据库中的 `system_prompt`，不能关闭代码目录持有的当前合同。
+
+后端保存完整输入、模型原始输出和解析结果，拒绝重复/未知 key、缺失 Scene、图片数量越界、参考资产错绑、同镜互斥动作、图片内文字指令、无说话人的对白和无法安全排版的文本。预检只输出一份最终计划，不循环回退。
 
 连续性与覆盖约束在规划阶段逐层收紧：
 
-- `StoryAnalysis` 的每个 Scene 必须有 1—5 个从 1 连续编号的 beat，全篇 beat 总数不超过 20；角色和地点都不能为空，两者合计不超过 20。
-- 两份 `StoryboardProposal` 的每个镜头都必须提供安全且稳定的 `shotKey`，引用所属 Scene 的已知 beat、角色和地点，并各自覆盖全部 beat。
-- `FinalStoryboard` 的每个镜头明确保存 `beat`、`action`、`characters` 和 `location`；`shotKey` 必须来自任一提案并保留原 Scene/beat 映射，镜头按 Scene/Shot 严格升序且每个 Scene 的 `shotIndex` 从 1 连续递增，每 Scene 最多 5 镜、全篇最多 20 镜并覆盖全部 beat。
+- `StoryAnalysis` 的每个 Scene 必须有 1—5 个从 1 连续编号的 beat，全篇 beat 总数不超过 20；角色和地点都不能为空，两者合计不超过 20。每个 beat 明确非空 `action`、实际出场 `characters` 集合和唯一 `location`，角色/地点 key 必须来自本次故事分析目录。
+- 两份 `StoryboardProposal` 的每个镜头都必须提供安全且稳定的 `shotKey`，各自覆盖全部 beat；其 Scene、beat、action、characters 集合和 location 必须与来源 beat 严格一致。
+- `FinalStoryboard` 的 `shotKey` 必须来自任一提案，并继续原样保留来源提案的 Scene、beat、action、characters 集合和 location；镜头按 Scene/Shot 严格升序且每个 Scene 的 `shotIndex` 从 1 连续递增，每 Scene 最多 5 镜、全篇最多 20 镜并覆盖全部 beat。
 - `ReferencePlan` 只接受 `CHARACTER` 和 `LOCATION`，必须为故事分析中的每个角色和每个地点各生成且仅生成一个参考资产，总数最多 20。
-- `ShotPromptPlan` 和 `PreflightPlan` 的每个镜头都必须绑定该镜头所属地点和全部出场角色的参考资产；单镜参考 key 去重且最多 8 个。预检还必须与最终分镜的 key、Scene 和 Shot 完全一致。
+- `ShotPromptPlan` 和 `PreflightPlan` 的每个镜头，其 `referenceAssetKeys` 必须精确等于该镜头所属地点与全部出场角色的参考 key 集合：不能缺少、不能重复，也不能加入未出场角色或其他地点；单镜仍最多 8 个。预检还必须与最终分镜的 key、Scene 和 Shot 完全一致。
 
 解析器在每个 Agent 原始输出落入步骤记录时立即执行对应校验。任何一项失败都会把当前 Agent 步骤和图片批次标记为 `FAILED`；执行不会进入参考图生成，因此不会创建 `PROGRAM` 步骤或产生图片调用费用。
 
@@ -48,7 +50,7 @@ React 一级导航中的“图片工作台”紧邻“Agent 工作台”。它�
 
 画风配置 API 在创建和更新时都要求名称、正向提示词、负向提示词和说明四个文本字段非空；前端也在提交前执行同样的必填校验。
 
-批次持久化最终故事、单词、年级、画风、流程、图片 Provider 安全描述，以及九个 Agent 的 Prompt/版本/温度/文本 Provider 安全描述。Provider 快照不保存 API Key 或 Base URL；图片业务表、步骤、资产、错误和日志也不复制密钥。执行所需的 Provider 地址和密钥只由现有 `tb_ai_config` 配置装入当前执行内存，创建后修改原故事、Prompt、画风或 Provider 不会改变已保存的历史快照。
+批次持久化最终故事、单词、年级、画风、流程、图片 Provider 安全描述，以及九个 Agent 的 effective system prompt、版本、温度和文本 Provider 安全描述。Provider 快照不保存 API Key 或 Base URL；图片业务表、步骤、资产、错误和日志也不复制密钥。执行所需的 Provider 地址和密钥只由现有 `tb_ai_config` 配置装入当前执行内存，创建后修改原故事、Prompt、画风或 Provider 不会改变已保存的历史快照。
 
 ## Provider 与图片文件
 
@@ -58,6 +60,8 @@ React 一级导航中的“图片工作台”紧邻“Agent 工作台”。它�
 - 分镜携带已生成参考图时请求 `/v1/images/edits` multipart 接口；
 - 响应必须包含 `b64_json`，返回图片会被解码并校验类型、尺寸和大小；
 - 角色参考图先于地点参考图生成；每个分镜只调用一次图片接口，并最多携带 8 张已声明参考图；任何图片调用失败都不自动重试。
+
+后端 `ImageProviderPolicy` 同时供流程配置保存和运行创建使用，避免“可保存但不可执行”的资格差异。Provider 必须具有非空 ID、模型和 Base URL；Base URL 是带 host 的绝对 HTTP(S) URI，不含用户信息、query 或 fragment，也不能直接指向 generations/edits 端点。可选 `options` 只允许不超过 64 字符的字符串 `responseFormat`、`quality`、`size`；分别限制为 `b64_json`、`auto|low|medium|high|standard|hd` 和 `1536x864`。前端用同一规则决定下拉项和失效状态。
 
 图片模型只接收无字画面提示词。`ImageTextCompositor` 读取分镜底图，在 Java2D 中将带说话人和锚点的对白排成气泡，将叙事排成底部安全区字幕，并输出最终 PNG。
 
@@ -78,7 +82,7 @@ QUEUED
   -> COMPLETED
 ```
 
-任一步骤失败后批次进入 `FAILED`，后续调用停止，已经持久化的步骤和图片仍可查询。应用启动时 `ImageRunRecoveryInitializer` 会把遗留在任一活动状态的批次标记为 `FAILED`，错误说明无法跨重启继续。
+任一步骤失败后批次进入 `FAILED`，后续调用停止，已经持久化的步骤和图片仍可查询。应用启动时 `ImageRunRecoveryInitializer` 为每个遗留活动批次开启独立 `REQUIRES_NEW` 事务：先把该批次仍为 `RUNNING` 的步骤以同一中断错误和时间标记为 `FAILED`，再在同一事务中将批次标记为 `FAILED`；已完成步骤不改写，运行无法跨重启继续。
 
 `tb_image_run_step` 最多形成 12 个按固定序号排列的记录：九个 `AGENT` 步骤保存完整输入、原始输出、解析输出、Provider/模型、Prompt 版本、Token、耗时和错误；三个 `PROGRAM` 步骤保存实际输入及生成资产 key/数量或完成分镜 key/数量。图片记录全屏页按批次联动单行输入单词、实际步骤、完整输入/输出，并在底部切换参考设定图和最终分镜图；活动批次轮询，终态停止。
 
