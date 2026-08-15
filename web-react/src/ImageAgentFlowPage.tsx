@@ -40,7 +40,26 @@ const fromStyle = (preset?: ImageStylePreset): StyleDraft => preset ? ({ id: pre
 const sameStyle = (a: StyleDraft, b: StyleDraft) => JSON.stringify(a) === JSON.stringify(b);
 const hasCapability = (provider: AIProviderConfigItem, capability: string) => (provider.capabilities ?? []).some((item) => item.trim().toUpperCase() === capability);
 const textProvider = (provider: AIProviderConfigItem) => provider.enabled !== false && hasCapability(provider, 'TEXT_GENERATION');
-const imageProvider = (provider: AIProviderConfigItem) => provider.type?.trim().toLowerCase() === 'openai-compatible' && provider.enabled !== false && hasCapability(provider, 'IMAGE_GENERATION') && hasCapability(provider, 'IMAGE_REFERENCE');
+const imageProviderUrl = (value: string) => {
+  const baseUrl = value.trim();
+  if (!/^https?:\/\/[^/]+(?:\/|$)/i.test(baseUrl) || baseUrl.includes('?') || baseUrl.includes('#')) return false;
+  try {
+    const url = new URL(baseUrl); const path = url.pathname.replace(/\/+$/, '').toLowerCase();
+    return (url.protocol === 'http:' || url.protocol === 'https:') && !!url.hostname && !url.username && !url.password && !url.search && !url.hash && !path.endsWith('/images/generations') && !path.endsWith('/images/edits');
+  } catch { return false; }
+};
+const imageProviderOptions = (options?: Record<string, unknown>) => {
+  if (!options) return true;
+  const allowed = new Set(['responseFormat', 'quality', 'size']); const qualities = new Set(['auto', 'low', 'medium', 'high', 'standard', 'hd']);
+  return Object.entries(options).every(([key, raw]) => {
+    if (!allowed.has(key) || typeof raw !== 'string') return false;
+    const value = raw.trim(); if (!value || value.length > 64) return false;
+    if (key === 'responseFormat') return value.toLowerCase() === 'b64_json';
+    if (key === 'quality') return qualities.has(value.toLowerCase());
+    return value === '1536x864';
+  });
+};
+const imageProvider = (provider: AIProviderConfigItem) => !!provider.id?.trim() && !!provider.model?.trim() && !!provider.base_url?.trim() && provider.type?.trim().toLowerCase() === 'openai-compatible' && provider.enabled !== false && hasCapability(provider, 'IMAGE_GENERATION') && hasCapability(provider, 'IMAGE_REFERENCE') && imageProviderUrl(provider.base_url) && imageProviderOptions(provider.options);
 const providerLabel = (provider: AIProviderConfigItem) => `${provider.label || provider.id}${provider.model ? ` · ${provider.model}` : ''}`;
 const errorText = (error: unknown) => error instanceof Error ? error.message.slice(0, 240) : '请求失败，请稍后重试';
 const formatDate = (value?: string | null) => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '未记录';

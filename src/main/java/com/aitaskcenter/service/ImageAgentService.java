@@ -2,6 +2,7 @@ package com.aitaskcenter.service;
 
 import com.aitaskcenter.config.ImageAgentCatalog;
 import com.aitaskcenter.config.ImageAgentCatalog.NodeDefinition;
+import com.aitaskcenter.config.ImageProviderPolicy;
 import com.aitaskcenter.dto.AiConfigRequest;
 import com.aitaskcenter.dto.AiProviderConfigItem;
 import com.aitaskcenter.dto.ImageAgentDtos.AgentUpdateRequest;
@@ -256,21 +257,19 @@ public class ImageAgentService {
         if (!supports(provider, "TEXT_GENERATION")) throw new IllegalArgumentException("AI 配置「" + clean(id) + "」不支持文本生成");
     }
     private void requireImageProvider(String id) {
-        AiProviderConfigItem provider = findProvider(id).filter(this::isExecutableImageProvider)
+        AiProviderConfigItem provider = findProvider(id)
                 .orElseThrow(() -> new IllegalArgumentException(IMAGE_PROVIDER_MESSAGE));
+        try {
+            ImageProviderPolicy.requireExecutable(provider);
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException(IMAGE_PROVIDER_MESSAGE);
+        }
     }
     private Optional<AiProviderConfigItem> findProvider(String id) { String expected = clean(id); return providers(aiConfigService.getProviders()).stream().filter(value -> expected.equals(clean(value.getId()))).findFirst(); }
     private boolean supports(AiProviderConfigItem provider, String capability) { return provider != null && provider.getCapabilities() != null && provider.getCapabilities().stream().filter(Objects::nonNull).anyMatch(value -> capability.equalsIgnoreCase(value.trim())); }
     private List<AiProviderConfigItem> providers(AiConfigRequest request) { return request == null || request.getProviders() == null ? List.of() : new ArrayList<>(request.getProviders()); }
     private String selectTextProvider(String preference, List<AiProviderConfigItem> values, String active) { List<AiProviderConfigItem> valid = values.stream().filter(p -> p != null && p.isEnabled() && supports(p, "TEXT_GENERATION") && StringUtils.hasText(p.getId())).toList(); return valid.stream().filter(p -> matchesPreference(p, preference)).findFirst().or(() -> valid.stream().filter(p -> clean(p.getId()).equals(active)).findFirst()).or(() -> valid.stream().findFirst()).map(p -> clean(p.getId())).orElse(""); }
-    private String selectImageProvider(List<AiProviderConfigItem> values) { return values.stream().filter(this::isExecutableImageProvider).filter(p -> StringUtils.hasText(p.getId())).findFirst().map(p -> clean(p.getId())).orElse(null); }
-    private boolean isExecutableImageProvider(AiProviderConfigItem provider) {
-        return provider != null
-                && "openai-compatible".equals(clean(provider.getType()).toLowerCase(Locale.ROOT))
-                && provider.isEnabled()
-                && supports(provider, "IMAGE_GENERATION")
-                && supports(provider, "IMAGE_REFERENCE");
-    }
+    private String selectImageProvider(List<AiProviderConfigItem> values) { return values.stream().filter(ImageProviderPolicy::isExecutable).findFirst().map(p -> clean(p.getId())).orElse(null); }
     private boolean matchesPreference(AiProviderConfigItem provider, String preference) {
         String normalizedPreference = normalizeCompact(preference);
         List<String> fields = List.of(clean(provider.getId()), clean(provider.getLabel()), clean(provider.getModel()));

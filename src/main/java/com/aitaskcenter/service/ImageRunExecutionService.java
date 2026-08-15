@@ -2,6 +2,7 @@ package com.aitaskcenter.service;
 
 import com.aitaskcenter.config.ImageAgentCatalog;
 import com.aitaskcenter.config.ImageAgentSnapshotContract;
+import com.aitaskcenter.config.ImageProviderPolicy;
 import com.aitaskcenter.config.StorySnapshotLimits;
 import com.aitaskcenter.config.ImageAgentCatalog.NodeDefinition;
 import com.aitaskcenter.dto.AiConfigRequest;
@@ -37,7 +38,6 @@ import com.aitaskcenter.service.ImageStructuredOutputParser.StoryboardProposal;
 import com.aitaskcenter.service.ImageStructuredOutputParser.StyleBible;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.net.URI;
 import java.nio.file.Path;
 import java.time.OffsetDateTime;
 import java.time.temporal.ChronoUnit;
@@ -46,10 +46,8 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -67,9 +65,6 @@ public class ImageRunExecutionService {
     private static final int MAX_ERROR_LENGTH = 600;
     private static final int MAX_AGENT_RAW_CHARS = 512_000;
     private static final String OVERSIZED_RAW_PLACEHOLDER = "图片规划原始输出超过最大长度，正文未保存";
-    private static final int MAX_IMAGE_OPTION_LENGTH = 64;
-    private static final Set<String> IMAGE_OPTION_KEYS = Set.of("responseFormat", "quality", "size");
-    private static final Set<String> IMAGE_QUALITIES = Set.of("auto", "low", "medium", "high", "standard", "hd");
     private static final List<String> FOUNDATION_KEYS = List.of(
             "image-story-analyst", "image-continuity-designer", "image-art-director");
     private static final List<String> STORYBOARD_KEYS = List.of(
@@ -176,9 +171,7 @@ public class ImageRunExecutionService {
         ImageFlowConfig flow = flowRepository.findByFlowKey(ImageFlowConfig.DEFAULT_FLOW_KEY)
                 .orElseThrow(() -> new IllegalArgumentException("图片流程配置不存在"));
         validateFlow(flow);
-        AiProviderConfigItem imageProviderConfig = requireImageProvider(flow.getImageProviderId());
-        ProviderExecution imageProvider = providerExecution(imageProviderConfig,
-                normalizeImageOptions(imageProviderConfig.getOptions(), flow.getWidth(), flow.getHeight()));
+        ProviderExecution imageProvider = requireImageProviderExecution(flow.getImageProviderId());
         FlowSnapshot flowSnapshot = new FlowSnapshot(
                 flow.getWidth(), flow.getHeight(), flow.getMaxShotsPerScene(), flow.getMaxShotsPerStory(),
                 imageProviderSnapshot(imageProvider));
@@ -732,7 +725,7 @@ public class ImageRunExecutionService {
         }
     }
 
-    private AiProviderConfigItem requireImageProvider(String id) {
+    private ProviderExecution requireImageProviderExecution(String id) {
         AiConfigRequest config = aiConfigService.getConfig();
         List<AiProviderConfigItem> providers = config == null || config.getProviders() == null
                 ? List.of() : config.getProviders();
@@ -741,65 +734,7 @@ public class ImageRunExecutionService {
                 .filter(value -> clean(id).equals(clean(value.getId())))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("图片 Provider 不存在"));
-        if (!"openai-compatible".equals(clean(provider.getType()).toLowerCase(Locale.ROOT))) {
-            throw new IllegalArgumentException("图片 Provider 必须使用 OpenAI compatible 协议");
-        }
-        if (!provider.isEnabled() || !supports(provider, "IMAGE_GENERATION") || !supports(provider, "IMAGE_REFERENCE")) {
-            throw new IllegalArgumentException("图片 Provider 必须启用并支持图片生成和多参考图");
-        }
-        if (!StringUtils.hasText(provider.getModel()) || !StringUtils.hasText(provider.getBaseUrl())) {
-            throw new IllegalArgumentException("图片 Provider 配置不完整");
-        }
-        validateImageProviderUrl(provider.getBaseUrl());
-        return provider;
-    }
-
-    private Map<String, Object> normalizeImageOptions(Map<String, Object> options, int width, int height) {
-        if (options == null || options.isEmpty()) return Map.of();
-        Map<String, Object> normalized = new LinkedHashMap<>();
-        for (Map.Entry<String, Object> entry : options.entrySet()) {
-            String key = entry.getKey();
-            if (!IMAGE_OPTION_KEYS.contains(key) || !(entry.getValue() instanceof String text)) {
-                throw new IllegalArgumentException("图片 Provider options 只能包含受支持的字符串参数");
-            }
-            String value = text.trim();
-            if (value.isEmpty() || value.length() > MAX_IMAGE_OPTION_LENGTH) {
-                throw new IllegalArgumentException("图片 Provider option 值无效");
-            }
-            if ("responseFormat".equals(key)) {
-                value = value.toLowerCase(Locale.ROOT);
-                if (!"b64_json".equals(value)) {
-                    throw new IllegalArgumentException("图片 Provider responseFormat 必须为 b64_json");
-                }
-            } else if ("quality".equals(key)) {
-                value = value.toLowerCase(Locale.ROOT);
-                if (!IMAGE_QUALITIES.contains(value)) {
-                    throw new IllegalArgumentException("图片 Provider quality 无效");
-                }
-            } else {
-                if (!value.matches("[1-9][0-9]{0,4}x[1-9][0-9]{0,4}")
-                        || !(width + "x" + height).equals(value)) {
-                    throw new IllegalArgumentException("图片 Provider size 必须与图片流程尺寸一致");
-                }
-            }
-            normalized.put(key, value);
-        }
-        return Map.copyOf(normalized);
-    }
-
-    private void validateImageProviderUrl(String baseUrl) {
-        try {
-            URI uri = URI.create(clean(baseUrl));
-            String path = uri.getPath() == null ? "" : uri.getPath().toLowerCase(Locale.ROOT);
-            if (!uri.isAbsolute() || uri.getHost() == null
-                    || !("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
-                    || uri.getRawUserInfo() != null || uri.getRawQuery() != null || uri.getRawFragment() != null
-                    || path.endsWith("/images/generations") || path.endsWith("/images/edits")) {
-                throw new IllegalArgumentException();
-            }
-        } catch (Exception exception) {
-            throw new IllegalArgumentException("图片 Provider 地址无效");
-        }
+        return providerExecution(provider, ImageProviderPolicy.requireExecutable(provider));
     }
 
     private ImageRun newRun(RunSnapshot snapshot) {
@@ -878,13 +813,6 @@ public class ImageRunExecutionService {
             result.put(String.valueOf(pairs[index]), pairs[index + 1]);
         }
         return result;
-    }
-
-    private static boolean supports(AiProviderConfigItem provider, String capability) {
-        return provider.getCapabilities() != null && provider.getCapabilities().stream()
-                .filter(Objects::nonNull)
-                .map(value -> value.trim().toUpperCase(Locale.ROOT))
-                .anyMatch(capability::equals);
     }
 
     private static ProviderExecution providerExecution(AiProviderConfigItem source, Map<String, Object> options) {

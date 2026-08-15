@@ -56,12 +56,21 @@ const makeFlow = (): ImageAgentFlow => ({
 const providers: AIProviderConfigItem[] = [
   { id: 'text-ok', label: 'Text', type: 'openai-compatible', base_url: '', api_key: '', model: 'text-model', max_tokens: 4096, capabilities: ['TEXT_GENERATION'], enabled: true },
   { id: 'text-off', label: 'Text Off', type: 'openai-compatible', base_url: '', api_key: '', model: 'off', max_tokens: 4096, capabilities: ['TEXT_GENERATION'], enabled: false },
-  { id: 'image-ok', label: 'Image', type: 'openai-compatible', base_url: '', api_key: '', model: 'image-model', max_tokens: 4096, capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'], enabled: true },
-  { id: 'image-two', label: 'Image Two', type: 'openai-compatible', base_url: '', api_key: '', model: 'image-two-model', max_tokens: 4096, capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'], enabled: true },
-  { id: 'image-three', label: 'Image Three', type: 'openai-compatible', base_url: '', api_key: '', model: 'image-three-model', max_tokens: 4096, capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'], enabled: true },
-  { id: 'image-no-ref', label: 'No refs', type: 'openai-compatible', base_url: '', api_key: '', model: 'bad', max_tokens: 4096, capabilities: ['IMAGE_GENERATION'], enabled: true },
-  { id: 'anthropic-image', label: 'Anthropic Image', type: 'anthropic-compatible', base_url: '', api_key: '', model: 'anthropic-image-model', max_tokens: 4096, capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'], enabled: true },
-  { id: 'normalized-image', label: 'Normalized Image', type: ' OPENAI-COMPATIBLE ' as AIProviderConfigItem['type'], base_url: '', api_key: '', model: 'normalized-image-model', max_tokens: 4096, capabilities: [' IMAGE_GENERATION ', 'image_reference'], enabled: true },
+  { id: 'image-ok', label: 'Image', type: 'openai-compatible', base_url: 'https://provider.invalid/v1', api_key: '', model: 'image-model', max_tokens: 4096, capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'], enabled: true },
+  { id: 'image-two', label: 'Image Two', type: 'openai-compatible', base_url: 'https://provider.invalid/v1', api_key: '', model: 'image-two-model', max_tokens: 4096, capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'], enabled: true },
+  { id: 'image-three', label: 'Image Three', type: 'openai-compatible', base_url: 'https://provider.invalid/v1', api_key: '', model: 'image-three-model', max_tokens: 4096, capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'], enabled: true },
+  { id: 'image-no-ref', label: 'No refs', type: 'openai-compatible', base_url: 'https://provider.invalid/v1', api_key: '', model: 'bad', max_tokens: 4096, capabilities: ['IMAGE_GENERATION'], enabled: true },
+  { id: 'anthropic-image', label: 'Anthropic Image', type: 'anthropic-compatible', base_url: 'https://provider.invalid/v1', api_key: '', model: 'anthropic-image-model', max_tokens: 4096, capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'], enabled: true },
+  { id: 'normalized-image', label: 'Normalized Image', type: ' OPENAI-COMPATIBLE ' as AIProviderConfigItem['type'], base_url: ' https://provider.invalid/proxy/v1 ', api_key: '', model: ' normalized-image-model ', max_tokens: 4096, capabilities: [' IMAGE_GENERATION ', 'image_reference'], options: { responseFormat: ' B64_JSON ', quality: ' HIGH ', size: ' 1536x864 ' }, enabled: true },
+  { id: 'image-query', label: 'Query Image', type: 'openai-compatible', base_url: 'https://provider.invalid/v1?token=hidden', api_key: '', model: 'image-model', max_tokens: 4096, capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'], enabled: true },
+  { id: 'image-empty-query', label: 'Empty Query Image', type: 'openai-compatible', base_url: 'https://provider.invalid/v1?', api_key: '', model: 'image-model', max_tokens: 4096, capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'], enabled: true },
+  { id: 'image-userinfo', label: 'Userinfo Image', type: 'openai-compatible', base_url: 'https://user:secret@provider.invalid/v1', api_key: '', model: 'image-model', max_tokens: 4096, capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'], enabled: true },
+  { id: 'image-endpoint', label: 'Endpoint Image', type: 'openai-compatible', base_url: 'https://provider.invalid/v1/images/edits', api_key: '', model: 'image-model', max_tokens: 4096, capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'], enabled: true },
+  { id: 'image-empty-model', label: 'Empty Model Image', type: 'openai-compatible', base_url: 'https://provider.invalid/v1', api_key: '', model: '   ', max_tokens: 4096, capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'], enabled: true },
+  { id: 'image-nested-option', label: 'Nested Option Image', type: 'openai-compatible', base_url: 'https://provider.invalid/v1', api_key: '', model: 'image-model', max_tokens: 4096, capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'], options: { quality: { secret: 'hidden' } }, enabled: true },
+  { id: 'image-bad-size', label: 'Bad Size Image', type: 'openai-compatible', base_url: 'https://provider.invalid/v1', api_key: '', model: 'image-model', max_tokens: 4096, capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'], options: { size: '1024x1024' }, enabled: true },
+  { id: 'image-bad-format', label: 'Bad Format Image', type: 'openai-compatible', base_url: 'https://provider.invalid/v1', api_key: '', model: 'image-model', max_tokens: 4096, capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'], options: { responseFormat: 'url' }, enabled: true },
+  { id: 'image-bad-quality', label: 'Bad Quality Image', type: 'openai-compatible', base_url: 'https://provider.invalid/v1', api_key: '', model: 'image-model', max_tokens: 4096, capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'], options: { quality: 'ultra' }, enabled: true },
 ];
 const renderPage = (flow = makeFlow(), onDirtyChange = vi.fn()) => { apiMocks.getImageAgentFlow.mockResolvedValue(flow); apiMocks.getImageStylePresets.mockResolvedValue(flow.stylePresets); return render(<AntApp><ImageAgentFlowPage providers={providers} onDirtyChange={onDirtyChange} /></AntApp>); };
 
@@ -258,6 +267,28 @@ describe('ImageAgentFlowPage', () => {
   it('filters image providers by both capabilities and keeps fixed limits read-only', async () => {
     const user = userEvent.setup(); renderPage(); await user.click(await screen.findByRole('tab', { name: '图片模型' })); expect(screen.getByText('1536 × 864')).toBeInTheDocument(); expect(screen.getByText('每 Scene 最多 5 张')).toBeInTheDocument(); expect(screen.getByText('全篇最多 20 张')).toBeInTheDocument();
     await user.click(screen.getByRole('combobox', { name: '图片 Provider' })); expect(screen.getAllByText('Image · image-model').length).toBeGreaterThan(0); expect(screen.getByText('Normalized Image · normalized-image-model')).toBeInTheDocument(); expect(screen.queryByText('No refs · bad')).not.toBeInTheDocument(); expect(screen.queryByText('Anthropic Image · anthropic-image-model')).not.toBeInTheDocument();
+  });
+
+  it('filters providers whose URL, model, or image options cannot execute', async () => {
+    const user = userEvent.setup(); renderPage(); await user.click(await screen.findByRole('tab', { name: '图片模型' }));
+    await user.click(screen.getByRole('combobox', { name: '图片 Provider' }));
+
+    for (const label of ['Query Image', 'Empty Query Image', 'Userinfo Image', 'Endpoint Image', 'Empty Model Image', 'Nested Option Image', 'Bad Size Image', 'Bad Format Image', 'Bad Quality Image']) {
+      expect(screen.queryByText(new RegExp(`^${label} ·`))).not.toBeInTheDocument();
+    }
+  });
+
+  it('blocks generation when the saved provider has a non-executable URL', async () => {
+    apiMocks.getImageSourceStories.mockResolvedValue([{ runId: 'story-run-1', words: [], wordsError: null, targetGrade: '三年级上册', status: 'COMPLETED', finalStory: 'Scene 1: Story\nA story.', createdAt: '2026-08-14T01:00:00Z', finishedAt: null }]);
+    const flow = makeFlow(); flow.config.imageProviderId = 'image-query'; const user = userEvent.setup(); renderPage(flow);
+    await user.click(await screen.findByRole('tab', { name: '图片模型' }));
+    expect(screen.getByText('当前图片 Provider 已不可用')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '开始生成' }));
+    const dialog = await screen.findByRole('dialog', { name: '开始生成图片故事' });
+    await user.click(within(dialog).getByRole('combobox', { name: '故事批次' })); await user.click((await screen.findAllByText(/story-run-1/)).at(-1)!);
+    await user.click(within(dialog).getByRole('combobox', { name: '画风预设' })); await user.click(screen.getAllByText('水彩绘本').at(-1)!);
+    expect(within(dialog).getByText(/尚未配置可用的图片 Provider/)).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: '创建图片批次' })).toBeDisabled();
   });
 
   it('treats a saved non-openai-compatible image provider as invalid', async () => {

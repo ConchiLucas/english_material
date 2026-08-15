@@ -334,6 +334,27 @@ class ImageRunExecutionServiceTest {
     }
 
     @Test
+    void rejectsIncompleteOrEndpointImageProvidersBeforePersistence() {
+        List<java.util.function.Consumer<AiProviderConfigItem>> invalid = List.of(
+                value -> value.setBaseUrl("https://user:hidden-provider-secret@provider.invalid/v1"),
+                value -> value.setBaseUrl("https://provider.invalid/v1#hidden-provider-secret"),
+                value -> value.setBaseUrl("https://provider.invalid/v1/images/generations"),
+                value -> value.setBaseUrl("https://provider.invalid/v1/images/edits/"),
+                value -> value.setModel("   "));
+
+        for (java.util.function.Consumer<AiProviderConfigItem> mutation : invalid) {
+            imageProvider.setBaseUrl("https://provider.invalid/v1");
+            imageProvider.setModel("image-model");
+            mutation.accept(imageProvider);
+            IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                    () -> service(command -> { }, new SyncTaskExecutor())
+                            .createRun(new StartImageRunRequest("story-run-1", 7L)));
+            assertFalse(error.getMessage().contains("hidden-provider-secret"));
+        }
+        verify(runs, never()).saveAndFlush(any());
+    }
+
+    @Test
     void rejectsNonOpenAiCompatibleImageProviderProtocol() {
         imageProvider.setType("  anthropic-compatible  ");
 

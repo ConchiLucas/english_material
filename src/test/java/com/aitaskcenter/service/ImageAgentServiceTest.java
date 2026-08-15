@@ -185,6 +185,40 @@ class ImageAgentServiceTest {
     }
 
     @Test
+    void flowRejectsImageProvidersThatTheExecutionAdapterCannotUse() {
+        ImageFlowConfig flow = ImageFlowConfig.defaults();
+        ReflectionTestUtils.setField(flow, "updatedAt", UPDATED);
+        AiProviderConfigItem image = provider("image-provider", true,
+                "IMAGE_GENERATION", "IMAGE_REFERENCE");
+        image.setApiKey("hidden-provider-api-key");
+        when(flows.findByFlowKey("default")).thenReturn(Optional.of(flow));
+        when(providers.getProviders()).thenReturn(providerConfig("", image));
+
+        List<java.util.function.Consumer<AiProviderConfigItem>> invalid = List.of(
+                value -> value.setBaseUrl("https://provider.invalid/v1?token=hidden-provider-secret"),
+                value -> value.setBaseUrl("https://user:hidden-provider-secret@provider.invalid/v1"),
+                value -> value.setBaseUrl("https://provider.invalid/v1/images/generations"),
+                value -> value.setModel("   "),
+                value -> value.setOptions(Map.of("quality", Map.of("secret", "hidden-provider-secret"))),
+                value -> value.setOptions(Map.of("size", "1024x1024")),
+                value -> value.setOptions(Map.of("responseFormat", "url")),
+                value -> value.setOptions(Map.of("quality", "ultra")));
+
+        for (java.util.function.Consumer<AiProviderConfigItem> mutation : invalid) {
+            image.setBaseUrl("https://provider.invalid/v1");
+            image.setModel("image-model");
+            image.setOptions(Map.of());
+            mutation.accept(image);
+            IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                    () -> service.updateFlow(new FlowUpdateRequest(
+                            "image-provider", 1536, 864, 5, 20, UPDATED)));
+            assertTrue(!error.getMessage().contains("hidden-provider-secret"));
+            assertTrue(!error.getMessage().contains("hidden-provider-api-key"));
+        }
+        verify(flows, never()).save(any());
+    }
+
+    @Test
     void stylesAreBuiltInFirstAndCreationUsesServerKeyAndTrimmedValues() {
         when(styles.save(any())).thenAnswer(i -> { ImageStylePreset preset = i.getArgument(0); preset.setId(3L); return preset; });
 
@@ -273,5 +307,5 @@ class ImageAgentServiceTest {
         ImageStylePreset value = new ImageStylePreset(); value.setId(id); value.setPresetKey(key); value.setName("n"); value.setPositivePrompt("p"); value.setNegativePrompt("x"); value.setDescription("d"); value.setEnabled(true); value.setBuiltIn(builtIn); ReflectionTestUtils.setField(value, "updatedAt", updated); return value;
     }
     private static AiConfigRequest providerConfig(String active, AiProviderConfigItem... values) { AiConfigRequest request = new AiConfigRequest(); request.setActive(active); request.setProviders(List.of(values)); return request; }
-    private static AiProviderConfigItem provider(String id, boolean enabled, String... caps) { AiProviderConfigItem value = new AiProviderConfigItem(); value.setId(id); value.setLabel(id); value.setModel(id); value.setEnabled(enabled); value.setCapabilities(List.of(caps)); return value; }
+    private static AiProviderConfigItem provider(String id, boolean enabled, String... caps) { AiProviderConfigItem value = new AiProviderConfigItem(); value.setId(id); value.setLabel(id); value.setType("openai-compatible"); value.setBaseUrl("https://provider.invalid/v1"); value.setModel(id); value.setEnabled(enabled); value.setCapabilities(List.of(caps)); return value; }
 }
