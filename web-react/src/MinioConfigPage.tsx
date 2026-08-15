@@ -30,6 +30,7 @@ export default function MinioConfigPage() {
   const [busy, setBusy] = useState<'test' | 'save' | null>(null);
   const [loadError, setLoadError] = useState('');
   const [dirty, setDirty] = useState(false);
+  const endpointLocked = config.updatedAt !== null;
 
   const apply = (next: MinioConfig) => {
     setConfig(next);
@@ -140,7 +141,7 @@ export default function MinioConfigPage() {
             </Col>
             <Col xs={24} md={18}>
               <Form.Item label="Endpoint" name="endpoint" rules={[{ required: true, message: '请输入 host:port' }]}>
-                <Input placeholder="minio.internal:9000" className="mono-field" />
+                <Input disabled={endpointLocked} placeholder="minio.internal:9000" className="mono-field" />
               </Form.Item>
             </Col>
             <Col xs={24} md={12}>
@@ -159,10 +160,13 @@ export default function MinioConfigPage() {
             </Col>
             <Col xs={24} md={6}>
               <Form.Item label="使用 SSL" name="useSsl" valuePropName="checked">
-                <Switch checkedChildren="HTTPS" unCheckedChildren="HTTP" />
+                <Switch aria-label="使用 SSL" disabled={endpointLocked} checkedChildren="HTTPS" unCheckedChildren="HTTP" />
               </Form.Item>
             </Col>
           </Row>
+          {endpointLocked && (
+            <Text type="secondary">首次保存后 Endpoint 与 SSL 固定；凭据、Bucket 和基础路径仍可更新。</Text>
+          )}
 
           <div className="form-section-title">对象位置</div>
           <Row gutter={16}>

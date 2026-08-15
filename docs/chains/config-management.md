@@ -13,3 +13,4 @@ summary: 说明 React 配置页面如何调用 Spring Boot 并持久化到本地
 6. 数据库密码、AI Key 和 MinIO Secret Key 只属于受控配置数据，不进入文档和部署快照；MinIO 查询只返回 `secretConfigured`。
 
 MinIO 保存与连接测试都会验证私有 Bucket 是否存在，缺失时创建，再对 `<basePath>/.readiness/` 下随机对象执行原子写入、有界读取和删除。代码不设置公开 Bucket Policy。
+首次验证保存后 Endpoint 与 SSL 固定，避免图片上传和资产元数据提交之间发生服务切换；Access/Secret Key 可轮换，默认 Bucket/基础路径可调整，历史资产继续使用记录内固定的 Bucket 与完整对象键。

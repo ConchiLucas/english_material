@@ -14,7 +14,7 @@ summary: 提供配置管理、故事与图片 Agent 编排和运行审计，以�
 
 ## 页面边界
 
-- 配置管理依次包含数据库配置、AI 配置、本地 CLI 配置、MinIO 配置和图片模型配置。MinIO 页面维护启用状态、Endpoint、Access Key、Secret Key、SSL、私有 Bucket 和基础路径，并支持连接测试；已保存 Secret Key 不回显，留空表示继续使用。图片模型配置仍读写共享 `tb_ai_config`，只筛选图片能力 Provider。
+- 配置管理依次包含数据库配置、AI 配置、本地 CLI 配置、MinIO 配置和图片模型配置。MinIO 页面维护启用状态、Endpoint、Access Key、Secret Key、SSL、私有 Bucket 和基础路径，并支持连接测试；首次保存后 Endpoint/SSL 只读，已保存 Secret Key 不回显，留空表示继续使用。图片模型配置仍读写共享 `tb_ai_config`，只筛选图片能力 Provider。
 - 一级导航包含“Agent 工作台”。工作台画布固定展示策划与创意、写作与候选、独立质量委员会、修订与交付四个阶段，全部节点均可点击查看。
 - 画布右侧使用页面内联的 Prompt 配置中心，不使用 Drawer；可编辑 Agent 展示并保存 AI Provider、Temperature、启用状态和 System Prompt，同时展示上下游、动态变量、当前版本与更新时间。
 - Prompt 版本弹窗支持查看历史并将选定版本恢复为新的最新版本；质量预算弹窗配置轮次、回退次数和总 Token 上限。

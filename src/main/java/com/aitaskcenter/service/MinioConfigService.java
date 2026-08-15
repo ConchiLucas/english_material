@@ -3,7 +3,6 @@ package com.aitaskcenter.service;
 import com.aitaskcenter.dto.MinioConfigRequest;
 import com.aitaskcenter.dto.MinioConfigView;
 import com.aitaskcenter.model.MinioConfig;
-import com.aitaskcenter.repository.ImageAssetRepository;
 import com.aitaskcenter.repository.MinioConfigRepository;
 import java.time.OffsetDateTime;
 import java.util.Locale;
@@ -23,15 +22,10 @@ public class MinioConfigService {
     private static final Pattern PATH_SEGMENT = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,62}");
 
     private final MinioConfigRepository repository;
-    private final ImageAssetRepository imageAssetRepository;
     private final MinioConnectionVerifier verifier;
 
-    public MinioConfigService(
-            MinioConfigRepository repository,
-            ImageAssetRepository imageAssetRepository,
-            MinioConnectionVerifier verifier) {
+    public MinioConfigService(MinioConfigRepository repository, MinioConnectionVerifier verifier) {
         this.repository = repository;
-        this.imageAssetRepository = imageAssetRepository;
         this.verifier = verifier;
     }
 
@@ -48,9 +42,8 @@ public class MinioConfigService {
         MinioConfig current = found.orElseGet(MinioConfig::new);
         if (found.isPresent()) requireCurrentTimestamp(current.getUpdatedAt(), request == null ? null : request.updatedAt());
         Normalized normalized = normalize(request, found.map(MinioConfig::getSecretAccessKey).orElse(""));
-        if (found.isPresent() && storageLocationChanged(current, normalized)
-                && imageAssetRepository.count() > 0) {
-            throw new IllegalArgumentException("已有图片资产时不能修改 MinIO 存储位置");
+        if (found.isPresent() && storageLocationChanged(current, normalized)) {
+            throw new IllegalArgumentException("MinIO Endpoint 与 SSL 保存后不能修改");
         }
         if (normalized.enabled()) verifier.verify(normalized.toStorageConfig());
         current.setConfigKey(DEFAULT_KEY);

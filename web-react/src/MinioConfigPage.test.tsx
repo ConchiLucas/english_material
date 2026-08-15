@@ -45,6 +45,9 @@ describe('MinioConfigPage', () => {
     expect(screen.getByLabelText('基础路径')).toHaveValue('image-story');
     expect(screen.getByLabelText('Secret Key')).toHaveValue('');
     expect(screen.getByText('已保存密钥；留空表示继续使用现有密钥。')).toBeInTheDocument();
+    expect(screen.getByLabelText('Endpoint')).toBeDisabled();
+    expect(screen.getByRole('switch', { name: '使用 SSL' })).toBeDisabled();
+    expect(screen.getByText('首次保存后 Endpoint 与 SSL 固定；凭据、Bucket 和基础路径仍可更新。')).toBeInTheDocument();
   });
 
   it('tests and saves without requiring the saved secret to be re-entered', async () => {

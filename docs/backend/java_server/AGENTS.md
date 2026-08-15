@@ -17,7 +17,7 @@ summary: 维护数据库、AI、故事与图片 Agent 配置及有界执行，�
 
 - `ConnectionConfigController` 维护可访问的 PostgreSQL、MySQL、SQL Server、Oracle 或 SQLite 连接配置，并提供连接测试和表清单。
 - `AiConfigController` 维护 AI Provider、当前 Provider和本地 CLI 配置；`POST /api/ai/config/image/bootstrap` 只接收来源 Provider ID，在后端从同一 `tb_ai_config` 安全复制 Antigravity 地址与密钥并创建固定图片 Provider，响应继续脱敏且不会调用外部模型。
-- `MinioConfigController` 维护唯一 MinIO 配置；保存或测试时执行私有 Bucket 建桶与有界写读删探测，Secret Key 只入库且查询永不回传。
+- `MinioConfigController` 维护唯一 MinIO 配置；保存或测试时执行私有 Bucket 建桶与有界写读删探测，Secret Key 只入库且查询永不回传。首次保存后 Endpoint/SSL 不可切换，Access/Secret Key、默认 Bucket 和基础路径仍可更新。
 - `StoryAgentController` 提供故事 Agent 流程、Prompt 版本和质量预算的配置接口；`StoryAgentService` 负责拼装固定流程、校验可编辑节点与文本生成 Provider、保存 Agent 配置、生成 Prompt 版本快照、恢复历史版本和维护流程预算。
 - `StoryAgentCatalog` 固定定义 4 个阶段、12 个可编辑 Agent 和 5 个只读程序/人工节点；`StoryAgentInitializer` 启动时只在某个 Agent 配置缺失时创建该配置及其 v1 快照，已有 Agent 即使缺少历史快照也不补建；默认流程预算缺失时才创建，且不覆盖已有配置。
 - `StoryRunController`、`StoryRunExecutionService` 与 `StoryRunQueryService` 创建异步故事运行批次，按固定 Agent 链路执行创作、审核、评分和决策，保存每次实际模型调用的完整输入/输出，并提供批次与详情查询。

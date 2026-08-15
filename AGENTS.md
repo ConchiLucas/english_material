@@ -45,7 +45,7 @@ summary: 定义英语材料配置后端、React 管理前端、故事与图片�
 - 本仓库只有一个 Git 根；修改前仍需明确变更属于根后端、`web-react` 前端还是共享部署配置。
 - 本地开发入口为 `./scripts/start-dev.sh`；Context Router 编排入口为 `deploy/context-router/`。
 - 本机差异只放入被 Git 忽略的根 `.env.local`，模板使用 `.env.local.example`。
-- 图片故事资产统一存入数据库配置的私有 MinIO Bucket；数据库保存创建时的 Bucket、完整受控对象键和 SHA-256，后续修改默认 Bucket/基础路径不影响历史资产，客户端只能通过资产 ID API 读取，不能获得 MinIO 凭据或直链。
+- 图片故事资产统一存入数据库配置的私有 MinIO Bucket；数据库保存创建时的 Bucket、完整受控对象键和 SHA-256，后续修改默认 Bucket/基础路径不影响历史资产。首次保存后 Endpoint/SSL 不可切换，凭据可轮换；客户端只能通过资产 ID API 读取，不能获得 MinIO 凭据或直链。
 - 图片工作台固定为 4 阶段、9 个文本 Agent 和 3 个程序节点；第一版不增加视觉评审、自动重绘、图片重试或审核写入链路。
 - 外部业务数据源只允许参数化只读查询，不得通过本服务执行建表、改表、迁移或写入。
 
