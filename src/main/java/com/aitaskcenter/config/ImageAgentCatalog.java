@@ -18,7 +18,8 @@ public final class ImageAgentCatalog {
             List.of(arrayField("scenes"), arrayField("beats"), arrayField("characters"), arrayField("locations"), arrayField("props"), arrayField("dialogues"), arrayField("narration")),
             Map.ofEntries(
                     Map.entry("scenes", objectArray("sceneIndex", "title", "sourceExcerpt", "summary")),
-                    Map.entry("beats", objectArray("beatKey", "sceneIndex", "order", "action", "temporalMoment")),
+                    Map.entry("beats", objectArray("beatKey", "sceneIndex", "order", "action", "temporalMoment", "characters", "location")),
+                    Map.entry("beats.characters", stringArray()),
                     Map.entry("characters", objectArray("characterKey", "name", "description")),
                     Map.entry("locations", objectArray("locationKey", "name", "description")),
                     Map.entry("props", objectArray("propKey", "name", "description")),
@@ -127,7 +128,7 @@ public final class ImageAgentCatalog {
                                     "分析故事场景、节拍、动作、角色、地点、道具、对白和旁白。",
                                     List.of("storySnapshot", "targetGrade", "targetWords", "imageSettings"),
                                     STORY_ANALYSIS_CONTRACT,
-                                    "从故事中拆出可追踪的场景、节拍和原始文本，不增写剧情。每个 Scene 必须拆出 1 到 5 个连续节拍；characters 和 locations 都不得为空，且两者总数不得超过 20。"),
+                                    "从故事中拆出可追踪的场景、节拍和原始文本，不增写剧情。每个 Scene 必须拆出 1 到 5 个连续节拍；characters 和 locations 都不得为空，且两者总数不得超过 20。每个 beat 必须明确非空 action、该动作中实际出场的 characters 集合和唯一 location。"),
                             agent(
                                     "image-continuity-designer",
                                     "角色连续性设计 Agent",
@@ -163,7 +164,7 @@ public final class ImageAgentCatalog {
                                     "按动作、视点和时间推进提出互不冲突的画面。",
                                     List.of("storySnapshot", "storyAnalysis", "continuityBible", "styleBible", "imageSettings"),
                                     STORYBOARD_PROPOSAL_CONTRACT,
-                                    "按动作变化、视点变化和时间推进拆镜，禁止单镜包含互斥时间点。每个 beatKey 至少对应一个独立分镜，不得跨 Scene；每个提案分镜给出安全且稳定的 shotKey。"),
+                                    "按动作变化、视点变化和时间推进拆镜，禁止单镜包含互斥时间点。每个 beatKey 至少对应一个独立分镜，不得跨 Scene；每个提案分镜给出安全且稳定的 shotKey，并原样保留源 beat 的 action、characters 集合和 location。"),
                             agent(
                                     "image-learning-storyboarder",
                                     "儿童叙事分镜 Agent",
@@ -173,7 +174,7 @@ public final class ImageAgentCatalog {
                                     "按三年级儿童理解顺序提出带短文本的画面。",
                                     List.of("storySnapshot", "storyAnalysis", "continuityBible", "styleBible", "imageSettings"),
                                     STORYBOARD_PROPOSAL_CONTRACT,
-                                    "按儿童可理解的因果顺序拆镜，并分配短对白或一到两句旁白。每个 beatKey 至少对应一个独立分镜，不得跨 Scene；每个提案分镜给出安全且稳定的 shotKey。"),
+                                    "按儿童可理解的因果顺序拆镜，并分配短对白或一到两句旁白。每个 beatKey 至少对应一个独立分镜，不得跨 Scene；每个提案分镜给出安全且稳定的 shotKey，并原样保留源 beat 的 action、characters 集合和 location。"),
                             agent(
                                     "image-storyboard-director",
                                     "分镜总监 Agent",
@@ -222,7 +223,7 @@ public final class ImageAgentCatalog {
                                             "referencePlan",
                                             "imageSettings"),
                                     SHOT_PROMPT_PLAN_CONTRACT,
-                                    "为每个 shotKey 写入角色描述、构图、动作、镜头、光线、负向约束和引用资产。每个镜头必须引用其地点和全部出场角色的参考资产。"),
+                                    "为每个 shotKey 写入角色描述、构图、动作、镜头、光线、负向约束和引用资产。每个镜头必须且只能引用其地点和全部出场角色的参考资产，不得引用其他角色或地点。"),
                             agent(
                                     "image-prompt-preflight",
                                     "出图前校对 Agent",
@@ -240,7 +241,7 @@ public final class ImageAgentCatalog {
                                             "shotPromptPlan",
                                             "imageSettings"),
                                     PREFLIGHT_PLAN_CONTRACT,
-                                    "检查故事覆盖、连续性、16:9 构图、参考绑定、无字限制、动作可视化和提示词冲突。每个镜头必须引用其地点和全部出场角色的参考资产。"))),
+                                    "检查故事覆盖、连续性、16:9 构图、参考绑定、无字限制、动作可视化和提示词冲突。每个镜头必须且只能引用其地点和全部出场角色的参考资产，不得引用其他角色或地点。"))),
             new StageDefinition(
                     "generation",
                     "图片生成与文字合成",
@@ -300,6 +301,14 @@ public final class ImageAgentCatalog {
         return node;
     }
 
+    public static String runtimeContract(String key) {
+        NodeDefinition node = require(key);
+        if (!node.editable() || node.runtimeContract().isBlank()) {
+            throw new IllegalArgumentException("Image flow node does not have a runtime contract: " + key);
+        }
+        return node.runtimeContract();
+    }
+
     private static NodeDefinition agent(
             String key,
             String name,
@@ -310,6 +319,7 @@ public final class ImageAgentCatalog {
             List<String> variables,
             SchemaContract schemaContract,
             String responsibility) {
+        String runtimeContract = runtimeContractText(key, variables, schemaContract, responsibility);
         return new NodeDefinition(
                 key,
                 name,
@@ -319,7 +329,8 @@ public final class ImageAgentCatalog {
                 parallelGroup,
                 description,
                 variables,
-                structuredPrompt(name, variables, schemaContract, responsibility),
+                "你是" + name + "。\n\n" + runtimeContract,
+                runtimeContract,
                 "Pro",
                 0.2,
                 true);
@@ -337,12 +348,13 @@ public final class ImageAgentCatalog {
                 List.of(),
                 "",
                 "",
+                "",
                 0.0,
                 false);
     }
 
-    private static String structuredPrompt(
-            String agentName, List<String> variables, SchemaContract schemaContract, String responsibility) {
+    private static String runtimeContractText(
+            String agentKey, List<String> variables, SchemaContract schemaContract, String responsibility) {
         String inputVariables = variables.stream()
                 .map(variable -> "{{" + variable + "}}")
                 .collect(Collectors.joining("、"));
@@ -362,7 +374,8 @@ public final class ImageAgentCatalog {
                 ? "字段 referenceAssets.type 必须是 CHARACTER 或 LOCATION。"
                 : "";
         return ("""
-                你是%s。%s
+                IMAGE_AGENT_RUNTIME_CONTRACT_V2::%s
+                %s
 
                 输入变量：%s。
                 面向小学三年级英语读者：仅保留孩子能理解的因果、动作、短对白和一到两句短旁白；不得改变故事主线。
@@ -377,7 +390,7 @@ public final class ImageAgentCatalog {
                 %s
                 所有 object 字段均为必填；数组不得省略，且仅在不违反上述完整覆盖和非空要求时可为空。禁止添加未声明的顶层字段。
                 """).formatted(
-                agentName,
+                agentKey,
                 responsibility,
                 inputVariables,
                 beginMarker,
@@ -424,6 +437,7 @@ public final class ImageAgentCatalog {
             String description,
             List<String> variables,
             String defaultPrompt,
+            String runtimeContract,
             String modelPreference,
             double defaultTemperature,
             boolean editable) {
@@ -435,6 +449,7 @@ public final class ImageAgentCatalog {
             Objects.requireNonNull(description, "description");
             variables = List.copyOf(variables);
             Objects.requireNonNull(defaultPrompt, "defaultPrompt");
+            Objects.requireNonNull(runtimeContract, "runtimeContract");
             Objects.requireNonNull(modelPreference, "modelPreference");
         }
     }

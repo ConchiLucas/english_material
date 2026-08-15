@@ -38,6 +38,7 @@ import com.aitaskcenter.repository.ImageShotRepository;
 import com.aitaskcenter.repository.ImageStylePresetRepository;
 import com.aitaskcenter.repository.StoryRunRepository;
 import com.aitaskcenter.service.AiImageGenerationService.ImageResult;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.awt.Color;
 import java.awt.Graphics2D;
@@ -97,6 +98,7 @@ class ImageRunExecutionServiceTest {
     private List<ImageAsset> savedAssets;
     private List<String> savedRunStatuses;
     private Map<String, ImageRunStep> startedSteps;
+    private Map<String, String> capturedSystemPrompts;
     private AtomicReference<ImageRun> currentRun;
     private ExecutorService pool;
 
@@ -120,6 +122,7 @@ class ImageRunExecutionServiceTest {
         savedAssets = Collections.synchronizedList(new ArrayList<>());
         savedRunStatuses = Collections.synchronizedList(new ArrayList<>());
         startedSteps = new ConcurrentHashMap<>();
+        capturedSystemPrompts = new ConcurrentHashMap<>();
         currentRun = new AtomicReference<>();
 
         story = story("A child walks in the park.");
@@ -235,6 +238,36 @@ class ImageRunExecutionServiceTest {
         verify(runs).saveAndFlush(captor.capture());
         assertFalse(captor.getValue().getAgentSnapshotJson().contains("text-option-secret"));
         assertTrue(captor.getValue().getAgentSnapshotJson().contains("\"options\":{}"));
+    }
+
+    @Test
+    void appendsExactV2RuntimeContractsToLegacyPromptsAndSnapshotsTheEffectivePrompt() throws Exception {
+        List<ImageAgentConfig> configured = new ArrayList<>(agentConfigs());
+        configured.get(0).setSystemPrompt("USER LEGACY ANALYST PROMPT");
+        String precomposed = "USER CUSTOM CONTINUITY PROMPT\n\n"
+                + ImageAgentCatalog.runtimeContract("image-continuity-designer");
+        configured.get(1).setSystemPrompt(precomposed);
+        when(agents.findAllByOrderByAgentKeyAsc()).thenReturn(configured);
+
+        service(new SyncTaskExecutor(), new SyncTaskExecutor())
+                .createRun(new StartImageRunRequest("story-run-1", 7L));
+
+        for (ImageAgentCatalog.NodeDefinition definition : ImageAgentCatalog.agents()) {
+            String actual = capturedSystemPrompts.get(definition.key());
+            assertNotNull(actual, definition.key());
+            assertTrue(actual.contains(ImageAgentCatalog.runtimeContract(definition.key())), definition.key());
+            assertEquals(1, countOccurrences(
+                    actual, "IMAGE_AGENT_RUNTIME_CONTRACT_V2::" + definition.key()), definition.key());
+        }
+        assertTrue(capturedSystemPrompts.get("image-story-analyst")
+                .contains("USER LEGACY ANALYST PROMPT"));
+        assertEquals(precomposed, capturedSystemPrompts.get("image-continuity-designer"));
+
+        JsonNode snapshots = mapper.readTree(currentRun.get().getAgentSnapshotJson()).path("agents");
+        for (JsonNode snapshot : snapshots) {
+            assertEquals(capturedSystemPrompts.get(snapshot.path("key").asText()),
+                    snapshot.path("systemPrompt").asText());
+        }
     }
 
     @Test
@@ -578,6 +611,46 @@ class ImageRunExecutionServiceTest {
     }
 
     @Test
+    void rejectsProposalAndFinalSemanticDriftBeforeAnyImageOrProgramStep() {
+        generationOutputs.put("image-action-storyboarder", wrap(
+                "STORYBOARD_PROPOSAL", storyboardProposalJson().replace(
+                        "Amy walks before lunch", "Amy waves after lunch")));
+        assertPlanningAgentFailsBeforeImages("image-action-storyboarder");
+
+        resetExecutionObservations();
+        generationOutputs = validOutputs();
+        generationOutputs.put("image-storyboard-director", wrap(
+                "FINAL_STORYBOARD", finalStoryboardJson().replace(
+                        "Amy walks before lunch", "Amy waves after lunch")));
+        assertPlanningAgentFailsBeforeImages("image-storyboard-director");
+    }
+
+    @Test
+    void rejectsExtraKnownCharacterReferencesBeforeAnyImageOrProgramStep() {
+        generationOutputs.put("image-story-analyst", wrap(
+                "STORY_ANALYSIS", storyAnalysisWithBenJson()));
+        generationOutputs.put("image-reference-planner", wrap(
+                "REFERENCE_PLAN", referencePlanWithBenJson()));
+        generationOutputs.put("image-shot-prompt-engineer", wrap(
+                "SHOT_PROMPT_PLAN", shotPromptPlanJson().replace(
+                        "[\"asset-amy\",\"asset-park\"]",
+                        "[\"asset-amy\",\"asset-park\",\"asset-ben\"]")));
+        assertPlanningAgentFailsBeforeImages("image-shot-prompt-engineer");
+
+        resetExecutionObservations();
+        generationOutputs = validOutputs();
+        generationOutputs.put("image-story-analyst", wrap(
+                "STORY_ANALYSIS", storyAnalysisWithBenJson()));
+        generationOutputs.put("image-reference-planner", wrap(
+                "REFERENCE_PLAN", referencePlanWithBenJson()));
+        generationOutputs.put("image-prompt-preflight", wrap(
+                "PREFLIGHT_PLAN", preflightWithBenJson().replace(
+                        "[\"asset-amy\",\"asset-park\"]",
+                        "[\"asset-amy\",\"asset-park\",\"asset-ben\"]")));
+        assertPlanningAgentFailsBeforeImages("image-prompt-preflight");
+    }
+
+    @Test
     void rejectsUnsafeOrOverlongStorageKeysBeforeAnyImageOrProgramStep() {
         assertPreflightFailsBeforeImages(preflightJson().replace("asset-amy", "asset/amy"));
 
@@ -905,6 +978,7 @@ class ImageRunExecutionServiceTest {
 
     private AiTextGenerationService.GenerationResult generationResult(String systemPrompt) {
         String key = keyFromPrompt(systemPrompt);
+        capturedSystemPrompts.put(key, systemPrompt);
         ImageRunStep started = startedSteps.get(key);
         assertNotNull(started, "step must be persisted before provider invocation");
         assertEquals("RUNNING", started.getStatus());
@@ -927,7 +1001,22 @@ class ImageRunExecutionServiceTest {
     }
 
     private static String keyFromPrompt(String prompt) {
-        return prompt.substring("PROMPT:".length());
+        for (ImageAgentCatalog.NodeDefinition definition : ImageAgentCatalog.agents()) {
+            if (prompt.contains("IMAGE_AGENT_RUNTIME_CONTRACT_V2::" + definition.key())) {
+                return definition.key();
+            }
+        }
+        return prompt.substring("PROMPT:".length()).lines().findFirst().orElseThrow();
+    }
+
+    private static int countOccurrences(String value, String target) {
+        int count = 0;
+        int index = 0;
+        while ((index = value.indexOf(target, index)) >= 0) {
+            count++;
+            index += target.length();
+        }
+        return count;
     }
 
     private static StoryRun story(String finalStory) {
@@ -1009,7 +1098,7 @@ class ImageRunExecutionServiceTest {
 
     private static String storyAnalysisJson() {
         return "{\"scenes\":[{\"sceneIndex\":1,\"title\":\"Park visit\",\"sourceExcerpt\":\"Amy walks\",\"summary\":\"Amy visits the park\"}],"
-                + "\"beats\":[{\"beatKey\":\"beat-1\",\"sceneIndex\":1,\"order\":1,\"action\":\"Amy walks before lunch\",\"temporalMoment\":\"before lunch\"}],"
+                + "\"beats\":[{\"beatKey\":\"beat-1\",\"sceneIndex\":1,\"order\":1,\"action\":\"Amy walks before lunch\",\"temporalMoment\":\"before lunch\",\"characters\":[\"amy\"],\"location\":\"park\"}],"
                 + "\"characters\":[{\"characterKey\":\"amy\",\"name\":\"Amy\",\"description\":\"A child\"}],"
                 + "\"locations\":[{\"locationKey\":\"park\",\"name\":\"Park\",\"description\":\"Green park\"}],"
                 + "\"props\":[{\"propKey\":\"ball\",\"name\":\"Ball\",\"description\":\"Red ball\"}],"
@@ -1018,9 +1107,15 @@ class ImageRunExecutionServiceTest {
 
     private static String storyAnalysisWithTwoBeatsJson() {
         return storyAnalysisJson().replace(
-                "\"beats\":[{\"beatKey\":\"beat-1\",\"sceneIndex\":1,\"order\":1,\"action\":\"Amy walks before lunch\",\"temporalMoment\":\"before lunch\"}]",
-                "\"beats\":[{\"beatKey\":\"beat-1\",\"sceneIndex\":1,\"order\":1,\"action\":\"Amy walks before lunch\",\"temporalMoment\":\"before lunch\"},"
-                        + "{\"beatKey\":\"beat-2\",\"sceneIndex\":1,\"order\":2,\"action\":\"Amy finds a ball\",\"temporalMoment\":\"after lunch\"}]");
+                "\"beats\":[{\"beatKey\":\"beat-1\",\"sceneIndex\":1,\"order\":1,\"action\":\"Amy walks before lunch\",\"temporalMoment\":\"before lunch\",\"characters\":[\"amy\"],\"location\":\"park\"}]",
+                "\"beats\":[{\"beatKey\":\"beat-1\",\"sceneIndex\":1,\"order\":1,\"action\":\"Amy walks before lunch\",\"temporalMoment\":\"before lunch\",\"characters\":[\"amy\"],\"location\":\"park\"},"
+                        + "{\"beatKey\":\"beat-2\",\"sceneIndex\":1,\"order\":2,\"action\":\"Amy finds a ball\",\"temporalMoment\":\"after lunch\",\"characters\":[\"amy\"],\"location\":\"park\"}]");
+    }
+
+    private static String storyAnalysisWithBenJson() {
+        return storyAnalysisJson().replace(
+                "{\"characterKey\":\"amy\",\"name\":\"Amy\",\"description\":\"A child\"}",
+                "{\"characterKey\":\"amy\",\"name\":\"Amy\",\"description\":\"A child\"},{\"characterKey\":\"ben\",\"name\":\"Ben\",\"description\":\"A friend\"}");
     }
 
     private static String continuityBibleJson() {
@@ -1051,6 +1146,12 @@ class ImageRunExecutionServiceTest {
                 + "{\"assetKey\":\"asset-amy\",\"type\":\"CHARACTER\",\"target\":\"amy\",\"prompt\":\"Amy portrait, no text\",\"negativePrompt\":\"text, watermark\"}]}";
     }
 
+    private static String referencePlanWithBenJson() {
+        return referencePlanJson().replace(
+                "]}",
+                ",{\"assetKey\":\"asset-ben\",\"type\":\"CHARACTER\",\"target\":\"ben\",\"prompt\":\"Ben portrait, no text\",\"negativePrompt\":\"text\"}]}");
+    }
+
     private static String shotPromptPlanJson() {
         return "{\"shots\":[{\"shotKey\":\"shot-1\",\"prompt\":\"Amy walks, no text\",\"negativePrompt\":\"text, words\",\"referenceAssetKeys\":[\"asset-amy\",\"asset-park\"]}]}";
     }
@@ -1059,6 +1160,12 @@ class ImageRunExecutionServiceTest {
         return "{\"referenceAssets\":[{\"assetKey\":\"asset-park\",\"type\":\"LOCATION\",\"target\":\"park\",\"prompt\":\"Green park, no text\",\"negativePrompt\":\"text\"},"
                 + "{\"assetKey\":\"asset-amy\",\"type\":\"CHARACTER\",\"target\":\"amy\",\"prompt\":\"Amy portrait, no text\",\"negativePrompt\":\"text\"}],"
                 + "\"shots\":[{\"shotKey\":\"shot-1\",\"sceneIndex\":1,\"shotIndex\":1,\"prompt\":\"Amy walks, no text\",\"negativePrompt\":\"text\",\"referenceAssetKeys\":[\"asset-amy\",\"asset-park\"],\"speaker\":\"amy\",\"dialogue\":\"Hello!\",\"narration\":\"a short narration\",\"textAnchor\":{\"x\":0.2,\"y\":0.3}}],\"auditSummary\":\"checked\"}";
+    }
+
+    private static String preflightWithBenJson() {
+        return preflightJson().replace(
+                "{\"assetKey\":\"asset-park\"",
+                "{\"assetKey\":\"asset-ben\",\"type\":\"CHARACTER\",\"target\":\"ben\",\"prompt\":\"Ben portrait, no text\",\"negativePrompt\":\"text\"},{\"assetKey\":\"asset-park\"");
     }
 
     private static String preflightWithReferences(int referenceCount, int keysOnShot) {

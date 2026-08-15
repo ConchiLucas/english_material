@@ -192,9 +192,10 @@ public class ImageRunExecutionService {
             validateAgent(definition, config);
             ProviderExecution provider = providerExecution(
                     aiConfigService.getProviderForExecution(config.getAiProviderId()), Map.of());
+            String effectiveSystemPrompt = effectiveSystemPrompt(definition.key(), config.getSystemPrompt());
             AgentExecution execution = new AgentExecution(
                     sequence++, stageKey(definition.key()), definition.key(), definition.name(),
-                    config.getSystemPrompt(), config.getPromptVersion(), config.getTemperature(), provider);
+                    effectiveSystemPrompt, config.getPromptVersion(), config.getTemperature(), provider);
             executionAgents.add(execution);
             agentSnapshots.add(new AgentSnapshot(
                     execution.sequence(), execution.stageKey(), execution.key(), execution.name(),
@@ -913,6 +914,13 @@ public class ImageRunExecutionService {
     private static long estimateTokens(String text) {
         if (text == null || text.isEmpty()) return 0;
         return Math.max(1, (text.length() + 3L) / 4L);
+    }
+
+    private static String effectiveSystemPrompt(String agentKey, String configuredPrompt) {
+        String configured = clean(configuredPrompt);
+        String contract = ImageAgentCatalog.runtimeContract(agentKey);
+        if (configured.contains(contract)) return configured;
+        return configured + "\n\n" + contract;
     }
 
     private static long saturatedAdd(long left, long right) {

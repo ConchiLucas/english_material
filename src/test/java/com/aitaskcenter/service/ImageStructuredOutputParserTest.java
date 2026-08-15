@@ -309,7 +309,7 @@ class ImageStructuredOutputParserTest {
     void requiresOneToFiveBeatsPerSceneAndAtLeastOneCharacterAndLocation() {
         assertMessage("StoryAnalysis 每个 Scene 必须包含 1 到 5 个节拍", () -> parser.storyAnalysis(wrap(
                 "STORY_ANALYSIS", storyAnalysisJson().replace(
-                        "\"beats\":[{\"beatKey\":\"beat-1\",\"sceneIndex\":1,\"order\":1,\"action\":\"Amy walks before lunch\",\"temporalMoment\":\"before lunch\"}]",
+                        "\"beats\":[{\"beatKey\":\"beat-1\",\"sceneIndex\":1,\"order\":1,\"action\":\"Amy walks before lunch\",\"temporalMoment\":\"before lunch\",\"characters\":[\"amy\"],\"location\":\"park\"}]",
                         "\"beats\":[]"))));
         assertMessage("StoryAnalysis 每个 Scene 必须包含 1 到 5 个节拍", () -> parser.storyAnalysis(wrap(
                 "STORY_ANALYSIS", analysisWithBeatCount(6))));
@@ -334,7 +334,7 @@ class ImageStructuredOutputParserTest {
     void requiresEachStoryboardProposalToCoverEveryBeatWithoutCrossingScenes() {
         StoryAnalysis analysis = twoBeatAnalysis();
         StoryboardProposal missingBeat = parser.storyboardProposal(wrap(
-                "STORYBOARD_PROPOSAL", storyboardProposalJson()));
+                "STORYBOARD_PROPOSAL", "{\"shots\":[" + proposalShot("shot-1", "beat-1", 1) + "]}"));
         assertMessage("StoryboardProposal 必须覆盖 StoryAnalysis 全部 beatKey", () ->
                 parser.validateProposalReferences(analysis, missingBeat));
 
@@ -350,7 +350,8 @@ class ImageStructuredOutputParserTest {
         StoryboardProposal proposal = parser.storyboardProposal(wrap(
                 "STORYBOARD_PROPOSAL", twoBeatProposalJson()));
         FinalStoryboard missingBeat = parser.finalStoryboard(wrap(
-                "FINAL_STORYBOARD", finalStoryboardJson()));
+                "FINAL_STORYBOARD", finalStoryboardJson().replace(
+                        "Amy walks before lunch", "Action 1")));
         assertMessage("FinalStoryboard 必须覆盖 StoryAnalysis 全部 beatKey", () ->
                 parser.validateCoverage(analysis, proposal, proposal, missingBeat));
 
@@ -402,6 +403,98 @@ class ImageStructuredOutputParserTest {
                         "[\"asset-amy\",\"asset-park\"]", "[\"asset-amy\"]")));
         assertMessage("PreflightPlan 分镜必须引用所属地点参考资产", () -> parser.validatePreflight(
                 preflightMissingLocation, finalStoryboard(), storyAnalysis(), continuityBible()));
+        PreflightPlan preflightMissingCharacter = parser.preflight(wrap(
+                "PREFLIGHT_PLAN", preflightJson().replace(
+                        "[\"asset-amy\",\"asset-park\"]", "[\"asset-park\"]")));
+        assertMessage("PreflightPlan 分镜必须引用全部出场角色参考资产", () -> parser.validatePreflight(
+                preflightMissingCharacter, finalStoryboard(), storyAnalysis(), continuityBible()));
+    }
+
+    @Test
+    void requiresShotReferencesToExactlyMatchTheFinalShotContinuitySet() {
+        StoryAnalysis analysis = richStoryAnalysis();
+        ReferencePlan references = richReferencePlan();
+        assertDoesNotThrow(() -> parser.validateReferenceTargets(references, analysis, continuityBible()));
+
+        ShotPromptPlan extraCharacter = parser.shotPromptPlan(wrap(
+                "SHOT_PROMPT_PLAN", shotPromptPlanJson().replace(
+                        "[\"asset-amy\",\"asset-park\"]",
+                        "[\"asset-amy\",\"asset-park\",\"asset-ben\"]")));
+        assertMessage("ShotPromptPlan 分镜不得引用未出场角色或其他地点参考资产", () ->
+                parser.validateReferences(extraCharacter, references, finalStoryboard()));
+
+        ShotPromptPlan extraLocation = parser.shotPromptPlan(wrap(
+                "SHOT_PROMPT_PLAN", shotPromptPlanJson().replace(
+                        "[\"asset-amy\",\"asset-park\"]",
+                        "[\"asset-amy\",\"asset-park\",\"asset-home\"]")));
+        assertMessage("ShotPromptPlan 分镜不得引用未出场角色或其他地点参考资产", () ->
+                parser.validateReferences(extraLocation, references, finalStoryboard()));
+
+        PreflightPlan extraPreflightReference = parser.preflight(wrap(
+                "PREFLIGHT_PLAN", richPreflightJson().replace(
+                        "[\"asset-amy\",\"asset-park\"]",
+                        "[\"asset-amy\",\"asset-park\",\"asset-ben\"]")));
+        assertMessage("PreflightPlan 分镜不得引用未出场角色或其他地点参考资产", () ->
+                parser.validatePreflight(extraPreflightReference, finalStoryboard(), analysis, continuityBible()));
+
+        assertMessage("ShotPromptPlan referenceAssetKeys 存在重复值", () -> parser.shotPromptPlan(wrap(
+                "SHOT_PROMPT_PLAN", shotPromptPlanJson().replace(
+                        "[\"asset-amy\",\"asset-park\"]",
+                        "[\"asset-amy\",\"asset-amy\",\"asset-park\"]"))));
+        assertMessage("PreflightPlan referenceAssetKeys 存在重复值", () -> parser.preflight(wrap(
+                "PREFLIGHT_PLAN", preflightJson().replace(
+                        "[\"asset-amy\",\"asset-park\"]",
+                        "[\"asset-amy\",\"asset-amy\",\"asset-park\"]"))));
+    }
+
+    @Test
+    void locksBeatCharactersAndLocationThenRequiresProposalsToMatchItsVisualSemantics() {
+        assertMessage("StoryAnalysis beat characterKey 必须引用已有 characterKey", () -> parser.storyAnalysis(wrap(
+                "STORY_ANALYSIS", storyAnalysisJson().replace(
+                        "\"characters\":[\"amy\"]", "\"characters\":[\"missing\"]"))));
+        assertMessage("StoryAnalysis beat location 必须引用已有 locationKey", () -> parser.storyAnalysis(wrap(
+                "STORY_ANALYSIS", storyAnalysisJson().replace(
+                        "\"location\":\"park\"", "\"location\":\"missing\""))));
+
+        assertMessage("StoryboardProposal action 必须与 StoryAnalysis beat.action 一致", () ->
+                parser.validateProposalReferences(storyAnalysis(), parser.storyboardProposal(wrap(
+                        "STORYBOARD_PROPOSAL", storyboardProposalJson().replace(
+                                "Amy walks before lunch", "Amy waves after lunch")))));
+        assertMessage("StoryboardProposal characters 必须与 StoryAnalysis beat.characters 一致", () ->
+                parser.validateProposalReferences(storyAnalysis(), parser.storyboardProposal(wrap(
+                        "STORYBOARD_PROPOSAL", storyboardProposalJson().replace(
+                                "\"characters\":[\"amy\"]", "\"characters\":[]")))));
+        assertMessage("StoryboardProposal characters 必须与 StoryAnalysis beat.characters 一致", () ->
+                parser.validateProposalReferences(richStoryAnalysis(), parser.storyboardProposal(wrap(
+                        "STORYBOARD_PROPOSAL", storyboardProposalJson().replace(
+                                "\"characters\":[\"amy\"]", "\"characters\":[\"amy\",\"ben\"]")))));
+        assertMessage("StoryboardProposal location 必须与 StoryAnalysis beat.location 一致", () ->
+                parser.validateProposalReferences(richStoryAnalysis(), parser.storyboardProposal(wrap(
+                        "STORYBOARD_PROPOSAL", storyboardProposalJson().replace(
+                                "\"location\":\"park\"", "\"location\":\"home\"")))));
+    }
+
+    @Test
+    void requiresFinalShotsToPreserveAllProposalVisualSemantics() {
+        StoryboardProposal proposal = storyboardProposal();
+        assertMessage("FinalStoryboard 必须保留 StoryboardProposal 的 action、characters 和 location", () ->
+                parser.validateCoverage(storyAnalysis(), proposal, proposal, parser.finalStoryboard(wrap(
+                        "FINAL_STORYBOARD", finalStoryboardJson().replace(
+                                "Amy walks before lunch", "Amy waves after lunch")))));
+        assertMessage("FinalStoryboard 必须保留 StoryboardProposal 的 action、characters 和 location", () ->
+                parser.validateCoverage(richStoryAnalysis(), proposal, proposal, parser.finalStoryboard(wrap(
+                        "FINAL_STORYBOARD", finalStoryboardJson().replace(
+                                "\"characters\":[\"amy\"]", "\"characters\":[\"amy\",\"ben\"]")))));
+        assertMessage("FinalStoryboard 必须保留 StoryboardProposal 的 action、characters 和 location", () ->
+                parser.validateCoverage(storyAnalysis(), proposal, proposal, parser.finalStoryboard(wrap(
+                        "FINAL_STORYBOARD", finalStoryboardJson().replace(
+                                "\"characters\":[\"amy\"]", "\"characters\":[]")))));
+        assertMessage("FinalStoryboard 必须保留 StoryboardProposal 的 action、characters 和 location", () ->
+                parser.validateCoverage(richStoryAnalysis(), proposal, proposal, parser.finalStoryboard(wrap(
+                        "FINAL_STORYBOARD", finalStoryboardJson().replace(
+                                "\"location\":\"park\"", "\"location\":\"home\"")))));
+        assertDoesNotThrow(() -> parser.validateCoverage(
+                storyAnalysis(), proposal, proposal, finalStoryboard()));
     }
 
     @Test
@@ -491,13 +584,23 @@ class ImageStructuredOutputParserTest {
                         "}],\"beats\":",
                         "},{\"sceneIndex\":2,\"title\":\"Home\",\"sourceExcerpt\":\"Amy rests\",\"summary\":\"Amy rests\"}],\"beats\":")
                 .replace(
-                        "\"temporalMoment\":\"before lunch\"}],\"characters\":",
-                        "\"temporalMoment\":\"before lunch\"},{\"beatKey\":\"beat-2\",\"sceneIndex\":2,\"order\":1,\"action\":\"Amy rests\",\"temporalMoment\":\"after lunch\"}],\"characters\":");
+                        "\"temporalMoment\":\"before lunch\",\"characters\":[\"amy\"],\"location\":\"park\"}],\"characters\":",
+                        "\"temporalMoment\":\"before lunch\",\"characters\":[\"amy\"],\"location\":\"park\"},{\"beatKey\":\"beat-2\",\"sceneIndex\":2,\"order\":1,\"action\":\"Amy rests\",\"temporalMoment\":\"after lunch\",\"characters\":[\"amy\"],\"location\":\"park\"}],\"characters\":");
         return parser.storyAnalysis(wrap("STORY_ANALYSIS", json));
     }
 
     private StoryAnalysis twoBeatAnalysis() {
         return parser.storyAnalysis(wrap("STORY_ANALYSIS", analysisWithBeatCount(2)));
+    }
+
+    private StoryAnalysis richStoryAnalysis() {
+        return parser.storyAnalysis(wrap("STORY_ANALYSIS", storyAnalysisJson()
+                .replace(
+                        "{\"characterKey\":\"amy\",\"name\":\"Amy\",\"description\":\"A child\"}",
+                        "{\"characterKey\":\"amy\",\"name\":\"Amy\",\"description\":\"A child\"},{\"characterKey\":\"ben\",\"name\":\"Ben\",\"description\":\"A friend\"}")
+                .replace(
+                        "{\"locationKey\":\"park\",\"name\":\"Park\",\"description\":\"Green park\"}",
+                        "{\"locationKey\":\"park\",\"name\":\"Park\",\"description\":\"Green park\"},{\"locationKey\":\"home\",\"name\":\"Home\",\"description\":\"Warm home\"}")));
     }
 
     private StoryboardProposal storyboardProposal() {
@@ -510,6 +613,10 @@ class ImageStructuredOutputParserTest {
 
     private ReferencePlan referencePlan() {
         return parser.referencePlan(wrap("REFERENCE_PLAN", referencePlanJson()));
+    }
+
+    private ReferencePlan richReferencePlan() {
+        return parser.referencePlan(wrap("REFERENCE_PLAN", richReferencePlanJson()));
     }
 
     private ContinuityBible continuityBible() {
@@ -546,7 +653,7 @@ class ImageStructuredOutputParserTest {
 
     private static String storyAnalysisJson() {
         return "{\"scenes\":[{\"sceneIndex\":1,\"title\":\"Park visit\",\"sourceExcerpt\":\"Amy walks\",\"summary\":\"Amy visits the park\"}],"
-                + "\"beats\":[{\"beatKey\":\"beat-1\",\"sceneIndex\":1,\"order\":1,\"action\":\"Amy walks before lunch\",\"temporalMoment\":\"before lunch\"}],"
+                + "\"beats\":[{\"beatKey\":\"beat-1\",\"sceneIndex\":1,\"order\":1,\"action\":\"Amy walks before lunch\",\"temporalMoment\":\"before lunch\",\"characters\":[\"amy\"],\"location\":\"park\"}],"
                 + "\"characters\":[{\"characterKey\":\"amy\",\"name\":\"Amy\",\"description\":\"A child\"}],"
                 + "\"locations\":[{\"locationKey\":\"park\",\"name\":\"Park\",\"description\":\"Green park\"}],"
                 + "\"props\":[{\"propKey\":\"ball\",\"name\":\"Ball\",\"description\":\"Red ball\"}],"
@@ -572,8 +679,9 @@ class ImageStructuredOutputParserTest {
     }
 
     private static String proposalShot(String shotKey, String beatKey, int sceneIndex) {
+        String action = "beat-1".equals(beatKey) ? "Action 1" : "Action 2";
         return "{\"shotKey\":\"" + shotKey + "\",\"sceneIndex\":" + sceneIndex
-                + ",\"beat\":\"" + beatKey + "\",\"action\":\"Amy moves\",\"characters\":[\"amy\"],"
+                + ",\"beat\":\"" + beatKey + "\",\"action\":\"" + action + "\",\"characters\":[\"amy\"],"
                 + "\"location\":\"park\",\"dialogue\":\"Hello!\",\"narration\":\"A short narration\",\"splitReason\":\"beat coverage\"}";
     }
 
@@ -584,11 +692,12 @@ class ImageStructuredOutputParserTest {
             beats.append("{\"beatKey\":\"beat-").append(index)
                     .append("\",\"sceneIndex\":1,\"order\":").append(index)
                     .append(",\"action\":\"Action ").append(index)
-                    .append("\",\"temporalMoment\":\"Moment ").append(index).append("\"}");
+                    .append("\",\"temporalMoment\":\"Moment ").append(index)
+                    .append("\",\"characters\":[\"amy\"],\"location\":\"park\"}");
         }
         beats.append(']');
         return storyAnalysisJson().replace(
-                "\"beats\":[{\"beatKey\":\"beat-1\",\"sceneIndex\":1,\"order\":1,\"action\":\"Amy walks before lunch\",\"temporalMoment\":\"before lunch\"}]",
+                "\"beats\":[{\"beatKey\":\"beat-1\",\"sceneIndex\":1,\"order\":1,\"action\":\"Amy walks before lunch\",\"temporalMoment\":\"before lunch\",\"characters\":[\"amy\"],\"location\":\"park\"}]",
                 beats.toString());
     }
 
@@ -629,14 +738,14 @@ class ImageStructuredOutputParserTest {
                 beats.append("{\"beatKey\":\"beat-").append(beatNumber++)
                         .append("\",\"sceneIndex\":").append(scene)
                         .append(",\"order\":").append(order)
-                        .append(",\"action\":\"Action\",\"temporalMoment\":\"Moment\"}");
+                        .append(",\"action\":\"Action\",\"temporalMoment\":\"Moment\",\"characters\":[\"amy\"],\"location\":\"park\"}");
             }
         }
         scenes.append(']');
         beats.append(']');
         return storyAnalysisJson()
                 .replace("\"scenes\":[{\"sceneIndex\":1,\"title\":\"Park visit\",\"sourceExcerpt\":\"Amy walks\",\"summary\":\"Amy visits the park\"}]", scenes)
-                .replace("\"beats\":[{\"beatKey\":\"beat-1\",\"sceneIndex\":1,\"order\":1,\"action\":\"Amy walks before lunch\",\"temporalMoment\":\"before lunch\"}]", beats)
+                .replace("\"beats\":[{\"beatKey\":\"beat-1\",\"sceneIndex\":1,\"order\":1,\"action\":\"Amy walks before lunch\",\"temporalMoment\":\"before lunch\",\"characters\":[\"amy\"],\"location\":\"park\"}]", beats)
                 .replace("\"dialogues\":[{\"sceneIndex\":1,\"speaker\":\"amy\",\"text\":\"Hello!\"}]", "\"dialogues\":[]")
                 .replace("\"narration\":[{\"sceneIndex\":1,\"text\":\"A short narration\"}]", "\"narration\":[]");
     }
@@ -646,10 +755,11 @@ class ImageStructuredOutputParserTest {
     }
 
     private static String twoBeatFinalStoryboardJson() {
-        return "{\"shots\":[" + finalShot("shot-1", 1, 1) + ","
+        return "{\"shots\":[" + finalShot("shot-1", 1, 1)
+                        .replace("Amy walks before lunch", "Action 1") + ","
                 + finalShot("shot-2", 1, 2)
                         .replace("\"beat\":\"beat-1\"", "\"beat\":\"beat-2\"")
-                        .replace("Amy walks before lunch", "Amy finds a ball")
+                        .replace("Amy walks before lunch", "Action 2")
                 + "]}";
     }
 
@@ -662,6 +772,12 @@ class ImageStructuredOutputParserTest {
         return "{\"referenceAssets\":[{\"assetKey\":\"asset-amy\",\"type\":\"CHARACTER\",\"target\":\"amy\",\"prompt\":\"Amy portrait, no text\",\"negativePrompt\":\"text, watermark\"},{\"assetKey\":\"asset-park\",\"type\":\"LOCATION\",\"target\":\"park\",\"prompt\":\"Green park, no text\",\"negativePrompt\":\"text\"}]}";
     }
 
+    private static String richReferencePlanJson() {
+        return referencePlanJson().replace(
+                "]}",
+                ",{\"assetKey\":\"asset-ben\",\"type\":\"CHARACTER\",\"target\":\"ben\",\"prompt\":\"Ben portrait, no text\",\"negativePrompt\":\"text\"},{\"assetKey\":\"asset-home\",\"type\":\"LOCATION\",\"target\":\"home\",\"prompt\":\"Warm home, no text\",\"negativePrompt\":\"text\"}]}");
+    }
+
     private static String shotPromptPlanJson() {
         return "{\"shots\":[{\"shotKey\":\"shot-1\",\"prompt\":\"Amy walks, no text\",\"negativePrompt\":\"text, words\",\"referenceAssetKeys\":[\"asset-amy\",\"asset-park\"]}]}";
     }
@@ -669,6 +785,12 @@ class ImageStructuredOutputParserTest {
     private static String preflightJson() {
         return "{\"referenceAssets\":[{\"assetKey\":\"asset-amy\",\"type\":\"CHARACTER\",\"target\":\"amy\",\"prompt\":\"Amy portrait, no text\",\"negativePrompt\":\"text\"},{\"assetKey\":\"asset-park\",\"type\":\"LOCATION\",\"target\":\"park\",\"prompt\":\"Green park, no text\",\"negativePrompt\":\"text\"}],\"shots\":["
                 + preflightShot("shot-1", 1, 1) + "],\"auditSummary\":\"checked\"}";
+    }
+
+    private static String richPreflightJson() {
+        return preflightJson().replace(
+                "{\"assetKey\":\"asset-amy\"",
+                "{\"assetKey\":\"asset-ben\",\"type\":\"CHARACTER\",\"target\":\"ben\",\"prompt\":\"Ben portrait, no text\",\"negativePrompt\":\"text\"},{\"assetKey\":\"asset-home\",\"type\":\"LOCATION\",\"target\":\"home\",\"prompt\":\"Warm home, no text\",\"negativePrompt\":\"text\"},{\"assetKey\":\"asset-amy\"");
     }
 
     private static String preflightShot(String shotKey, int sceneIndex, int shotIndex) {

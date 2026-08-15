@@ -167,7 +167,8 @@ class ImageAgentCatalogTest {
                                         arrayField("narration")),
                                 Map.ofEntries(
                                         Map.entry("scenes", objectArray("sceneIndex", "title", "sourceExcerpt", "summary")),
-                                        Map.entry("beats", objectArray("beatKey", "sceneIndex", "order", "action", "temporalMoment")),
+                                        Map.entry("beats", objectArray("beatKey", "sceneIndex", "order", "action", "temporalMoment", "characters", "location")),
+                                        Map.entry("beats.characters", stringArray()),
                                         Map.entry("characters", objectArray("characterKey", "name", "description")),
                                         Map.entry("locations", objectArray("locationKey", "name", "description")),
                                         Map.entry("props", objectArray("propKey", "name", "description")),
@@ -304,11 +305,14 @@ class ImageAgentCatalogTest {
             if ("image-story-analyst".equals(agent.key())) {
                 assertTrue(prompt.contains("每个 Scene 必须拆出 1 到 5 个连续节拍"), agent.key());
                 assertTrue(prompt.contains("characters 和 locations 都不得为空"), agent.key());
+                assertTrue(prompt.contains("每个 beat 必须明确非空 action"), agent.key());
+                assertTrue(prompt.contains("实际出场的 characters 集合和唯一 location"), agent.key());
             }
             if ("image-action-storyboarder".equals(agent.key())
                     || "image-learning-storyboarder".equals(agent.key())) {
                 assertTrue(prompt.contains("每个 beatKey 至少对应一个独立分镜"), agent.key());
                 assertTrue(prompt.contains("不得跨 Scene"), agent.key());
+                assertTrue(prompt.contains("原样保留源 beat 的 action、characters 集合和 location"), agent.key());
             }
             if ("image-storyboard-director".equals(agent.key())) {
                 assertTrue(prompt.contains("不得合并或遗漏 beat"), agent.key());
@@ -319,7 +323,8 @@ class ImageAgentCatalogTest {
             }
             if ("image-shot-prompt-engineer".equals(agent.key())
                     || "image-prompt-preflight".equals(agent.key())) {
-                assertTrue(prompt.contains("每个镜头必须引用其地点和全部出场角色的参考资产"), agent.key());
+                assertTrue(prompt.contains("每个镜头必须且只能引用其地点和全部出场角色的参考资产"), agent.key());
+                assertTrue(prompt.contains("不得引用其他角色或地点"), agent.key());
             }
             if ("FINAL_STORYBOARD".equals(contract.markerKey()) || "PREFLIGHT_PLAN".equals(contract.markerKey())) {
                 assertTrue(
@@ -416,6 +421,18 @@ class ImageAgentCatalogTest {
         assertEquals(864, ImageFlowConfig.defaults().getHeight());
         assertEquals(5, ImageFlowConfig.defaults().getMaxShotsPerScene());
         assertEquals(20, ImageFlowConfig.defaults().getMaxShotsPerStory());
+    }
+
+    @Test
+    void exposesOneExactVersionedRuntimeContractForEveryEditableAgent() {
+        for (ImageAgentCatalog.NodeDefinition agent : ImageAgentCatalog.agents()) {
+            String contract = ImageAgentCatalog.runtimeContract(agent.key());
+            assertTrue(contract.contains("IMAGE_AGENT_RUNTIME_CONTRACT_V2::" + agent.key()), agent.key());
+            assertEquals(contract, agent.runtimeContract(), agent.key());
+            assertEquals(1, countOccurrences(agent.defaultPrompt(), contract), agent.key());
+            assertTrue(contract.contains("输出 schema："), agent.key());
+            assertTrue(contract.contains("顶层字段必须且只能包含"), agent.key());
+        }
     }
 
     @Test
