@@ -525,6 +525,59 @@ class ImageRunExecutionServiceTest {
     }
 
     @Test
+    void rejectsIncompleteStoryAnalysisBeforeAnyImageOrProgramStep() {
+        generationOutputs.put("image-story-analyst", wrap("STORY_ANALYSIS", storyAnalysisJson().replace(
+                "\"locations\":[{\"locationKey\":\"park\",\"name\":\"Park\",\"description\":\"Green park\"}]",
+                "\"locations\":[]")));
+
+        assertPlanningAgentFailsBeforeImages("image-story-analyst");
+    }
+
+    @Test
+    void rejectsStoryboardProposalThatOmitsAStoryBeatBeforeAnyImageOrProgramStep() {
+        generationOutputs.put("image-story-analyst", wrap("STORY_ANALYSIS", storyAnalysisWithTwoBeatsJson()));
+
+        service(new SyncTaskExecutor(), new SyncTaskExecutor())
+                .createRun(new StartImageRunRequest("story-run-1", 7L));
+
+        verifyNoInteractions(imageGeneration);
+        assertFalse(savedSteps.stream().anyMatch(step -> "PROGRAM".equals(step.getNodeKind())));
+        assertTrue(savedSteps.stream().anyMatch(step -> List.of(
+                        "image-action-storyboarder", "image-learning-storyboarder").contains(step.getNodeKey())
+                && "FAILED".equals(step.getStatus())));
+        assertEquals("FAILED", currentRun.get().getStatus());
+    }
+
+    @Test
+    void rejectsFinalStoryboardThatOmitsAStoryBeatBeforeAnyImageOrProgramStep() {
+        generationOutputs.put("image-story-analyst", wrap("STORY_ANALYSIS", storyAnalysisWithTwoBeatsJson()));
+        generationOutputs.put("image-action-storyboarder", wrap("STORYBOARD_PROPOSAL", storyboardProposalWithTwoBeatsJson()));
+        generationOutputs.put("image-learning-storyboarder", wrap("STORYBOARD_PROPOSAL", storyboardProposalWithTwoBeatsJson()));
+
+        assertPlanningAgentFailsBeforeImages("image-storyboard-director");
+    }
+
+    @Test
+    void rejectsMissingReferenceAssetsAndPerShotContinuityReferencesBeforeAnyImageOrProgramStep() {
+        generationOutputs.put("image-reference-planner", wrap("REFERENCE_PLAN", referencePlanJson().replace(
+                "{\"assetKey\":\"asset-park\",\"type\":\"LOCATION\",\"target\":\"park\",\"prompt\":\"Green park, no text\",\"negativePrompt\":\"text\"},",
+                "")));
+        assertPlanningAgentFailsBeforeImages("image-reference-planner");
+
+        resetExecutionObservations();
+        generationOutputs = validOutputs();
+        generationOutputs.put("image-shot-prompt-engineer", wrap("SHOT_PROMPT_PLAN", shotPromptPlanJson().replace(
+                "[\"asset-amy\",\"asset-park\"]", "[\"asset-amy\"]")));
+        assertPlanningAgentFailsBeforeImages("image-shot-prompt-engineer");
+
+        resetExecutionObservations();
+        generationOutputs = validOutputs();
+        generationOutputs.put("image-prompt-preflight", wrap("PREFLIGHT_PLAN", preflightJson().replace(
+                "[\"asset-amy\",\"asset-park\"]", "[\"asset-amy\"]")));
+        assertPlanningAgentFailsBeforeImages("image-prompt-preflight");
+    }
+
+    @Test
     void rejectsUnsafeOrOverlongStorageKeysBeforeAnyImageOrProgramStep() {
         assertPreflightFailsBeforeImages(preflightJson().replace("asset-amy", "asset/amy"));
 
@@ -783,6 +836,19 @@ class ImageRunExecutionServiceTest {
         assertEquals("FAILED", currentRun.get().getStatus());
     }
 
+    private void assertPlanningAgentFailsBeforeImages(String agentKey) {
+        service(new SyncTaskExecutor(), new SyncTaskExecutor())
+                .createRun(new StartImageRunRequest("story-run-1", 7L));
+
+        verifyNoInteractions(imageGeneration);
+        assertFalse(savedSteps.stream().anyMatch(step -> "PROGRAM".equals(step.getNodeKind())));
+        ImageRunStep failed = savedSteps.stream()
+                .filter(step -> agentKey.equals(step.getNodeKey()))
+                .findFirst().orElseThrow();
+        assertEquals("FAILED", failed.getStatus());
+        assertEquals("FAILED", currentRun.get().getStatus());
+    }
+
     private void resetExecutionObservations() {
         org.mockito.Mockito.clearInvocations(imageGeneration);
         savedSteps.clear();
@@ -950,6 +1016,13 @@ class ImageRunExecutionServiceTest {
                 + "\"dialogues\":[{\"sceneIndex\":1,\"speaker\":\"amy\",\"text\":\"Hello!\"}],\"narration\":[{\"sceneIndex\":1,\"text\":\"A short narration\"}]}";
     }
 
+    private static String storyAnalysisWithTwoBeatsJson() {
+        return storyAnalysisJson().replace(
+                "\"beats\":[{\"beatKey\":\"beat-1\",\"sceneIndex\":1,\"order\":1,\"action\":\"Amy walks before lunch\",\"temporalMoment\":\"before lunch\"}]",
+                "\"beats\":[{\"beatKey\":\"beat-1\",\"sceneIndex\":1,\"order\":1,\"action\":\"Amy walks before lunch\",\"temporalMoment\":\"before lunch\"},"
+                        + "{\"beatKey\":\"beat-2\",\"sceneIndex\":1,\"order\":2,\"action\":\"Amy finds a ball\",\"temporalMoment\":\"after lunch\"}]");
+    }
+
     private static String continuityBibleJson() {
         return "{\"characters\":[{\"characterKey\":\"amy\",\"name\":\"Amy\",\"visualDescription\":\"brown hair\",\"clothing\":\"blue coat\",\"colors\":\"blue\",\"proportions\":\"child\",\"expressionRules\":\"kind\"}],"
                 + "\"props\":[{\"propKey\":\"ball\",\"visualDescription\":\"round\",\"colors\":\"red\",\"invariants\":\"round\"}],\"invariants\":[\"same coat\"],\"forbiddenChanges\":[\"no age change\"]}";
@@ -960,11 +1033,17 @@ class ImageRunExecutionServiceTest {
     }
 
     private static String storyboardProposalJson() {
-        return "{\"shots\":[{\"sceneIndex\":1,\"beat\":\"beat-1\",\"action\":\"Amy walks before lunch\",\"characters\":[\"amy\"],\"location\":\"park\",\"dialogue\":\"Hello!\",\"narration\":\"A short narration\",\"splitReason\":\"opening\"}]}";
+        return "{\"shots\":[{\"shotKey\":\"shot-1\",\"sceneIndex\":1,\"beat\":\"beat-1\",\"action\":\"Amy walks before lunch\",\"characters\":[\"amy\"],\"location\":\"park\",\"dialogue\":\"Hello!\",\"narration\":\"A short narration\",\"splitReason\":\"opening\"}]}";
+    }
+
+    private static String storyboardProposalWithTwoBeatsJson() {
+        return storyboardProposalJson().replace(
+                "]}",
+                ",{\"shotKey\":\"shot-2\",\"sceneIndex\":1,\"beat\":\"beat-2\",\"action\":\"Amy finds a ball\",\"characters\":[\"amy\"],\"location\":\"park\",\"dialogue\":\"\",\"narration\":\"Amy finds a ball.\",\"splitReason\":\"second beat\"}]}");
     }
 
     private static String finalStoryboardJson() {
-        return "{\"shots\":[{\"shotKey\":\"shot-1\",\"sceneIndex\":1,\"shotIndex\":1,\"sourceExcerpt\":\"Amy walks\",\"visualGoal\":\"show Amy\",\"dialogue\":\"Hello!\",\"narration\":\"a short narration\",\"speaker\":\"amy\",\"textAnchor\":{\"x\":0.2,\"y\":0.3}}]}";
+        return "{\"shots\":[{\"shotKey\":\"shot-1\",\"sceneIndex\":1,\"shotIndex\":1,\"beat\":\"beat-1\",\"action\":\"Amy walks before lunch\",\"characters\":[\"amy\"],\"location\":\"park\",\"sourceExcerpt\":\"Amy walks\",\"visualGoal\":\"show Amy\",\"dialogue\":\"Hello!\",\"narration\":\"a short narration\",\"speaker\":\"amy\",\"textAnchor\":{\"x\":0.2,\"y\":0.3}}]}";
     }
 
     private static String referencePlanJson() {

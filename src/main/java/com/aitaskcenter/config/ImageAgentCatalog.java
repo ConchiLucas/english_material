@@ -54,24 +54,30 @@ public final class ImageAgentCatalog {
             Map.ofEntries(
                     Map.entry(
                             "shots",
-                            objectArray("sceneIndex", "beat", "action", "characters", "location", "dialogue", "narration", "splitReason")),
+                            objectArray("shotKey", "sceneIndex", "beat", "action", "characters", "location", "dialogue", "narration", "splitReason")),
                     Map.entry("shots.characters", stringArray())));
     private static final SchemaContract FINAL_STORYBOARD_CONTRACT = new SchemaContract(
             "FinalStoryboard",
             "FINAL_STORYBOARD",
             List.of(arrayField("shots")),
-            Map.of(
-                    "shots",
-                    objectArray(
-                            "shotKey",
-                            "sceneIndex",
-                            "shotIndex",
-                            "sourceExcerpt",
-                            "visualGoal",
-                            "dialogue",
-                            "narration",
-                            "speaker",
-                            "textAnchor")));
+            Map.ofEntries(
+                    Map.entry(
+                            "shots",
+                            objectArray(
+                                    "shotKey",
+                                    "sceneIndex",
+                                    "shotIndex",
+                                    "beat",
+                                    "action",
+                                    "characters",
+                                    "location",
+                                    "sourceExcerpt",
+                                    "visualGoal",
+                                    "dialogue",
+                                    "narration",
+                                    "speaker",
+                                    "textAnchor")),
+                    Map.entry("shots.characters", stringArray())));
     private static final SchemaContract REFERENCE_PLAN_CONTRACT = new SchemaContract(
             "ReferencePlan",
             "REFERENCE_PLAN",
@@ -121,7 +127,7 @@ public final class ImageAgentCatalog {
                                     "分析故事场景、节拍、动作、角色、地点、道具、对白和旁白。",
                                     List.of("storySnapshot", "targetGrade", "targetWords", "imageSettings"),
                                     STORY_ANALYSIS_CONTRACT,
-                                    "从故事中拆出可追踪的场景、节拍和原始文本，不增写剧情。"),
+                                    "从故事中拆出可追踪的场景、节拍和原始文本，不增写剧情。每个 Scene 必须拆出 1 到 5 个连续节拍；characters 和 locations 都不得为空，且两者总数不得超过 20。"),
                             agent(
                                     "image-continuity-designer",
                                     "角色连续性设计 Agent",
@@ -157,7 +163,7 @@ public final class ImageAgentCatalog {
                                     "按动作、视点和时间推进提出互不冲突的画面。",
                                     List.of("storySnapshot", "storyAnalysis", "continuityBible", "styleBible", "imageSettings"),
                                     STORYBOARD_PROPOSAL_CONTRACT,
-                                    "按动作变化、视点变化和时间推进拆镜，禁止单镜包含互斥时间点。"),
+                                    "按动作变化、视点变化和时间推进拆镜，禁止单镜包含互斥时间点。每个 beatKey 至少对应一个独立分镜，不得跨 Scene；每个提案分镜给出安全且稳定的 shotKey。"),
                             agent(
                                     "image-learning-storyboarder",
                                     "儿童叙事分镜 Agent",
@@ -167,7 +173,7 @@ public final class ImageAgentCatalog {
                                     "按三年级儿童理解顺序提出带短文本的画面。",
                                     List.of("storySnapshot", "storyAnalysis", "continuityBible", "styleBible", "imageSettings"),
                                     STORYBOARD_PROPOSAL_CONTRACT,
-                                    "按儿童可理解的因果顺序拆镜，并分配短对白或一到两句旁白。"),
+                                    "按儿童可理解的因果顺序拆镜，并分配短对白或一到两句旁白。每个 beatKey 至少对应一个独立分镜，不得跨 Scene；每个提案分镜给出安全且稳定的 shotKey。"),
                             agent(
                                     "image-storyboard-director",
                                     "分镜总监 Agent",
@@ -184,7 +190,7 @@ public final class ImageAgentCatalog {
                                             "learningStoryboardProposal",
                                             "imageSettings"),
                                     FINAL_STORYBOARD_CONTRACT,
-                                    "确保每个 Scene 一到五镜、全篇最多二十镜、节拍完整覆盖，并为每镜给稳定 shotKey。"))),
+                                    "确保每个 Scene 一到五镜、全篇最多二十镜，不得合并或遗漏 beat；shotKey 必须来自输入提案，并保留对应 Scene、beat、action、characters 和 location。"))),
             new StageDefinition(
                     "prompting",
                     "出图提示词准备",
@@ -200,7 +206,7 @@ public final class ImageAgentCatalog {
                                     "规划角色设定图与主要场景设定图的参考资产。",
                                     List.of("storyAnalysis", "continuityBible", "styleBible", "finalStoryboard", "imageSettings"),
                                     REFERENCE_PLAN_CONTRACT,
-                                    "定义稳定 assetKey、资产类型、目标、无字提示词与负向约束。"),
+                                    "定义稳定 assetKey、资产类型、目标、无字提示词与负向约束。为 StoryAnalysis 的每个角色和每个地点各生成且仅生成一个参考资产。"),
                             agent(
                                     "image-shot-prompt-engineer",
                                     "分镜提示词工程 Agent",
@@ -216,7 +222,7 @@ public final class ImageAgentCatalog {
                                             "referencePlan",
                                             "imageSettings"),
                                     SHOT_PROMPT_PLAN_CONTRACT,
-                                    "为每个 shotKey 写入角色描述、构图、动作、镜头、光线、负向约束和引用资产。"),
+                                    "为每个 shotKey 写入角色描述、构图、动作、镜头、光线、负向约束和引用资产。每个镜头必须引用其地点和全部出场角色的参考资产。"),
                             agent(
                                     "image-prompt-preflight",
                                     "出图前校对 Agent",
@@ -234,7 +240,7 @@ public final class ImageAgentCatalog {
                                             "shotPromptPlan",
                                             "imageSettings"),
                                     PREFLIGHT_PLAN_CONTRACT,
-                                    "检查故事覆盖、连续性、16:9 构图、参考绑定、无字限制、动作可视化和提示词冲突。"))),
+                                    "检查故事覆盖、连续性、16:9 构图、参考绑定、无字限制、动作可视化和提示词冲突。每个镜头必须引用其地点和全部出场角色的参考资产。"))),
             new StageDefinition(
                     "generation",
                     "图片生成与文字合成",
@@ -369,7 +375,7 @@ public final class ImageAgentCatalog {
                 %s
                 %s
                 %s
-                所有 object 字段均为必填；数组可为空但不得省略。禁止添加未声明的顶层字段。
+                所有 object 字段均为必填；数组不得省略，且仅在不违反上述完整覆盖和非空要求时可为空。禁止添加未声明的顶层字段。
                 """).formatted(
                 agentName,
                 responsibility,

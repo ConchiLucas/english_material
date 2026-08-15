@@ -124,26 +124,33 @@ public final class ImageStructuredOutputParser {
 
     public StoryboardProposal storyboardProposal(String raw) {
         JsonNode root = root(raw, "STORYBOARD_PROPOSAL", fields("shots"));
-        List<ProposalShot> shots = objects(root, "shots", "STORYBOARD_PROPOSAL", 100, "sceneIndex", "beat", "action", "characters", "location", "dialogue", "narration", "splitReason").stream()
-                .map(node -> new ProposalShot(integer(node, "sceneIndex", "STORYBOARD_PROPOSAL.shots"), text(node, "beat", "STORYBOARD_PROPOSAL.shots"),
+        List<ProposalShot> shots = objects(root, "shots", "STORYBOARD_PROPOSAL", MAX_SHOTS_PER_STORY, "shotKey", "sceneIndex", "beat", "action", "characters", "location", "dialogue", "narration", "splitReason").stream()
+                .map(node -> new ProposalShot(text(node, "shotKey", "STORYBOARD_PROPOSAL.shots"), integer(node, "sceneIndex", "STORYBOARD_PROPOSAL.shots"), text(node, "beat", "STORYBOARD_PROPOSAL.shots"),
                         text(node, "action", "STORYBOARD_PROPOSAL.shots"), stringArrayField(node, "characters", "STORYBOARD_PROPOSAL.shots"), text(node, "location", "STORYBOARD_PROPOSAL.shots"),
                         text(node, "dialogue", "STORYBOARD_PROPOSAL.shots"), text(node, "narration", "STORYBOARD_PROPOSAL.shots"), text(node, "splitReason", "STORYBOARD_PROPOSAL.shots")))
                 .toList();
         StoryboardProposal proposal = new StoryboardProposal(shots);
+        uniqueKeys("StoryboardProposal shotKey", proposal.shots(), ProposalShot::shotKey);
+        Map<Integer, Integer> shotsPerScene = new HashMap<>();
         for (ProposalShot shot : proposal.shots()) {
+            storageKey("StoryboardProposal shotKey", shot.shotKey(), MAX_SHOT_KEY_LENGTH);
             positive("StoryboardProposal sceneIndex", shot.sceneIndex());
+            requiredText("STORYBOARD_PROPOSAL.shots.action", shot.action());
             noConflictingMoment("StoryboardProposal", shot.action());
             uniqueStrings("StoryboardProposal characters", shot.characters());
             captionLength("StoryboardProposal narration", shot.narration());
+            int count = shotsPerScene.merge(shot.sceneIndex(), 1, Integer::sum);
+            if (count > MAX_SHOTS_PER_SCENE) throw error("StoryboardProposal 每个 Scene 最多 5 个镜头");
         }
         return proposal;
     }
 
     public FinalStoryboard finalStoryboard(String raw) {
         JsonNode root = root(raw, "FINAL_STORYBOARD", fields("shots"));
-        List<FinalShot> shots = objects(root, "shots", "FINAL_STORYBOARD", 20, "shotKey", "sceneIndex", "shotIndex", "sourceExcerpt", "visualGoal", "dialogue", "narration", "speaker", "textAnchor").stream()
+        List<FinalShot> shots = objects(root, "shots", "FINAL_STORYBOARD", 20, "shotKey", "sceneIndex", "shotIndex", "beat", "action", "characters", "location", "sourceExcerpt", "visualGoal", "dialogue", "narration", "speaker", "textAnchor").stream()
                 .map(node -> new FinalShot(text(node, "shotKey", "FINAL_STORYBOARD.shots"), integer(node, "sceneIndex", "FINAL_STORYBOARD.shots"),
-                        integer(node, "shotIndex", "FINAL_STORYBOARD.shots"), text(node, "sourceExcerpt", "FINAL_STORYBOARD.shots"), text(node, "visualGoal", "FINAL_STORYBOARD.shots"),
+                        integer(node, "shotIndex", "FINAL_STORYBOARD.shots"), text(node, "beat", "FINAL_STORYBOARD.shots"), text(node, "action", "FINAL_STORYBOARD.shots"),
+                        stringArrayField(node, "characters", "FINAL_STORYBOARD.shots"), text(node, "location", "FINAL_STORYBOARD.shots"), text(node, "sourceExcerpt", "FINAL_STORYBOARD.shots"), text(node, "visualGoal", "FINAL_STORYBOARD.shots"),
                         text(node, "dialogue", "FINAL_STORYBOARD.shots"), text(node, "narration", "FINAL_STORYBOARD.shots"), text(node, "speaker", "FINAL_STORYBOARD.shots"), anchor(node, "FINAL_STORYBOARD.shots")))
                 .toList();
         FinalStoryboard storyboard = new FinalStoryboard(shots);
@@ -157,6 +164,7 @@ public final class ImageStructuredOutputParser {
                 .map(node -> new ReferenceAsset(text(node, "assetKey", "REFERENCE_PLAN.referenceAssets"), referenceType(text(node, "type", "REFERENCE_PLAN.referenceAssets")), text(node, "target", "REFERENCE_PLAN.referenceAssets"), text(node, "prompt", "REFERENCE_PLAN.referenceAssets"), text(node, "negativePrompt", "REFERENCE_PLAN.referenceAssets")))
                 .toList();
         ReferencePlan plan = new ReferencePlan(assets);
+        if (plan.referenceAssets().isEmpty()) throw error("ReferencePlan referenceAssets 不能为空");
         uniqueKeys("ReferencePlan assetKey", plan.referenceAssets(), ReferenceAsset::assetKey);
         for (ReferenceAsset asset : plan.referenceAssets()) storageKey("ReferencePlan assetKey", asset.assetKey(), MAX_ASSET_KEY_LENGTH);
         uniqueReferenceTargets("ReferencePlan", plan.referenceAssets());
@@ -202,16 +210,55 @@ public final class ImageStructuredOutputParser {
         Set<Integer> scenes = new HashSet<>();
         for (Scene scene : analysis.scenes()) scenes.add(scene.sceneIndex());
         Set<Integer> covered = new HashSet<>();
+        Set<String> beats = keys(analysis.beats(), Beat::beatKey);
+        Set<String> coveredBeats = new HashSet<>();
         Set<String> characters = keys(analysis.characters(), Character::characterKey);
+        Set<String> locations = keys(analysis.locations(), Location::locationKey);
         for (FinalShot shot : storyboard.shots()) {
             if (!scenes.contains(shot.sceneIndex())) throw error("FinalStoryboard sceneIndex 必须引用 StoryAnalysis Scene");
             covered.add(shot.sceneIndex());
+            Beat beat = analysis.beats().stream()
+                    .filter(value -> trimmed(value.beatKey()).equals(trimmed(shot.beat())))
+                    .findFirst().orElseThrow(() -> error("FinalStoryboard beat 必须引用 StoryAnalysis"));
+            if (beat.sceneIndex() != shot.sceneIndex()) throw error("FinalStoryboard beat 必须属于该 Scene");
+            coveredBeats.add(trimmed(shot.beat()));
+            requiredText("FINAL_STORYBOARD.shots.action", shot.action());
+            uniqueStrings("FinalStoryboard characters", shot.characters());
+            for (String character : shot.characters()) {
+                if (!characters.contains(trimmed(character))) {
+                    throw error("FinalStoryboard characterKey 必须引用 StoryAnalysis");
+                }
+            }
+            if (!locations.contains(trimmed(shot.location()))) {
+                throw error("FinalStoryboard locationKey 必须引用 StoryAnalysis");
+            }
             if (hasText(shot.dialogue()) && !characters.contains(trimmed(shot.speaker()))) {
                 throw error("FinalStoryboard speaker 必须引用 StoryAnalysis");
             }
         }
         for (Scene scene : analysis.scenes()) {
             if (!covered.contains(scene.sceneIndex())) throw error("FinalStoryboard 必须覆盖 StoryAnalysis 全部 Scene");
+        }
+        if (!coveredBeats.equals(beats)) throw error("FinalStoryboard 必须覆盖 StoryAnalysis 全部 beatKey");
+    }
+
+    public void validateCoverage(
+            StoryAnalysis analysis,
+            StoryboardProposal actionProposal,
+            StoryboardProposal learningProposal,
+            FinalStoryboard storyboard) {
+        validateProposalReferences(analysis, actionProposal);
+        validateProposalReferences(analysis, learningProposal);
+        validateCoverage(analysis, storyboard);
+        Map<String, ProposalOrigin> origins = new HashMap<>();
+        addProposalOrigins(origins, actionProposal);
+        addProposalOrigins(origins, learningProposal);
+        for (FinalShot shot : storyboard.shots()) {
+            ProposalOrigin origin = origins.get(trimmed(shot.shotKey()));
+            if (origin == null) throw error("FinalStoryboard shotKey 必须来自 StoryboardProposal");
+            if (origin.sceneIndex() != shot.sceneIndex() || !origin.beatKey().equals(trimmed(shot.beat()))) {
+                throw error("FinalStoryboard 必须保留 StoryboardProposal 的 Scene 和 beatKey 映射");
+            }
         }
     }
 
@@ -233,15 +280,20 @@ public final class ImageStructuredOutputParser {
         for (Beat beat : analysis.beats()) beats.put(trimmed(beat.beatKey()), beat);
         Set<String> characters = keys(analysis.characters(), Character::characterKey);
         Set<String> locations = keys(analysis.locations(), Location::locationKey);
+        Set<String> coveredBeats = new HashSet<>();
         for (ProposalShot shot : proposal.shots()) {
             if (!sceneIndexes.contains(shot.sceneIndex())) throw error("StoryboardProposal sceneIndex 必须引用 StoryAnalysis Scene");
             Beat beat = beats.get(trimmed(shot.beat()));
             if (beat == null) throw error("StoryboardProposal 分镜引用了未知故事节拍");
             if (beat.sceneIndex() != shot.sceneIndex()) throw error("StoryboardProposal beat 必须属于该 Scene");
+            coveredBeats.add(trimmed(shot.beat()));
             for (String character : shot.characters()) {
                 if (!characters.contains(trimmed(character))) throw error("StoryboardProposal characterKey 必须引用 StoryAnalysis");
             }
             if (!locations.contains(trimmed(shot.location()))) throw error("StoryboardProposal locationKey 必须引用 StoryAnalysis");
+        }
+        if (!coveredBeats.equals(beats.keySet())) {
+            throw error("StoryboardProposal 必须覆盖 StoryAnalysis 全部 beatKey");
         }
     }
 
@@ -251,6 +303,20 @@ public final class ImageStructuredOutputParser {
             for (String reference : shot.referenceAssetKeys()) {
                 if (!assets.contains(trimmed(reference))) throw error("ShotPromptPlan referenceAssetKeys 必须引用 ReferencePlan");
             }
+        }
+    }
+
+    public void validateReferences(
+            ShotPromptPlan plan,
+            ReferencePlan references,
+            FinalStoryboard storyboard) {
+        validateReferences(plan, references);
+        Map<String, FinalShot> finalShots = byKey(storyboard.shots(), FinalShot::shotKey);
+        for (ShotPrompt shot : plan.shots()) {
+            FinalShot finalShot = finalShots.get(trimmed(shot.shotKey()));
+            if (finalShot == null) throw error("ShotPromptPlan shotKey 必须引用 FinalStoryboard");
+            validateRequiredShotReferences(
+                    "ShotPromptPlan", shot.referenceAssetKeys(), finalShot, references.referenceAssets());
         }
     }
 
@@ -276,17 +342,28 @@ public final class ImageStructuredOutputParser {
     }
 
     public void validateReferenceTargets(ReferencePlan plan, StoryAnalysis analysis, ContinuityBible continuity) {
-        Set<String> characters = keys(analysis.characters(), Character::characterKey);
-        characters.addAll(keys(continuity.characters(), ContinuityCharacter::characterKey));
-        Set<String> locations = keys(analysis.locations(), Location::locationKey);
+        Objects.requireNonNull(continuity, "continuity");
+        if (plan.referenceAssets().isEmpty()) throw error("ReferencePlan referenceAssets 不能为空");
+        Set<String> characters = normalizedKeys(analysis.characters(), Character::characterKey);
+        Set<String> locations = normalizedKeys(analysis.locations(), Location::locationKey);
+        Set<String> actualCharacters = new HashSet<>();
+        Set<String> actualLocations = new HashSet<>();
         for (ReferenceAsset asset : plan.referenceAssets()) {
             String type = referenceType(asset.type());
-            if ("CHARACTER".equals(type) && !characters.contains(trimmed(asset.target()))) {
-                throw error("ReferencePlan CHARACTER target 必须引用角色");
+            String target = normalizedTarget(asset.target());
+            if ("CHARACTER".equals(type)) {
+                if (!characters.contains(target)) throw error("ReferencePlan CHARACTER target 必须引用角色");
+                actualCharacters.add(target);
             }
-            if ("LOCATION".equals(type) && !locations.contains(trimmed(asset.target()))) {
-                throw error("ReferencePlan LOCATION target 必须引用 StoryAnalysis locationKey");
+            if ("LOCATION".equals(type)) {
+                if (!locations.contains(target)) {
+                    throw error("ReferencePlan LOCATION target 必须引用 StoryAnalysis locationKey");
+                }
+                actualLocations.add(target);
             }
+        }
+        if (!actualCharacters.equals(characters) || !actualLocations.equals(locations)) {
+            throw error("ReferencePlan 必须为 StoryAnalysis 每个角色和地点各生成一个参考资产");
         }
     }
 
@@ -312,6 +389,8 @@ public final class ImageStructuredOutputParser {
             if (hasText(preflightShot.dialogue()) && !characters.contains(trimmed(preflightShot.speaker()))) {
                 throw error("PreflightPlan dialogue speaker 必须引用 StoryAnalysis");
             }
+            validateRequiredShotReferences(
+                    "PreflightPlan", preflightShot.referenceAssetKeys(), finalShot, plan.referenceAssets());
         }
     }
 
@@ -444,9 +523,17 @@ public final class ImageStructuredOutputParser {
 
     private static void validateStoryAnalysis(StoryAnalysis analysis) {
         if (analysis.scenes().isEmpty()) throw error("StoryAnalysis scenes 不能为空");
+        if (analysis.characters().isEmpty()) throw error("StoryAnalysis characters 不能为空");
+        if (analysis.locations().isEmpty()) throw error("StoryAnalysis locations 不能为空");
+        if (analysis.characters().size() + analysis.locations().size() > MAX_REFERENCE_ASSETS) {
+            throw error("StoryAnalysis 角色和地点参考资产总数不能超过 20");
+        }
         uniqueKeys("StoryAnalysis sceneIndex", analysis.scenes(), scene -> String.valueOf(scene.sceneIndex()));
         for (Scene scene : analysis.scenes()) positive("StoryAnalysis sceneIndex", scene.sceneIndex());
         uniqueKeys("StoryAnalysis beatKey", analysis.beats(), Beat::beatKey);
+        if (analysis.beats().size() > MAX_SHOTS_PER_STORY) {
+            throw error("StoryAnalysis 全篇节拍总数不能超过 20");
+        }
         uniqueKeys("StoryAnalysis characterKey", analysis.characters(), Character::characterKey);
         uniqueKeys("StoryAnalysis locationKey", analysis.locations(), Location::locationKey);
         uniqueKeys("StoryAnalysis propKey", analysis.props(), Prop::propKey);
@@ -455,9 +542,16 @@ public final class ImageStructuredOutputParser {
         Map<Integer, Integer> expectedBeatOrders = new HashMap<>();
         for (Beat beat : analysis.beats()) {
             if (!sceneIndexes.contains(beat.sceneIndex())) throw error("StoryAnalysis beat sceneIndex 必须引用已有 Scene");
+            requiredText("STORY_ANALYSIS.beats.action", beat.action());
             int expectedOrder = expectedBeatOrders.getOrDefault(beat.sceneIndex(), 1);
             if (beat.order() != expectedOrder) throw error("StoryAnalysis beat order 必须从 1 连续递增");
             expectedBeatOrders.put(beat.sceneIndex(), expectedOrder + 1);
+        }
+        for (Scene scene : analysis.scenes()) {
+            int count = expectedBeatOrders.getOrDefault(scene.sceneIndex(), 1) - 1;
+            if (count < 1 || count > MAX_SHOTS_PER_SCENE) {
+                throw error("StoryAnalysis 每个 Scene 必须包含 1 到 5 个节拍");
+            }
         }
         Set<String> characterKeys = keys(analysis.characters(), Character::characterKey);
         for (Dialogue dialogue : analysis.dialogues()) {
@@ -478,6 +572,10 @@ public final class ImageStructuredOutputParser {
         validateOrderedShots(label, shots.stream().map(shot -> new OrderedShot(shot.sceneIndex(), shot.shotIndex())).toList());
         for (FinalShot shot : shots) {
             storageKey(label + " shotKey", shot.shotKey(), MAX_SHOT_KEY_LENGTH);
+            requiredText("FINAL_STORYBOARD.shots.beat", shot.beat());
+            requiredText("FINAL_STORYBOARD.shots.action", shot.action());
+            requiredText("FINAL_STORYBOARD.shots.location", shot.location());
+            uniqueStrings("FinalStoryboard characters", shot.characters());
             captionLength(label + " narration", shot.narration());
             if (hasText(shot.dialogue()) && !hasText(shot.speaker())) throw error(label + " dialogue 非空时 speaker 不能为空");
             if (hasText(shot.dialogue()) && shot.textAnchor() == null) throw error(label + " dialogue 非空时 textAnchor 不能为空");
@@ -574,6 +672,10 @@ public final class ImageStructuredOutputParser {
         if (text != null && text.length() > MAX_CAPTION_LENGTH) throw error(label + " 长度不能超过 180");
     }
 
+    private static void requiredText(String label, String value) {
+        if (!hasText(value)) throw error(label + " 不能为空");
+    }
+
     private static void positive(String label, int value) {
         if (value <= 0) throw error(label + " 必须为正数");
     }
@@ -601,6 +703,58 @@ public final class ImageStructuredOutputParser {
             String key = referenceType(asset.type()) + "|" + trimmed(asset.target()).toLowerCase(Locale.ROOT);
             if (!found.add(key)) throw error(label + " type + target 存在重复值");
         }
+    }
+
+    private static void validateRequiredShotReferences(
+            String label,
+            List<String> referenceAssetKeys,
+            FinalShot shot,
+            List<ReferenceAsset> assets) {
+        if (referenceAssetKeys.isEmpty()) throw error(label + " 分镜 referenceAssetKeys 不能为空");
+        Map<String, ReferenceAsset> assetsByKey = byKey(assets, ReferenceAsset::assetKey);
+        Set<String> referencedCharacters = new HashSet<>();
+        Set<String> referencedLocations = new HashSet<>();
+        for (String assetKey : referenceAssetKeys) {
+            ReferenceAsset asset = assetsByKey.get(trimmed(assetKey));
+            if (asset == null) continue;
+            if ("CHARACTER".equals(asset.type())) referencedCharacters.add(normalizedTarget(asset.target()));
+            if ("LOCATION".equals(asset.type())) referencedLocations.add(normalizedTarget(asset.target()));
+        }
+        if (!referencedLocations.contains(normalizedTarget(shot.location()))) {
+            throw error(label + " 分镜必须引用所属地点参考资产");
+        }
+        for (String character : shot.characters()) {
+            if (!referencedCharacters.contains(normalizedTarget(character))) {
+                throw error(label + " 分镜必须引用全部出场角色参考资产");
+            }
+        }
+    }
+
+    private static void addProposalOrigins(Map<String, ProposalOrigin> origins, StoryboardProposal proposal) {
+        for (ProposalShot shot : proposal.shots()) {
+            String key = trimmed(shot.shotKey());
+            ProposalOrigin value = new ProposalOrigin(shot.sceneIndex(), trimmed(shot.beat()));
+            ProposalOrigin existing = origins.putIfAbsent(key, value);
+            if (existing != null && !existing.equals(value)) {
+                throw error("StoryboardProposal shotKey 映射不一致");
+            }
+        }
+    }
+
+    private static <T> Map<String, T> byKey(Collection<T> values, Key<T> extractor) {
+        Map<String, T> result = new HashMap<>();
+        for (T value : values) result.put(trimmed(extractor.get(value)), value);
+        return result;
+    }
+
+    private static <T> Set<String> normalizedKeys(Collection<T> values, Key<T> extractor) {
+        Set<String> result = new HashSet<>();
+        for (T value : values) result.add(normalizedTarget(extractor.get(value)));
+        return result;
+    }
+
+    private static String normalizedTarget(String value) {
+        return trimmed(value).toLowerCase(Locale.ROOT);
     }
 
     private static void storageKey(String label, String value, int maximumLength) {
@@ -680,6 +834,9 @@ public final class ImageStructuredOutputParser {
     private record OrderedShot(int sceneIndex, int shotIndex) {
     }
 
+    private record ProposalOrigin(int sceneIndex, String beatKey) {
+    }
+
     public record StoryAnalysis(List<Scene> scenes, List<Beat> beats, List<Character> characters, List<Location> locations, List<Prop> props, List<Dialogue> dialogues, List<Narration> narration) {
         public StoryAnalysis { scenes = immutable(scenes); beats = immutable(beats); characters = immutable(characters); locations = immutable(locations); props = immutable(props); dialogues = immutable(dialogues); narration = immutable(narration); }
     }
@@ -701,11 +858,13 @@ public final class ImageStructuredOutputParser {
     }
 
     public record StoryboardProposal(List<ProposalShot> shots) { public StoryboardProposal { shots = immutable(shots); } }
-    public record ProposalShot(int sceneIndex, String beat, String action, List<String> characters, String location, String dialogue, String narration, String splitReason) {
+    public record ProposalShot(String shotKey, int sceneIndex, String beat, String action, List<String> characters, String location, String dialogue, String narration, String splitReason) {
         public ProposalShot { characters = immutable(characters); }
     }
     public record FinalStoryboard(List<FinalShot> shots) { public FinalStoryboard { shots = immutable(shots); } }
-    public record FinalShot(String shotKey, int sceneIndex, int shotIndex, String sourceExcerpt, String visualGoal, String dialogue, String narration, String speaker, TextAnchor textAnchor) { }
+    public record FinalShot(String shotKey, int sceneIndex, int shotIndex, String beat, String action, List<String> characters, String location, String sourceExcerpt, String visualGoal, String dialogue, String narration, String speaker, TextAnchor textAnchor) {
+        public FinalShot { characters = immutable(characters); }
+    }
     public record TextAnchor(double x, double y) { }
     public record ReferencePlan(List<ReferenceAsset> referenceAssets) { public ReferencePlan { referenceAssets = immutable(referenceAssets); } }
     public record ReferenceAsset(String assetKey, String type, String target, String prompt, String negativePrompt) { }

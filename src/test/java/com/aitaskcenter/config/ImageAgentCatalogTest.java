@@ -212,18 +212,24 @@ class ImageAgentCatalogTest {
                                 "FinalStoryboard",
                                 "FINAL_STORYBOARD",
                                 List.of(arrayField("shots")),
-                                Map.of(
-                                        "shots",
-                                        objectArray(
-                                                "shotKey",
-                                                "sceneIndex",
-                                                "shotIndex",
-                                                "sourceExcerpt",
-                                                "visualGoal",
-                                                "dialogue",
-                                                "narration",
-                                                "speaker",
-                                                "textAnchor")))),
+                                Map.ofEntries(
+                                        Map.entry(
+                                                "shots",
+                                                objectArray(
+                                                        "shotKey",
+                                                        "sceneIndex",
+                                                        "shotIndex",
+                                                        "beat",
+                                                        "action",
+                                                        "characters",
+                                                        "location",
+                                                        "sourceExcerpt",
+                                                        "visualGoal",
+                                                        "dialogue",
+                                                        "narration",
+                                                        "speaker",
+                                                        "textAnchor")),
+                                        Map.entry("shots.characters", stringArray())))),
                 Map.entry(
                         "image-reference-planner",
                         new SchemaContract(
@@ -293,8 +299,28 @@ class ImageAgentCatalogTest {
                     agent.key());
             assertFalse(prompt.contains("["), agent.key());
             assertFalse(prompt.contains("]"), agent.key());
-            assertTrue(prompt.contains("所有 object 字段均为必填；数组可为空但不得省略。"), agent.key());
+            assertTrue(prompt.contains("所有 object 字段均为必填；数组不得省略，且仅在不违反上述完整覆盖和非空要求时可为空。"), agent.key());
             assertTrue(prompt.contains("禁止添加未声明的顶层字段。"), agent.key());
+            if ("image-story-analyst".equals(agent.key())) {
+                assertTrue(prompt.contains("每个 Scene 必须拆出 1 到 5 个连续节拍"), agent.key());
+                assertTrue(prompt.contains("characters 和 locations 都不得为空"), agent.key());
+            }
+            if ("image-action-storyboarder".equals(agent.key())
+                    || "image-learning-storyboarder".equals(agent.key())) {
+                assertTrue(prompt.contains("每个 beatKey 至少对应一个独立分镜"), agent.key());
+                assertTrue(prompt.contains("不得跨 Scene"), agent.key());
+            }
+            if ("image-storyboard-director".equals(agent.key())) {
+                assertTrue(prompt.contains("不得合并或遗漏 beat"), agent.key());
+                assertTrue(prompt.contains("shotKey 必须来自输入提案"), agent.key());
+            }
+            if ("image-reference-planner".equals(agent.key())) {
+                assertTrue(prompt.contains("每个角色和每个地点各生成且仅生成一个参考资产"), agent.key());
+            }
+            if ("image-shot-prompt-engineer".equals(agent.key())
+                    || "image-prompt-preflight".equals(agent.key())) {
+                assertTrue(prompt.contains("每个镜头必须引用其地点和全部出场角色的参考资产"), agent.key());
+            }
             if ("FINAL_STORYBOARD".equals(contract.markerKey()) || "PREFLIGHT_PLAN".equals(contract.markerKey())) {
                 assertTrue(
                         prompt.contains("字段 shots.textAnchor 必须为 null 或 object，object 必须且只能包含 x、y；x、y 为 0 到 1 的归一化数字。"),
@@ -328,6 +354,7 @@ class ImageAgentCatalogTest {
                         Map.entry(
                                 "shots",
                                 objectArray(
+                                        "shotKey",
                                         "sceneIndex",
                                         "beat",
                                         "action",

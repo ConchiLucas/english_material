@@ -278,7 +278,7 @@ public class ImageRunExecutionService {
                             "imageSettings", prepared.flow()),
                     raw -> {
                         FinalStoryboard value = parser.finalStoryboard(raw);
-                        parser.validateCoverage(analysis, value);
+                        parser.validateCoverage(analysis, actionProposal, learningProposal, value);
                         return value;
                     });
             FinalStoryboard finalStoryboard = director.parsed(FinalStoryboard.class);
@@ -305,7 +305,7 @@ public class ImageRunExecutionService {
                             "imageSettings", prepared.flow()),
                     raw -> {
                         ShotPromptPlan value = parser.shotPromptPlan(raw);
-                        parser.validateReferences(value, referencePlan);
+                        parser.validateReferences(value, referencePlan, finalStoryboard);
                         parser.validateShotPrompts(finalStoryboard, value);
                         return value;
                     });
