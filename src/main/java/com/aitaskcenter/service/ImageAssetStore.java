@@ -96,28 +96,52 @@ public class ImageAssetStore {
     void beforePublish() { }
 
     private SecureDirectoryStream<Path> openSecureRoot() throws IOException {
-        Files.createDirectories(storageRoot);
-        if (Files.isSymbolicLink(storageRoot)) throw new IllegalArgumentException("图片存储目录不能是符号链接");
-        DirectoryStream<Path> stream = Files.newDirectoryStream(storageRoot);
-        if (stream instanceof SecureDirectoryStream<?> secure) {
-            @SuppressWarnings("unchecked") SecureDirectoryStream<Path> result = (SecureDirectoryStream<Path>) secure;
-            return result;
+        Path filesystemRoot = storageRoot.getRoot();
+        if (filesystemRoot == null) throw new IllegalStateException("图片存储目录没有文件系统根目录");
+        DirectoryStream<Path> stream = Files.newDirectoryStream(filesystemRoot);
+        if (!(stream instanceof SecureDirectoryStream<?> secure)) {
+            stream.close();
+            throw new IllegalStateException("当前文件系统不支持安全图片目录操作");
         }
-        stream.close();
-        throw new IllegalStateException("当前文件系统不支持安全图片目录操作");
+        @SuppressWarnings("unchecked") SecureDirectoryStream<Path> current = (SecureDirectoryStream<Path>) secure;
+        try {
+            for (Path segment : filesystemRoot.relativize(storageRoot)) {
+                SecureDirectoryStream<Path> next;
+                try {
+                    next = current.newDirectoryStream(segment, LinkOption.NOFOLLOW_LINKS);
+                } catch (NoSuchFileException missing) {
+                    throw new IllegalStateException("图片存储目录不存在", missing);
+                } catch (IOException unsafe) {
+                    throw new IllegalArgumentException("图片存储目录不能包含符号链接或非目录", unsafe);
+                }
+                current.close();
+                current = next;
+            }
+            return current;
+        } catch (IOException | RuntimeException ex) {
+            try {
+                current.close();
+            } catch (IOException closeFailure) {
+                ex.addSuppressed(closeFailure);
+            }
+            throw ex;
+        }
     }
 
     private SecureDirectoryStream<Path> openRun(SecureDirectoryStream<Path> root, String runId, boolean create) throws IOException {
         Path run = Path.of(runId);
-        if (Files.isSymbolicLink(storageRoot.resolve(run))) {
-            throw new IllegalArgumentException("图片路径不能通过符号链接离开存储目录");
-        }
         try {
             return root.newDirectoryStream(run, LinkOption.NOFOLLOW_LINKS);
         } catch (NoSuchFileException missing) {
             if (!create) throw missing;
             try { Files.createDirectory(storageRoot.resolve(run)); } catch (FileAlreadyExistsException ignored) { }
-            return root.newDirectoryStream(run, LinkOption.NOFOLLOW_LINKS);
+            try {
+                return root.newDirectoryStream(run, LinkOption.NOFOLLOW_LINKS);
+            } catch (IOException unsafe) {
+                throw new IllegalArgumentException("图片路径不能通过符号链接离开存储目录", unsafe);
+            }
+        } catch (IOException unsafe) {
+            throw new IllegalArgumentException("图片路径不能通过符号链接离开存储目录", unsafe);
         }
     }
 

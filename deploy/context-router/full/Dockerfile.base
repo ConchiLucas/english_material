@@ -13,7 +13,7 @@ ARG APP_UID=1000
 RUN groupadd app \
     && useradd --uid "${APP_UID}" --gid app --home-dir /home/app \
        --create-home --shell /usr/sbin/nologin app \
-    && mkdir -p /app /workspace /home/app/.codex /home/app/dumps \
+    && mkdir -p /app /app/runtime/image-story /workspace /home/app/.codex /home/app/dumps \
     && chown -R app:app /app /workspace /home/app
 
 COPY --from=codex-cli /usr/local/bin/node /usr/local/bin/node
