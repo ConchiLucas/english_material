@@ -10,6 +10,7 @@ import {
 import type {
   ImageAgentFlow, ImageAgentNode, ImagePromptVersion, ImageSourceStory, ImageStylePreset,
 } from './image-story-types';
+import { hasProviderCapability, isExecutableImageProvider } from './image-provider-policy';
 import ImageRunHistory from './ImageRunHistory';
 
 interface ImageAgentFlowPageProps { providers: AIProviderConfigItem[]; onDirtyChange: (dirty: boolean) => void; }
@@ -38,28 +39,7 @@ const sameDraft = (a: AgentDraft, b: AgentDraft) => a.systemPrompt === b.systemP
 const sameModelDraft = (a: ModelDraft, b: ModelDraft) => a.providerId === b.providerId && a.updatedAt === b.updatedAt;
 const fromStyle = (preset?: ImageStylePreset): StyleDraft => preset ? ({ id: preset.id, name: preset.name, positivePrompt: preset.positivePrompt, negativePrompt: preset.negativePrompt, description: preset.description, enabled: preset.enabled, updatedAt: preset.updatedAt }) : ({ id: null, name: '', positivePrompt: '', negativePrompt: '', description: '', enabled: true, updatedAt: null });
 const sameStyle = (a: StyleDraft, b: StyleDraft) => JSON.stringify(a) === JSON.stringify(b);
-const hasCapability = (provider: AIProviderConfigItem, capability: string) => (provider.capabilities ?? []).some((item) => item.trim().toUpperCase() === capability);
-const textProvider = (provider: AIProviderConfigItem) => provider.enabled !== false && hasCapability(provider, 'TEXT_GENERATION');
-const imageProviderUrl = (value: string) => {
-  const baseUrl = value.trim();
-  if (!/^https?:\/\/[^/]+(?:\/|$)/i.test(baseUrl) || baseUrl.includes('?') || baseUrl.includes('#')) return false;
-  try {
-    const url = new URL(baseUrl); const path = url.pathname.replace(/\/+$/, '').toLowerCase();
-    return (url.protocol === 'http:' || url.protocol === 'https:') && !!url.hostname && !url.username && !url.password && !url.search && !url.hash && !path.endsWith('/images/generations') && !path.endsWith('/images/edits');
-  } catch { return false; }
-};
-const imageProviderOptions = (options?: Record<string, unknown>) => {
-  if (!options) return true;
-  const allowed = new Set(['responseFormat', 'quality', 'size']); const qualities = new Set(['auto', 'low', 'medium', 'high', 'standard', 'hd']);
-  return Object.entries(options).every(([key, raw]) => {
-    if (!allowed.has(key) || typeof raw !== 'string') return false;
-    const value = raw.trim(); if (!value || value.length > 64) return false;
-    if (key === 'responseFormat') return value.toLowerCase() === 'b64_json';
-    if (key === 'quality') return qualities.has(value.toLowerCase());
-    return value === '1536x864';
-  });
-};
-const imageProvider = (provider: AIProviderConfigItem) => !!provider.id?.trim() && !!provider.model?.trim() && !!provider.base_url?.trim() && provider.type?.trim().toLowerCase() === 'openai-compatible' && provider.enabled !== false && hasCapability(provider, 'IMAGE_GENERATION') && hasCapability(provider, 'IMAGE_REFERENCE') && imageProviderUrl(provider.base_url) && imageProviderOptions(provider.options);
+const textProvider = (provider: AIProviderConfigItem) => provider.enabled !== false && hasProviderCapability(provider, 'TEXT_GENERATION');
 const providerLabel = (provider: AIProviderConfigItem) => `${provider.label || provider.id}${provider.model ? ` · ${provider.model}` : ''}`;
 const errorText = (error: unknown) => error instanceof Error ? error.message.slice(0, 240) : '请求失败，请稍后重试';
 const formatDate = (value?: string | null) => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '未记录';
@@ -86,7 +66,7 @@ export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAg
 
   const nodes = useMemo(() => flow?.stages.flatMap((stage) => stage.nodes) ?? [], [flow]);
   const selected = useMemo(() => nodes.find((item) => item.key === selectedKey) ?? null, [nodes, selectedKey]);
-  const textProviders = useMemo(() => providers.filter(textProvider), [providers]); const imageProviders = useMemo(() => providers.filter(imageProvider), [providers]);
+  const textProviders = useMemo(() => providers.filter(textProvider), [providers]); const imageProviders = useMemo(() => providers.filter(isExecutableImageProvider), [providers]);
   const currentTextProviderValid = !!draft && textProviders.some((item) => item.id === draft.aiProviderId);
   const currentImageProviderValid = imageProviders.some((item) => item.id === modelProviderId);
   const savedImageProviderValid = imageProviders.some((item) => item.id === flow?.config.imageProviderId);

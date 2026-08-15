@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  bootstrapAntigravityImageProvider,
   createImageRun,
   createImageStylePreset,
   getImageAgentFlow,
@@ -67,6 +68,16 @@ describe('image story API contracts', () => {
     requestMock.get.mockReturnValue(apiResult({ stages: [] }));
     await getImageAgentFlow();
     expect(requestMock.get).toHaveBeenCalledWith('/image-agents/flow');
+  });
+
+  it('bootstraps an Antigravity image provider from a source ID only', async () => {
+    requestMock.post.mockReturnValue(apiResult({ active: 'text', providers: [] }));
+
+    await bootstrapAntigravityImageProvider('antigravity-gemini-3-1-pro');
+
+    expect(requestMock.post).toHaveBeenCalledWith('/ai/config/image/bootstrap', {
+      sourceProviderId: 'antigravity-gemini-3-1-pro',
+    });
   });
 
   it('updates an encoded image Agent key with its body', async () => {

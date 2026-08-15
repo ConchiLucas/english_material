@@ -32,6 +32,7 @@ export interface ApiResponse<T> { code: number; data: T; msg: string; }
 export interface ConnectionConfig { ID?: number; connectionName: string; connectionType: string; connectionUrl: string; databaseName: string; port: number; dbLoginName: string; dbLoginPassword?: string; envName?: string; }
 export interface AIProviderConfigItem { id: string; label: string; type: 'openai-compatible' | 'anthropic-compatible' | 'mimo-tts'; base_url: string; api_key: string; model: string; max_tokens: number; capabilities?: string[]; options?: Record<string, unknown>; enabled?: boolean; active?: boolean; }
 export interface AIConfig { active: string; providers: AIProviderConfigItem[]; }
+export interface ImageProviderBootstrapRequest { sourceProviderId: string; }
 export interface LocalCliConfigItem { enabled: boolean; id: string; label: string; command: string; defaultArgs: string[]; model?: string; reasoningEffort?: string; workingDirectory: string; timeoutSeconds: number; active?: boolean; }
 export interface LocalCliConfig { active: string; configs: LocalCliConfigItem[]; }
 export interface WordCleanItem {
@@ -103,6 +104,8 @@ export const deleteConnection = (ID: number) => request.delete('/connection/dele
 export const testConnectionPayload = (value: ConnectionConfig) => request.post('/connection/testConnectionPayload', value).then(unwrap);
 export const getAIConfig = () => request.get<ApiResponse<AIConfig>>('/ai/config').then(unwrap);
 export const saveAIConfig = (value: AIConfig) => request.post('/ai/config', value).then(unwrap);
+export const bootstrapAntigravityImageProvider = (sourceProviderId: string) =>
+  request.post<ApiResponse<AIConfig>>('/ai/config/image/bootstrap', { sourceProviderId }).then(unwrap);
 export const getLocalCliConfig = () => request.get<ApiResponse<LocalCliConfig>>('/ai/cli/config').then(unwrap);
 export const saveLocalCliConfig = (value: LocalCliConfig) => request.post('/ai/cli/config', value).then(unwrap);
 export const getWordCleanWords = (params: WordCleanQuery) =>
