@@ -3,6 +3,7 @@ package com.aitaskcenter.service;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -22,10 +23,24 @@ import java.util.concurrent.Future;
 import javax.imageio.ImageIO;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.test.context.support.TestPropertySourceUtils;
 
 class ImageAssetStoreTest {
     @TempDir
     Path tempDir;
+
+    @Test
+    void springContextUsesTheConfiguredProductionConstructor() {
+        try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
+            TestPropertySourceUtils.addInlinedPropertiesToEnvironment(
+                    context, "image-story.storage-root=" + tempDir.resolve("spring-storage"));
+            context.register(ImageAssetStore.class);
+            context.refresh();
+
+            assertNotNull(context.getBean(ImageAssetStore.class));
+        }
+    }
 
     @Test
     void storesAndReadsPngAtDeterministicRelativePathWithVerifiedMetadata() throws Exception {

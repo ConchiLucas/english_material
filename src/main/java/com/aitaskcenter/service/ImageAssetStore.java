@@ -18,6 +18,7 @@ import java.util.Objects;
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
 import javax.imageio.stream.ImageInputStream;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -35,6 +36,7 @@ public class ImageAssetStore {
     private final Path storageRoot;
     private final Runnable beforePublish;
 
+    @Autowired
     public ImageAssetStore(@Value("${image-story.storage-root}") String storageRoot) {
         this(storageRoot, () -> { });
     }
