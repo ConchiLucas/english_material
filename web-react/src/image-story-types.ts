@@ -28,7 +28,7 @@ export interface ImageFlowStage {
 }
 
 export interface ImageFlowConfig {
-  imageProviderId: string;
+  imageProviderId: string | null;
   width: number;
   height: number;
   maxShotsPerScene: number;
@@ -57,7 +57,7 @@ export interface ImageAgentFlow {
 export interface ImagePromptVersion {
   version: number;
   systemPrompt: string;
-  aiProviderId: string;
+  aiProviderId: string | null;
   temperature: number;
   enabled: boolean;
   createdAt: string;
