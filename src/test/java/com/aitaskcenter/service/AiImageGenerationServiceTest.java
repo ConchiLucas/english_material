@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.zip.CRC32;
 import javax.imageio.ImageIO;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -103,6 +104,86 @@ class AiImageGenerationServiceTest {
     }
 
     @Test
+    void letsOptionsOverrideTheFixedSixteenByNineDefaultSize() throws Exception {
+        AiProviderConfigItem provider = provider(baseUrl());
+        provider.setOptions(Map.of("size", "1024x1024"));
+
+        service().generate(provider, "a", "", 0, 0, List.of());
+
+        assertEquals("1024x1024", objectMapper.readTree(requests.get(0).body()).path("size").asText());
+    }
+
+    @Test
+    void rejectsMoreThanEightReferenceImagesBeforeMakingARequest() {
+        List<ImageReference> references = new ArrayList<>();
+        for (int index = 0; index < 9; index++) {
+            references.add(new ImageReference("reference-" + index + ".png", "image/png", png(1, 1, Color.RED)));
+        }
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                () -> service().generate(provider(baseUrl()), "a", "", 3, 2, references));
+
+        assertTrue(exception.getMessage().contains("参考图数量"));
+        assertTrue(requests.isEmpty());
+    }
+
+    @Test
+    void rejectsReferenceImageOverTenMiBBeforeMakingARequest() {
+        byte[] oversized = new byte[10 * 1024 * 1024 + 1];
+        ImageReference reference = new ImageReference("large.png", "image/png", oversized);
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                () -> service().generate(provider(baseUrl()), "a", "", 3, 2, List.of(reference)));
+
+        assertTrue(exception.getMessage().contains("参考图过大"));
+        assertTrue(requests.isEmpty());
+    }
+
+    @Test
+    void rejectsResponseOverSixtyFourMiBBeforeParsingIt() {
+        server.removeContext("/");
+        server.createContext("/", this::writeOversizedResponse);
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                () -> service().generate(provider(baseUrl()), "a", "", 3, 2, List.of()));
+
+        assertTrue(exception.getMessage().contains("响应过大"));
+    }
+
+    @Test
+    void rejectsImageWhoseHeaderExceedsPixelLimitBeforeDecoding() {
+        server.removeContext("/");
+        server.createContext("/", exchange -> writeImageResponse(exchange, pngHeader(10_000, 4_001)));
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                () -> service().generate(provider(baseUrl()), "a", "", 3, 2, List.of()));
+
+        assertTrue(exception.getMessage().contains("像素"));
+    }
+
+    @Test
+    void rejectsMimeTypeHeaderInjectionBeforeMakingARequest() {
+        ImageReference reference = new ImageReference("reference.png", "image/png\r\nX-Injected: yes",
+                png(1, 1, Color.RED));
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                () -> service().generate(provider(baseUrl()), "a", "", 3, 2, List.of(reference)));
+
+        assertTrue(exception.getMessage().contains("参考图 MIME"));
+        assertTrue(requests.isEmpty());
+    }
+
+    @Test
+    void preservesProxyPrefixAndRejectsQueryFragmentAndImageEndpoints() {
+        service().generate(provider(baseUrl() + "/proxy"), "a", "", 3, 2, List.of());
+        assertEquals("/proxy/v1/images/generations", requests.get(0).path());
+
+        assertUriRejected(baseUrl() + "?token=not-allowed");
+        assertUriRejected(baseUrl() + "#not-allowed");
+        assertUriRejected(baseUrl() + "/v1/images/generations");
+    }
+
+    @Test
     void rejectsMissingImageDataWithoutLeakingApiKey() {
         AiImageGenerationService service = service();
         server.removeContext("/");
@@ -179,6 +260,27 @@ class AiImageGenerationServiceTest {
         write(exchange, 200, body);
     }
 
+    private void writeImageResponse(HttpExchange exchange, byte[] image) throws IOException {
+        String body = "{\"data\":[{\"b64_json\":\"" + Base64.getEncoder().encodeToString(image) + "\"}]}";
+        write(exchange, 200, body);
+    }
+
+    private void writeOversizedResponse(HttpExchange exchange) throws IOException {
+        exchange.getResponseHeaders().set("Content-Type", "application/json");
+        exchange.sendResponseHeaders(200, 0);
+        exchange.getResponseBody().write("{\"data\":[{\"b64_json\":\"".getBytes(StandardCharsets.UTF_8));
+        byte[] chunk = new byte[8192];
+        java.util.Arrays.fill(chunk, (byte) 'A');
+        int remaining = 64 * 1024 * 1024 + 1;
+        while (remaining > 0) {
+            int length = Math.min(remaining, chunk.length);
+            exchange.getResponseBody().write(chunk, 0, length);
+            remaining -= length;
+        }
+        exchange.getResponseBody().write("\"}]}".getBytes(StandardCharsets.UTF_8));
+        exchange.close();
+    }
+
     private void write(HttpExchange exchange, int status, String body) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "application/json");
@@ -201,6 +303,29 @@ class AiImageGenerationServiceTest {
 
     private int occurrences(String text, String search) {
         return text.split(java.util.regex.Pattern.quote(search), -1).length - 1;
+    }
+
+    private void assertUriRejected(String baseUrl) {
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                () -> service().generate(provider(baseUrl), "a", "", 3, 2, List.of()));
+        assertTrue(exception.getMessage().contains("图片生成服务地址"));
+    }
+
+    private byte[] pngHeader(int width, int height) {
+        try {
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            bytes.write(new byte[] {(byte) 137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82});
+            bytes.write(new byte[] {(byte) (width >>> 24), (byte) (width >>> 16), (byte) (width >>> 8), (byte) width,
+                    (byte) (height >>> 24), (byte) (height >>> 16), (byte) (height >>> 8), (byte) height, 8, 2, 0, 0, 0});
+            CRC32 crc = new CRC32();
+            crc.update("IHDR".getBytes(StandardCharsets.US_ASCII));
+            crc.update(bytes.toByteArray(), 16, 13);
+            long value = crc.getValue();
+            bytes.write(new byte[] {(byte) (value >>> 24), (byte) (value >>> 16), (byte) (value >>> 8), (byte) value});
+            return bytes.toByteArray();
+        } catch (IOException exception) {
+            throw new IllegalStateException(exception);
+        }
     }
 
     private record CapturedRequest(String method, String path, String contentType, String authorization, byte[] bodyBytes) {
