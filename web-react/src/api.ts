@@ -11,6 +11,22 @@ import type {
   StoryWord,
   StoryWordLibrary,
 } from './story-flow-types';
+import type {
+  ImageAgentFlow,
+  ImageAgentNode,
+  ImageAgentRestoreRequest,
+  ImageAgentUpdate,
+  ImageFlowConfig,
+  ImageFlowUpdate,
+  ImagePromptVersion,
+  ImageRunDetail,
+  ImageRunStart,
+  ImageRunSummary,
+  ImageSourceStory,
+  ImageStyleCreate,
+  ImageStylePreset,
+  ImageStyleUpdate,
+} from './image-story-types';
 
 export interface ApiResponse<T> { code: number; data: T; msg: string; }
 export interface ConnectionConfig { ID?: number; connectionName: string; connectionType: string; connectionUrl: string; databaseName: string; port: number; dbLoginName: string; dbLoginPassword?: string; envName?: string; }
@@ -116,3 +132,34 @@ export const getStoryWordLibraries = (connectionId: number) =>
   request.get<ApiResponse<StoryWordLibrary[]>>('/story-runs/word-libraries', { params: { connectionId } }).then(unwrap);
 export const previewRandomStoryWords = (value: { connectionId: number; libraryId: number; count: number }) =>
   request.post<ApiResponse<StoryWord[]>>('/story-runs/random-words', value).then(unwrap);
+export const getImageAgentFlow = () =>
+  request.get<ApiResponse<ImageAgentFlow>>('/image-agents/flow').then(unwrap);
+export const updateImageAgent = (key: string, value: ImageAgentUpdate) =>
+  request.put<ApiResponse<ImageAgentNode>>(`/image-agents/${encodeURIComponent(key)}`, value).then(unwrap);
+export const getImageAgentVersions = (key: string) =>
+  request.get<ApiResponse<ImagePromptVersion[]>>(`/image-agents/${encodeURIComponent(key)}/versions`).then(unwrap);
+export const restoreImageAgentVersion = (key: string, version: number, value: ImageAgentRestoreRequest) =>
+  request.post<ApiResponse<ImageAgentNode>>(
+    `/image-agents/${encodeURIComponent(key)}/versions/${encodeURIComponent(String(version))}/restore`,
+    value,
+  ).then(unwrap);
+export const updateImageFlowConfig = (value: ImageFlowUpdate) =>
+  request.put<ApiResponse<ImageFlowConfig>>('/image-agents/flow/config', value).then(unwrap);
+export const getImageStylePresets = () =>
+  request.get<ApiResponse<ImageStylePreset[]>>('/image-style-presets').then(unwrap);
+export const createImageStylePreset = (value: ImageStyleCreate) =>
+  request.post<ApiResponse<ImageStylePreset>>('/image-style-presets', value).then(unwrap);
+export const updateImageStylePreset = (presetId: number, value: ImageStyleUpdate) =>
+  request.put<ApiResponse<ImageStylePreset>>(`/image-style-presets/${encodeURIComponent(String(presetId))}`, value).then(unwrap);
+export const getImageSourceStories = () =>
+  request.get<ApiResponse<ImageSourceStory[]>>('/image-runs/source-stories').then(unwrap);
+export const getImageRuns = () =>
+  request.get<ApiResponse<ImageRunSummary[]>>('/image-runs').then(unwrap);
+export const getImageRun = (runId: string) =>
+  request.get<ApiResponse<ImageRunDetail>>(`/image-runs/${encodeURIComponent(runId)}`).then(unwrap);
+export const createImageRun = (value: ImageRunStart) =>
+  request.post<ApiResponse<ImageRunSummary>>('/image-runs', value).then(unwrap);
+export const imageAssetUrl = (assetId: number | string) => {
+  const baseUrl = request.defaults.baseURL || '';
+  return `${baseUrl.replace(/\/$/, '')}/image-assets/${encodeURIComponent(String(assetId))}/content`;
+};

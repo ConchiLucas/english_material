@@ -7,6 +7,7 @@ import {
   DeleteOutlined,
   EditOutlined,
   PlusOutlined,
+  PictureOutlined,
   ReloadOutlined,
   RobotOutlined,
   SaveOutlined,
@@ -52,13 +53,14 @@ import {
   updateConnection,
 } from './api';
 import StoryAgentFlowPage from './StoryAgentFlowPage';
+import ImageAgentFlowPage from './ImageAgentFlowPage';
 import WordCleanPage from './WordCleanPage';
 
 const { Header, Sider, Content } = Layout;
 const { Title, Text } = Typography;
 
 type ConfigTab = 'database' | 'ai' | 'cli';
-type WorkspaceSection = 'config' | 'word-clean' | 'agents';
+type WorkspaceSection = 'config' | 'word-clean' | 'agents' | 'image-agents';
 type BusyAction = 'connection-save' | 'connection-test' | 'ai-save' | 'cli-save' | `delete-${number}` | null;
 
 const newProvider = (index: number): AIProviderConfigItem => ({
@@ -94,11 +96,13 @@ const workspaceNavigationItems = [
   { key: 'config', icon: <SettingOutlined />, label: <><span className="nav-label-full">配置管理</span><span className="nav-label-short">配置</span></> },
   { key: 'word-clean', icon: <BookOutlined />, label: <><span className="nav-label-full">去重单词表</span><span className="nav-label-short">词表</span></> },
   { key: 'agents', icon: <ApartmentOutlined />, label: <><span className="nav-label-full">Agent 工作台</span><span className="nav-label-short">Agent</span></> },
+  { key: 'image-agents', icon: <PictureOutlined />, label: <><span className="nav-label-full">图片工作台</span><span className="nav-label-short">图片</span></> },
 ];
 
 export default function App() {
   const { message, modal } = AntApp.useApp();
   const leaveAgentConfirmOpen = useRef(false);
+  const leaveImageAgentConfirmOpen = useRef(false);
   const [section, setSection] = useState<WorkspaceSection>('config');
   const [tab, setTab] = useState<ConfigTab>('database');
   const [connections, setConnections] = useState<ConnectionConfig[]>([]);
@@ -118,6 +122,7 @@ export default function App() {
   const [aiDirty, setAiDirty] = useState(false);
   const [cliDirty, setCliDirty] = useState(false);
   const [agentDirty, setAgentDirty] = useState(false);
+  const [imageAgentDirty, setImageAgentDirty] = useState(false);
 
   const reload = async () => {
     setLoading(true);
@@ -352,6 +357,29 @@ export default function App() {
         },
         afterClose: () => {
           leaveAgentConfirmOpen.current = false;
+        },
+      });
+      return;
+    }
+    if (section === 'image-agents' && nextSection !== 'image-agents' && imageAgentDirty) {
+      if (leaveImageAgentConfirmOpen.current) return;
+      leaveImageAgentConfirmOpen.current = true;
+      modal.confirm({
+        title: '离开图片工作台？',
+        content: '尚有未保存修改，离开后将丢失。',
+        okText: '确认离开',
+        cancelText: '取消',
+        autoFocusButton: 'cancel',
+        onCancel: () => {
+          leaveImageAgentConfirmOpen.current = false;
+        },
+        onOk: () => {
+          leaveImageAgentConfirmOpen.current = false;
+          setImageAgentDirty(false);
+          setSection(nextSection);
+        },
+        afterClose: () => {
+          leaveImageAgentConfirmOpen.current = false;
         },
       });
       return;
@@ -729,6 +757,8 @@ export default function App() {
 
   const content = section === 'agents'
     ? <StoryAgentFlowPage providers={ai.providers} connections={connections} onDirtyChange={setAgentDirty} />
+    : section === 'image-agents'
+      ? <ImageAgentFlowPage providers={ai.providers} onDirtyChange={setImageAgentDirty} />
     : loading ? (
     <div className="panel-page loading-panel" aria-busy="true" aria-label="正在加载配置">
       <Skeleton active paragraph={{ rows: 8 }} />
@@ -778,7 +808,7 @@ export default function App() {
           />
         </nav>
       )}
-      <Layout className={`workspace-layout ${section === 'config' ? 'config-workspace' : section === 'agents' ? 'story-workspace' : 'word-workspace'}`}>
+      <Layout className={`workspace-layout ${section === 'config' ? 'config-workspace' : section === 'agents' ? 'story-workspace' : section === 'image-agents' ? 'image-workspace' : 'word-workspace'}`}>
         {section === 'config' && (
           <Sider width={264} className="app-sider" aria-label="配置管理导航">
             <div className="sidebar-copy">
@@ -794,7 +824,7 @@ export default function App() {
             />
           </Sider>
         )}
-        <Content className={`app-content ${section === 'word-clean' ? 'word-workspace-content' : section === 'agents' ? 'story-workspace-content' : ''}`} role="main">{content}</Content>
+        <Content className={`app-content ${section === 'word-clean' ? 'word-workspace-content' : section === 'agents' ? 'story-workspace-content' : section === 'image-agents' ? 'image-workspace-content' : ''}`} role="main">{content}</Content>
       </Layout>
 
       <Modal
