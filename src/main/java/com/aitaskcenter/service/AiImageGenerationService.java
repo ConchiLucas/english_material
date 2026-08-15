@@ -3,6 +3,8 @@ package com.aitaskcenter.service;
 import com.aitaskcenter.dto.AiProviderConfigItem;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -100,8 +102,8 @@ public class AiImageGenerationService {
         for (Map.Entry<String, Object> field : commonFields(provider, prompt, negativePrompt, options).entrySet()) {
             writeTextPart(body, boundary, field.getKey(), String.valueOf(field.getValue()));
         }
-        for (ImageReference reference : references) {
-            writeImagePart(body, boundary, reference);
+        for (int index = 0; index < references.size(); index++) {
+            writeImagePart(body, boundary, index == 0 ? "image" : "image" + index, references.get(index));
         }
         body.write(("--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
         return requestBuilder(provider, endpoint(baseUri, "/images/edits"))
@@ -152,8 +154,9 @@ public class AiImageGenerationService {
         metadata.put("responseFormat", options.responseFormat());
         metadata.put("quality", options.quality());
         metadata.put("size", options.size());
-        return new ImageResult(bytes, image.mimeType(), image.width(), image.height(),
+        ImageResult source = new ImageResult(bytes, image.mimeType(), image.width(), image.height(),
                 root.path("id").asText(response.headers().firstValue("x-request-id").orElse("")), metadata);
+        return normalizeDimensions(source, image.image(), options.size());
     }
 
     private DecodedImage decodeImage(byte[] bytes) throws IOException {
@@ -177,7 +180,7 @@ public class AiImageGenerationService {
                 if (image == null) {
                     throw new IllegalArgumentException("图片生成返回的图片数据无效");
                 }
-                return new DecodedImage(mimeType(reader.getFormatName()), width, height);
+                return new DecodedImage(mimeType(reader.getFormatName()), width, height, image);
             } finally {
                 reader.dispose();
             }
@@ -189,8 +192,10 @@ public class AiImageGenerationService {
                 + "\"\r\n\r\n" + value + "\r\n").getBytes(StandardCharsets.UTF_8));
     }
 
-    private void writeImagePart(ByteArrayOutputStream body, String boundary, ImageReference reference) throws IOException {
-        body.write(("--" + boundary + "\r\nContent-Disposition: form-data; name=\"image\"; filename=\""
+    private void writeImagePart(ByteArrayOutputStream body, String boundary, String fieldName,
+                                ImageReference reference) throws IOException {
+        body.write(("--" + boundary + "\r\nContent-Disposition: form-data; name=\"" + fieldName
+                + "\"; filename=\""
                 + safeFilename(reference.filename()) + "\"\r\nContent-Type: " + reference.mimeType()
                 + "\r\n\r\n").getBytes(StandardCharsets.UTF_8));
         body.write(reference.bytes());
@@ -316,6 +321,50 @@ public class AiImageGenerationService {
         return filename.replaceAll("[\\r\\n\\\"\\\\]", "_");
     }
 
+    private ImageResult normalizeDimensions(ImageResult source, BufferedImage decoded, String requestedSize) {
+        int separator = requestedSize.indexOf('x');
+        try {
+            int width = Integer.parseInt(requestedSize.substring(0, separator));
+            int height = Integer.parseInt(requestedSize.substring(separator + 1));
+            if (width <= 0 || height <= 0 || (long) width * height > MAX_IMAGE_PIXELS) {
+                throw new IllegalArgumentException();
+            }
+            if (source.width() == width && source.height() == height) {
+                return source;
+            }
+
+            double targetRatio = (double) width / height;
+            int cropWidth = decoded.getWidth();
+            int cropHeight = decoded.getHeight();
+            if ((double) cropWidth / cropHeight > targetRatio) {
+                cropWidth = Math.max(1, (int) Math.round(cropHeight * targetRatio));
+            } else {
+                cropHeight = Math.max(1, (int) Math.round(cropWidth / targetRatio));
+            }
+            int cropX = (decoded.getWidth() - cropWidth) / 2;
+            int cropY = (decoded.getHeight() - cropHeight) / 2;
+            BufferedImage output = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+            Graphics2D graphics = output.createGraphics();
+            try {
+                graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
+                        RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+                graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+                graphics.drawImage(decoded, 0, 0, width, height,
+                        cropX, cropY, cropX + cropWidth, cropY + cropHeight, null);
+            } finally {
+                graphics.dispose();
+            }
+            ByteArrayOutputStream encoded = new ByteArrayOutputStream();
+            if (!ImageIO.write(output, "png", encoded) || encoded.size() > MAX_DECODED_BYTES) {
+                throw new IllegalArgumentException();
+            }
+            return new ImageResult(encoded.toByteArray(), "image/png", width, height,
+                    source.providerRequestId(), source.metadata());
+        } catch (RuntimeException | IOException exception) {
+            throw new IllegalArgumentException("图片尺寸归一化失败");
+        }
+    }
+
     private String mimeType(String format) {
         return switch (format.toLowerCase(Locale.ROOT)) {
             case "jpg", "jpeg" -> "image/jpeg";
@@ -330,7 +379,7 @@ public class AiImageGenerationService {
     private record ImageOptions(String responseFormat, String quality, String size) {
     }
 
-    private record DecodedImage(String mimeType, int width, int height) {
+    private record DecodedImage(String mimeType, int width, int height, BufferedImage image) {
     }
 
     public record ImageReference(String filename, String mimeType, byte[] bytes) {

@@ -15,6 +15,7 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.awt.Color;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -90,21 +91,42 @@ class AiImageGenerationServiceTest {
     }
 
     @Test
-    void postsTwoReferenceImagesAsImagePartsToEdits() {
+    void postsReferenceImagesWithAntigravityCompatibleFieldNames() {
         AiImageGenerationService service = service();
         ImageReference first = new ImageReference("first.png", "image/png", png(1, 1, Color.RED));
         ImageReference second = new ImageReference("second.png", "image/png", png(1, 1, Color.GREEN));
+        ImageReference third = new ImageReference("third.png", "image/png", png(1, 1, Color.BLUE));
 
-        service.generate(provider(baseUrl() + "/v1"), "combine", "", 3, 2, List.of(first, second));
+        service.generate(provider(baseUrl() + "/v1"), "combine", "", 3, 2, List.of(first, second, third));
 
         CapturedRequest request = requests.get(0);
         assertEquals("/v1/images/edits", request.path());
         assertTrue(request.contentType().startsWith("multipart/form-data; boundary="));
         String body = new String(request.bodyBytes(), StandardCharsets.ISO_8859_1);
-        assertEquals(2, occurrences(body, "name=\"image\""));
+        assertEquals(1, occurrences(body, "name=\"image\""));
+        assertEquals(1, occurrences(body, "name=\"image1\""));
+        assertEquals(1, occurrences(body, "name=\"image2\""));
+        assertTrue(body.indexOf("name=\"image\"") < body.indexOf("name=\"image1\""));
+        assertTrue(body.indexOf("name=\"image1\"") < body.indexOf("name=\"image2\""));
         assertTrue(body.contains("filename=\"first.png\""));
         assertTrue(body.contains("filename=\"second.png\""));
+        assertTrue(body.contains("filename=\"third.png\""));
         assertTrue(body.contains("name=\"response_format\""));
+    }
+
+    @Test
+    void centerCropsAndNormalizesProviderOutputToRequestedDimensions() throws Exception {
+        generatedImage = centerBandPng();
+
+        ImageResult result = service().generate(provider(baseUrl()), "wide scene", "", 4, 2, List.of());
+
+        assertEquals(4, result.width());
+        assertEquals(2, result.height());
+        assertEquals("image/png", result.mimeType());
+        BufferedImage normalized = ImageIO.read(new ByteArrayInputStream(result.bytes()));
+        assertEquals(4, normalized.getWidth());
+        assertEquals(2, normalized.getHeight());
+        assertEquals(Color.GREEN.getRGB(), normalized.getRGB(2, 1));
     }
 
     @Test
@@ -305,6 +327,23 @@ class AiImageGenerationServiceTest {
         try {
             BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
             image.setRGB(0, 0, color.getRGB());
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            ImageIO.write(image, "png", bytes);
+            return bytes.toByteArray();
+        } catch (IOException exception) {
+            throw new IllegalStateException(exception);
+        }
+    }
+
+    private byte[] centerBandPng() {
+        try {
+            BufferedImage image = new BufferedImage(4, 4, BufferedImage.TYPE_INT_RGB);
+            for (int x = 0; x < image.getWidth(); x++) {
+                image.setRGB(x, 0, Color.RED.getRGB());
+                image.setRGB(x, 1, Color.GREEN.getRGB());
+                image.setRGB(x, 2, Color.GREEN.getRGB());
+                image.setRGB(x, 3, Color.BLUE.getRGB());
+            }
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
             ImageIO.write(image, "png", bytes);
             return bytes.toByteArray();
