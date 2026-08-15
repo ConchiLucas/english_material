@@ -29,7 +29,7 @@ summary: 维护数据库、AI、故事与图片 Agent 配置及有界执行，�
 - 图片规划先并行执行故事分析/连续性/美术导演，再并行执行双分镜提案，随后顺序完成分镜决策、参考资产规划、分镜提示词和预检。结构化输出逐步校验；任何失败都会停止后续图片调用。
 - 故事分析的每个 beat 都明确 `action`、实际出场 `characters` 和唯一 `location`。两个分镜提案必须以稳定 `shotKey` 覆盖全部 beat，并与来源 beat 的 Scene、action、characters 集合和 location 严格一致；最终分镜只能继承提案 `shotKey`，继续完整保留这五项语义。故事分析另限定每 Scene 1—5 个连续 beat、全篇最多 20 个，并要求角色和地点各至少一个、合计不超过 20。
 - 参考资产规划必须为每个角色和地点各生成且仅生成一份参考；分镜提示词与最终预检的 `referenceAssetKeys` 必须精确等于该镜头所属地点和全部出场角色的参考 key 集合，不允许缺少、多余或重复引用。所有这些结构约束都在 `PLANNING` 内完成校验，失败的 Agent 步骤和批次会在任何图片调用或 `PROGRAM` 步骤创建前终止。
-- `ImageAgentCatalog` 为 9 个文本 Agent 提供不可编辑的 `IMAGE_AGENT_RUNTIME_CONTRACT_V2`。运行时将它附加到数据库中现有或自定义 Prompt（已包含相同合同则不重复），因此不会依赖初始化去覆盖用户配置；批次 Agent 快照保存实际送给模型的 effective system prompt，供历史审计。
+- `ImageAgentCatalog` 为 9 个文本 Agent 提供不可编辑的 `IMAGE_AGENT_RUNTIME_CONTRACT_V2`。它在 effective system prompt 中具有最终最高优先级，但覆盖范围只限于与其冲突的 JSON marker、schema、字段、beat 覆盖和精确 reference 要求；前文不冲突的业务创作要求继续生效。运行时将该合同附加到数据库中现有或自定义 Prompt（已包含相同合同则不重复），包括真实已持久化的旧版默认 Prompt 在内都无需由初始化覆盖或迁移；批次 Agent 快照保存实际送给模型的 effective system prompt，供历史审计。
 - `ImageProviderPolicy` 是图片流程配置与运行创建共用的后端资格策略；只有 ID、模型、Base URL 完整，已启用、类型为 `openai-compatible` 且同时声明 `IMAGE_GENERATION`、`IMAGE_REFERENCE` 的 Provider 才可用。`AiImageGenerationService` 无参考图调用 `/v1/images/generations`，携带参考图调用 `/v1/images/edits`，只接受 `b64_json` 图片结果。
 - 图片执行固定输出 `1536×864`，每个 Scene 1—5 张、全篇最多 20 张；先生成角色和地点参考图，再按 Scene/Shot 顺序为每个分镜调用一次图片模型，最后由 `ImageTextCompositor` 以 Java2D 合成角色对话气泡和底部叙事字幕。
 - 故事与图片运行都使用进程内有界线程池，不包含 Python Worker、分布式队列、暂停、删除、跨重启续跑或图片重试。第一版也没有视觉评审、自动/手工重绘或审核写入能力。

@@ -22,7 +22,7 @@ React 一级导航中的“图片工作台”紧邻“Agent 工作台”。它�
 | 出图提示词准备 | `image-reference-planner`、`image-shot-prompt-engineer`、`image-prompt-preflight` | 三个文本 Agent 顺序规划参考资产、分镜提示词并执行一次预检 |
 | 图片生成与文字合成 | `reference-image-generator`、`shot-image-generator`、`text-compositor` | 三个程序节点顺序生成参考图、分镜底图和最终文字图层 |
 
-九个文本 Agent 都有独立结构化合同。`ImageAgentCatalog` 将不可编辑的 `IMAGE_AGENT_RUNTIME_CONTRACT_V2` 与数据库中当前 Prompt 组合成 effective system prompt；旧 Prompt 和自定义 Prompt 无需被初始化覆盖，若已包含完全相同的合同则不会重复附加。批次 Agent 快照保存这个实际执行 Prompt；配置页和 Prompt 版本仍直接维护数据库中的 `system_prompt`，不能关闭代码目录持有的当前合同。
+九个文本 Agent 都有独立结构化合同。`ImageAgentCatalog` 将不可编辑的 `IMAGE_AGENT_RUNTIME_CONTRACT_V2` 与数据库中当前 Prompt 组合成 effective system prompt。V2 合同具有最终最高优先级，但只覆盖前文与其冲突的 JSON marker、schema、字段、beat 覆盖和精确 reference 要求；人物、画风、叙事等不冲突的业务创作要求仍然保留。真实已持久化的旧版默认 Prompt 和自定义 Prompt 无需被初始化覆盖或迁移，若已包含完全相同的合同则不会重复附加。批次 Agent 快照保存这个实际执行 Prompt；配置页和 Prompt 版本仍直接维护数据库中的 `system_prompt`，不能关闭代码目录持有的当前合同。
 
 后端保存完整输入、模型原始输出和解析结果，拒绝重复/未知 key、缺失 Scene、图片数量越界、参考资产错绑、同镜互斥动作、图片内文字指令、无说话人的对白和无法安全排版的文本。预检只输出一份最终计划，不循环回退。
 
