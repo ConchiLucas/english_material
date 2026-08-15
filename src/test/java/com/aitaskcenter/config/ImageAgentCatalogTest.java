@@ -155,23 +155,43 @@ class ImageAgentCatalogTest {
                         "image-story-analyst",
                         new SchemaContract(
                                 "StoryAnalysis",
+                                "STORY_ANALYSIS",
                                 List.of("scenes[]", "beats[]", "characters[]", "locations[]", "props[]", "dialogues[]", "narration[]"),
-                                null,
-                                List.of())),
+                                Map.ofEntries(
+                                        Map.entry("scenes[]", objectArray("sceneIndex", "title", "sourceExcerpt", "summary")),
+                                        Map.entry("beats[]", objectArray("beatKey", "sceneIndex", "order", "action", "temporalMoment")),
+                                        Map.entry("characters[]", objectArray("characterKey", "name", "description")),
+                                        Map.entry("locations[]", objectArray("locationKey", "name", "description")),
+                                        Map.entry("props[]", objectArray("propKey", "name", "description")),
+                                        Map.entry("dialogues[]", objectArray("sceneIndex", "speaker", "text")),
+                                        Map.entry("narration[]", objectArray("sceneIndex", "text"))))),
                 Map.entry(
                         "image-continuity-designer",
                         new SchemaContract(
                                 "ContinuityBible",
+                                "CONTINUITY_BIBLE",
                                 List.of("characters[]", "props[]", "invariants[]", "forbiddenChanges[]"),
-                                null,
-                                List.of())),
+                                Map.ofEntries(
+                                        Map.entry(
+                                                "characters[]",
+                                                objectArray(
+                                                        "characterKey",
+                                                        "name",
+                                                        "visualDescription",
+                                                        "clothing",
+                                                        "colors",
+                                                        "proportions",
+                                                        "expressionRules")),
+                                        Map.entry("props[]", objectArray("propKey", "visualDescription", "colors", "invariants")),
+                                        Map.entry("invariants[]", stringArray()),
+                                        Map.entry("forbiddenChanges[]", stringArray())))),
                 Map.entry(
                         "image-art-director",
                         new SchemaContract(
                                 "StyleBible",
+                                "STYLE_BIBLE",
                                 List.of("palette", "renderingStyle", "lighting", "cameraRules", "environmentRules", "negativeRules[]"),
-                                null,
-                                List.of())),
+                                Map.of("negativeRules[]", stringArray()))),
                 Map.entry(
                         "image-action-storyboarder",
                         storyboardProposalContract()),
@@ -182,62 +202,101 @@ class ImageAgentCatalogTest {
                         "image-storyboard-director",
                         new SchemaContract(
                                 "FinalStoryboard",
+                                "FINAL_STORYBOARD",
                                 List.of("shots[]"),
-                                "shots[]",
-                                List.of(
-                                        "shotKey",
-                                        "sceneIndex",
-                                        "shotIndex",
-                                        "sourceExcerpt",
-                                        "visualGoal",
-                                        "dialogue",
-                                        "narration",
-                                        "speaker",
-                                        "textAnchor"))),
+                                Map.of(
+                                        "shots[]",
+                                        objectArray(
+                                                "shotKey",
+                                                "sceneIndex",
+                                                "shotIndex",
+                                                "sourceExcerpt",
+                                                "visualGoal",
+                                                "dialogue",
+                                                "narration",
+                                                "speaker",
+                                                "textAnchor")))),
                 Map.entry(
                         "image-reference-planner",
                         new SchemaContract(
                                 "ReferencePlan",
+                                "REFERENCE_PLAN",
                                 List.of("referenceAssets[]"),
-                                "referenceAssets[]",
-                                List.of("assetKey", "type", "target", "prompt", "negativePrompt"))),
+                                Map.of(
+                                        "referenceAssets[]",
+                                        objectArray("assetKey", "type", "target", "prompt", "negativePrompt")))),
                 Map.entry(
                         "image-shot-prompt-engineer",
                         new SchemaContract(
                                 "ShotPromptPlan",
+                                "SHOT_PROMPT_PLAN",
                                 List.of("shots[]"),
-                                "shots[]",
-                                List.of("shotKey", "prompt", "negativePrompt", "referenceAssetKeys[]"))),
+                                Map.ofEntries(
+                                        Map.entry(
+                                                "shots[]",
+                                                objectArray("shotKey", "prompt", "negativePrompt", "referenceAssetKeys[]")),
+                                        Map.entry("shots[].referenceAssetKeys[]", stringArray())))),
                 Map.entry(
                         "image-prompt-preflight",
                         new SchemaContract(
                                 "PreflightPlan",
+                                "PREFLIGHT_PLAN",
                                 List.of("referenceAssets[]", "shots[]", "auditSummary"),
-                                null,
-                                List.of())));
+                                Map.ofEntries(
+                                        Map.entry(
+                                                "referenceAssets[]",
+                                                objectArray("assetKey", "type", "target", "prompt", "negativePrompt")),
+                                        Map.entry(
+                                                "shots[]",
+                                                objectArray(
+                                                        "shotKey",
+                                                        "sceneIndex",
+                                                        "shotIndex",
+                                                        "prompt",
+                                                        "negativePrompt",
+                                                        "referenceAssetKeys[]",
+                                                        "speaker",
+                                                        "dialogue",
+                                                        "narration",
+                                                        "textAnchor")),
+                                        Map.entry("shots[].referenceAssetKeys[]", stringArray())))));
 
         for (ImageAgentCatalog.NodeDefinition agent : ImageAgentCatalog.agents()) {
             String prompt = agent.defaultPrompt();
             assertEquals(expectedVariables.get(agent.key()), agent.variables(), agent.key());
             assertTrue(prompt.contains("输入变量："), agent.key());
             assertPromptVariablesExactlyMatch(agent, prompt);
-            assertTrue(prompt.contains("严格 JSON 块协议"), agent.key());
+            assertTrue(prompt.contains("严格 JSON 输出边界"), agent.key());
             assertTrue(prompt.contains("小学三年级"), agent.key());
             assertTrue(prompt.contains("图片模型不得生成文字"), agent.key());
             assertTrue(prompt.contains("角色、服装、道具、场景和画风必须跨图连续"), agent.key());
             SchemaContract contract = expectedContracts.get(agent.key());
             assertEquals(expectedSchemas.get(agent.key()), contract.schemaName(), agent.key());
+            String begin = "<" + contract.markerKey() + "_JSON_BEGIN>";
+            String end = "<" + contract.markerKey() + "_JSON_END>";
+            assertEquals(1, countOccurrences(prompt, begin), agent.key());
+            assertEquals(1, countOccurrences(prompt, end), agent.key());
+            assertTrue(prompt.contains("BEGIN/END 外不得有文字或 Markdown"), agent.key());
+            assertTrue(prompt.contains("BEGIN 与 END 之间只能是 JSON object"), agent.key());
+            assertFalse(prompt.contains("```"), agent.key());
             assertTrue(prompt.contains("输出 schema：" + contract.schemaName() + "。"), agent.key());
             assertTrue(
                     prompt.contains("顶层字段必须且只能包含 " + String.join("、", contract.topLevelFields()) + "。"),
                     agent.key());
-            assertTrue(prompt.contains("所有字段均为必填；数组可为空但不得省略。"), agent.key());
+            assertTrue(prompt.contains("所有 object 字段均为必填；数组可为空但不得省略。"), agent.key());
             assertTrue(prompt.contains("禁止添加未声明的顶层字段。"), agent.key());
-            if (contract.itemCollectionName() != null) {
-                assertTrue(
-                        prompt.contains(contract.itemCollectionName() + " 中每项必须且只能包含 "
-                                + String.join("、", contract.itemFields()) + "。"),
-                        agent.key());
+            assertFalse(contract.arrayItemContracts().isEmpty(), agent.key());
+            for (Map.Entry<String, ArrayItemContract> arrayContract : contract.arrayItemContracts().entrySet()) {
+                if (arrayContract.getValue().scalarString()) {
+                    assertTrue(
+                            prompt.contains("数组 " + arrayContract.getKey() + " 的每项必须是 string。"),
+                            agent.key() + " " + arrayContract.getKey());
+                } else {
+                    assertTrue(
+                            prompt.contains("数组 " + arrayContract.getKey() + " 的每项必须且只能包含 "
+                                    + String.join("、", arrayContract.getValue().objectFields()) + "。"),
+                            agent.key() + " " + arrayContract.getKey());
+                }
             }
         }
     }
@@ -245,17 +304,37 @@ class ImageAgentCatalogTest {
     private static SchemaContract storyboardProposalContract() {
         return new SchemaContract(
                 "StoryboardProposal",
+                "STORYBOARD_PROPOSAL",
                 List.of("shots[]"),
-                "shots[]",
-                List.of(
-                        "sceneIndex",
-                        "beat",
-                        "action",
-                        "characters",
-                        "location",
-                        "dialogue",
-                        "narration",
-                        "splitReason"));
+                Map.of(
+                        "shots[]",
+                        objectArray(
+                                "sceneIndex",
+                                "beat",
+                                "action",
+                                "characters",
+                                "location",
+                                "dialogue",
+                                "narration",
+                                "splitReason")));
+    }
+
+    private static ArrayItemContract objectArray(String... fields) {
+        return new ArrayItemContract(false, List.of(fields));
+    }
+
+    private static ArrayItemContract stringArray() {
+        return new ArrayItemContract(true, List.of());
+    }
+
+    private static int countOccurrences(String value, String target) {
+        int count = 0;
+        int index = 0;
+        while ((index = value.indexOf(target, index)) >= 0) {
+            count++;
+            index += target.length();
+        }
+        return count;
     }
 
     private static void assertPromptVariablesExactlyMatch(ImageAgentCatalog.NodeDefinition agent, String prompt) {
@@ -353,8 +432,11 @@ class ImageAgentCatalogTest {
 
     private record SchemaContract(
             String schemaName,
+            String markerKey,
             List<String> topLevelFields,
-            String itemCollectionName,
-            List<String> itemFields) {
+            Map<String, ArrayItemContract> arrayItemContracts) {
+    }
+
+    private record ArrayItemContract(boolean scalarString, List<String> objectFields) {
     }
 }
