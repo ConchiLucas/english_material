@@ -175,7 +175,12 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (tab === 'ai' && currentAi) aiForm.setFieldsValue(currentAi);
+    if (tab === 'ai' && currentAi) {
+      aiForm.setFieldsValue({
+        ...currentAi,
+        options: currentAi.options as Record<string, {} | undefined> | undefined,
+      });
+    }
   }, [tab, currentAi, aiForm]);
 
   useEffect(() => {

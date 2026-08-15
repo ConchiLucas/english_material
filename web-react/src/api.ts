@@ -14,7 +14,7 @@ import type {
 
 export interface ApiResponse<T> { code: number; data: T; msg: string; }
 export interface ConnectionConfig { ID?: number; connectionName: string; connectionType: string; connectionUrl: string; databaseName: string; port: number; dbLoginName: string; dbLoginPassword?: string; envName?: string; }
-export interface AIProviderConfigItem { id: string; label: string; type: 'openai-compatible' | 'anthropic-compatible' | 'mimo-tts'; base_url: string; api_key: string; model: string; max_tokens: number; capabilities?: string[]; enabled?: boolean; active?: boolean; }
+export interface AIProviderConfigItem { id: string; label: string; type: 'openai-compatible' | 'anthropic-compatible' | 'mimo-tts'; base_url: string; api_key: string; model: string; max_tokens: number; capabilities?: string[]; options?: Record<string, unknown>; enabled?: boolean; active?: boolean; }
 export interface AIConfig { active: string; providers: AIProviderConfigItem[]; }
 export interface LocalCliConfigItem { enabled: boolean; id: string; label: string; command: string; defaultArgs: string[]; model?: string; reasoningEffort?: string; workingDirectory: string; timeoutSeconds: number; active?: boolean; }
 export interface LocalCliConfig { active: string; configs: LocalCliConfigItem[]; }
