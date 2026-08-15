@@ -43,19 +43,21 @@ pull_image_with_timeout() {
       echo "[WARN] 拉取基础镜像 $image 超过 ${pull_timeout}s，终止拉取进程" >&2
       kill -TERM "$pull_pid" 2>/dev/null || true
       pull_grace=0
-      while kill -0 "$pull_pid" 2>/dev/null && [ "$pull_grace" -lt 5 ]; do
+      while kill -0 "$pull_pid" 2>/dev/null &&
+            [ "$pull_grace" -lt "$IMAGE_PULL_TERMINATION_GRACE" ]; do
         sleep 1
         pull_grace=$((pull_grace + 1))
       done
       if kill -0 "$pull_pid" 2>/dev/null; then
+        echo "[WARN] 拉取进程收到 TERM 后仍未退出，发送 KILL" >&2
         kill -KILL "$pull_pid" 2>/dev/null || true
       fi
       wait "$pull_pid" 2>/dev/null || true
-      if docker image inspect "$image" >/dev/null 2>&1; then
+      if image_cache_matches_platform "$image"; then
         echo "[WARN] 拉取基础镜像 $image 超时，使用已存在的本地缓存镜像" >&2
         return 0
       fi
-      echo "[ERROR] 拉取基础镜像 $image 超时，且本地缓存镜像不存在" >&2
+      echo "[ERROR] 拉取基础镜像 $image 超时，且本地缓存镜像不存在或平台不匹配" >&2
       return 124
     fi
     sleep 1
@@ -67,12 +69,84 @@ pull_image_with_timeout() {
   else
     pull_status=$?
   fi
-  if docker image inspect "$image" >/dev/null 2>&1; then
+  if image_cache_matches_platform "$image"; then
     echo "[WARN] 拉取基础镜像 $image 失败，使用已存在的本地缓存镜像" >&2
     return 0
   fi
-  echo "[ERROR] 拉取基础镜像 $image 失败，且本地缓存镜像不存在" >&2
+  echo "[ERROR] 拉取基础镜像 $image 失败，且本地缓存镜像不存在或平台不匹配" >&2
   return "$pull_status"
+}
+
+normalize_platform() {
+  platform_input=$1
+  case "$platform_input" in
+    */*) ;;
+    *) return 1 ;;
+  esac
+
+  platform_os=${platform_input%%/*}
+  platform_rest=${platform_input#*/}
+  platform_arch=${platform_rest%%/*}
+  if [ "$platform_rest" = "$platform_arch" ]; then
+    platform_variant=
+  else
+    platform_variant=${platform_rest#*/}
+    case "$platform_variant" in
+      ''|*/*) return 1 ;;
+    esac
+  fi
+
+  case "$platform_os" in
+    linux) ;;
+    *) return 1 ;;
+  esac
+  case "$platform_arch" in
+    amd64|x86_64|x86-64) platform_arch=amd64 ;;
+    arm64|aarch64) platform_arch=arm64 ;;
+    arm) platform_arch=arm ;;
+    *) return 1 ;;
+  esac
+  if [ -n "$platform_variant" ]; then
+    platform_variant=${platform_variant#v}
+    case "$platform_variant" in
+      ''|*[!0-9]*) return 1 ;;
+    esac
+    platform_variant=v$platform_variant
+    printf '%s/%s/%s\n' "$platform_os" "$platform_arch" "$platform_variant"
+    return 0
+  fi
+  printf '%s/%s\n' "$platform_os" "$platform_arch"
+}
+
+platforms_are_compatible() {
+  target_platform=$1
+  cached_platform=$2
+
+  target_os=${target_platform%%/*}
+  target_rest=${target_platform#*/}
+  target_arch=${target_rest%%/*}
+  [ "$target_rest" = "$target_arch" ] && target_variant= || target_variant=${target_rest#*/}
+
+  cached_os=${cached_platform%%/*}
+  cached_rest=${cached_platform#*/}
+  cached_arch=${cached_rest%%/*}
+  [ "$cached_rest" = "$cached_arch" ] && cached_variant= || cached_variant=${cached_rest#*/}
+
+  [ "$target_os" = "$cached_os" ] || return 1
+  [ "$target_arch" = "$cached_arch" ] || return 1
+  if [ -n "$target_variant" ] && [ -n "$cached_variant" ]; then
+    [ "$target_variant" = "$cached_variant" ] || return 1
+  fi
+  return 0
+}
+
+image_cache_matches_platform() {
+  image=$1
+  target_platform=$(normalize_platform "$DOCKER_PLATFORM") || return 1
+  cached_platform_raw=$(docker image inspect --format \
+    '{{.Os}}/{{.Architecture}}{{if .Variant}}/{{.Variant}}{{end}}' "$image" 2>/dev/null) || return 1
+  cached_platform=$(normalize_platform "$cached_platform_raw") || return 1
+  platforms_are_compatible "$target_platform" "$cached_platform"
 }
 
 remove_legacy_container() {
@@ -122,8 +196,15 @@ CODEX_CLI_VERSION=${CODEX_CLI_VERSION:-0.144.1}
 JAVA_IMAGE=${ENGLISH_MATERIAL_JAVA_IMAGE:-eclipse-temurin:17-jre}
 NODE_IMAGE=${ENGLISH_MATERIAL_NODE_IMAGE:-node:22-bookworm-slim}
 DOCKER_ARCH=$(docker version --format '{{.Server.Arch}}')
-DOCKER_PLATFORM=${ENGLISH_MATERIAL_DOCKER_PLATFORM:-linux/$DOCKER_ARCH}
+DOCKER_PLATFORM_RAW=${ENGLISH_MATERIAL_DOCKER_PLATFORM:-linux/$DOCKER_ARCH}
+if DOCKER_PLATFORM=$(normalize_platform "$DOCKER_PLATFORM_RAW"); then
+  :
+else
+  echo "[ERROR] ENGLISH_MATERIAL_DOCKER_PLATFORM 必须是受支持的 Linux 平台" >&2
+  exit 1
+fi
 IMAGE_PULL_TIMEOUT=${ENGLISH_MATERIAL_IMAGE_PULL_TIMEOUT:-120}
+IMAGE_PULL_TERMINATION_GRACE=5
 case "$IMAGE_PULL_TIMEOUT" in
   ''|*[!0-9]*)
     echo "[ERROR] ENGLISH_MATERIAL_IMAGE_PULL_TIMEOUT 必须是正整数秒数" >&2
