@@ -17,6 +17,7 @@ summary: 维护数据库、AI、故事与图片 Agent 配置及有界执行，�
 
 - `ConnectionConfigController` 维护可访问的 PostgreSQL、MySQL、SQL Server、Oracle 或 SQLite 连接配置，并提供连接测试和表清单。
 - `AiConfigController` 维护 AI Provider、当前 Provider和本地 CLI 配置；`POST /api/ai/config/image/bootstrap` 只接收来源 Provider ID，在后端从同一 `tb_ai_config` 安全复制 Antigravity 地址与密钥并创建固定图片 Provider，响应继续脱敏且不会调用外部模型。
+- `MinioConfigController` 维护唯一 MinIO 配置；保存或测试时执行私有 Bucket 建桶与有界写读删探测，Secret Key 只入库且查询永不回传。
 - `StoryAgentController` 提供故事 Agent 流程、Prompt 版本和质量预算的配置接口；`StoryAgentService` 负责拼装固定流程、校验可编辑节点与文本生成 Provider、保存 Agent 配置、生成 Prompt 版本快照、恢复历史版本和维护流程预算。
 - `StoryAgentCatalog` 固定定义 4 个阶段、12 个可编辑 Agent 和 5 个只读程序/人工节点；`StoryAgentInitializer` 启动时只在某个 Agent 配置缺失时创建该配置及其 v1 快照，已有 Agent 即使缺少历史快照也不补建；默认流程预算缺失时才创建，且不覆盖已有配置。
 - `StoryRunController`、`StoryRunExecutionService` 与 `StoryRunQueryService` 创建异步故事运行批次，按固定 Agent 链路执行创作、审核、评分和决策，保存每次实际模型调用的完整输入/输出，并提供批次与详情查询。
@@ -47,6 +48,9 @@ summary: 维护数据库、AI、故事与图片 Agent 配置及有界执行，�
 | `/api/ai/config` | 读取或保存 AI Provider 配置 |
 | `POST /api/ai/config/image/bootstrap` | 按来源 Provider ID 在服务端复用 Antigravity 凭据并创建固定 `gemini-3-pro-image` 图片 Provider；不回传密钥或调用模型 |
 | `/api/ai/cli/config` | 读取或保存本地 CLI 配置 |
+| `GET /api/minio-config` | 查询脱敏 MinIO 配置 |
+| `PUT /api/minio-config` | 验证并保存 MinIO 配置；Secret Key 留空时保留已有值 |
+| `POST /api/minio-config/test` | 使用表单配置执行私有 Bucket 写读删验证，不持久化 |
 | `GET /api/story-agents/flow` | 读取固定四阶段流程、节点配置和质量预算 |
 | `PUT /api/story-agents/{agentKey}` | 保存指定可编辑 Agent 的 Prompt、Provider ID、温度和启用状态 |
 | `GET /api/story-agents/{agentKey}/versions` | 按版本倒序读取 Prompt 历史 |
@@ -78,7 +82,7 @@ summary: 维护数据库、AI、故事与图片 Agent 配置及有界执行，�
 
 - 本地配置库由 `TASK_CENTER_DB_URL`、`TASK_CENTER_DB_USER` 和 `TASK_CENTER_DB_PASSWORD` 注入，默认库名为 `english_material`。
 - JPA 在可写的本地配置库中维护配置表，以及 `tb_story_run`、`tb_story_run_step` 两张运行记录表。
-- 图片链路在本地配置库维护 `tb_image_agent_config`、`tb_image_agent_prompt_version`、`tb_image_flow_config`、`tb_image_style_preset`、`tb_image_run`、`tb_image_run_step`、`tb_image_shot` 和 `tb_image_asset`。图片字节不写入 PostgreSQL。
+- 图片链路在本地配置库维护 `tb_minio_config`、`tb_image_agent_config`、`tb_image_agent_prompt_version`、`tb_image_flow_config`、`tb_image_style_preset`、`tb_image_run`、`tb_image_run_step`、`tb_image_shot` 和 `tb_image_asset`。图片字节不写入 PostgreSQL。
 - 故事 Agent 表只保存 AI Provider ID 字符串，不复制 Provider 详情或密钥，与 `tb_ai_config` 之间没有数据库外键。初始化时如果没有有效的文本生成 Provider，缺失 Agent 的 Provider ID 可以保存为空字符串。
 - 更新 Agent 或恢复 Prompt 版本时，请求都携带当前 Agent 的 `updatedAt`；`StoryAgentService` 拒绝过期时间戳，并当下校验 Provider 是否存在、已启用且包含 `TEXT_GENERATION` 能力。之后删除或停用 AI 配置可能使已保存 ID 失效；前端会将其标为不可用并要求重新选择后才能保存。
 - 外部材料查询使用 `ConnectionConfigService.openConfiguredConnection` 打开用户选中的连接。
@@ -89,7 +93,7 @@ summary: 维护数据库、AI、故事与图片 Agent 配置及有界执行，�
 - 图片 Provider Base URL 必须是带 host 的绝对 HTTP(S) URI，不得包含用户信息、query、fragment，也不得直接以 `/images/generations` 或 `/images/edits` 结尾。可选 `options` 只能使用长度不超过 64 的字符串 `responseFormat`、`quality`、`size`：格式固定 `b64_json`，尺寸固定 `1536x864`，quality 只接受受控枚举。前端使用同一组资格规则过滤下拉项。
 - 图片画风的名称、正向提示词、负向提示词和说明四个文本字段在前后端都必填；创建或更新时任一字段为空都会被拒绝，启用状态仍独立保存。
 - 图片批次创建边界会复制已校验的 `finalStory`、输入单词、目标年级、画风、固定流程和 9 个 Agent/Provider 的安全快照；之后修改原故事、Prompt、画风或 Provider 不改变历史批次含义。Provider 快照不含 API Key 或 Base URL。
-- `ImageAssetStore` 将 PNG/JPEG 写入 `IMAGE_STORY_STORAGE_ROOT` 下的单批次目录，数据库只保存两段式相对路径、MIME、尺寸和 SHA-256。读取时重新校验文件类型、大小、路径和哈希，禁止客户端提交文件路径。默认严格模式要求文件系统支持 `SecureDirectoryStream`，否则拒绝运行；`image-story.allow-portable-storage` 默认 `false`，只允许受信任的单用户 native 开发显式开启。
+- `ImageAssetStore` 将 PNG/JPEG 写入私有 MinIO Bucket 的 `<basePath>/<runId>/<assetKey>.<ext>` 对象；创建使用 `If-None-Match: *` 原子拒绝覆盖。数据库保存两段式相对对象键、MIME、尺寸和 SHA-256；读取和补偿删除都重新有界读取并校验哈希，客户端不能提交对象键。
 - 图片状态按 `QUEUED → PLANNING → GENERATING_REFERENCES → GENERATING_SHOTS → COMPOSITING → COMPLETED` 前进；任一步骤失败进入 `FAILED` 并保留已完成审计/文件。应用启动时会为每个残留活动批次开启独立新事务，把该批次所有 `RUNNING` 步骤与批次本身以同一错误和完成时间一起标为 `FAILED`；已完成步骤保持不变，批次不会续跑。
 - 纯故事协议不新增模型调用、数据库表或 HTTP 接口；现有数据库中的用户 Prompt 不被初始化覆盖，运行时协议独立保证交付格式。
 - 故事配置与运行记录写入只发生在本地配置库；不得把外部连接的写入、DDL 或迁移能力加入材料链路。
@@ -97,11 +101,10 @@ summary: 维护数据库、AI、故事与图片 Agent 配置及有界执行，�
 ## 部署
 
 - 本地开发：`./scripts/start-dev.sh`。
-- 宿主机开发脚本显式设置 `IMAGE_STORY_ALLOW_PORTABLE_STORAGE=true`，以兼容不提供 `SecureDirectoryStream` 的 macOS GraalVM；该 portable 模式使用进程级目录锁、逐级 `NOFOLLOW_LINKS` 校验、同目录临时文件和无覆盖硬链接发布，但不声称能防御同 UID 恶意进程并发替换文件。
 - Context Router fast：`deploy/context-router/fast/deploy.sh`。
 - Context Router full：`deploy/context-router/full/deploy.sh`。
 - full 建立 Java 17、Codex CLI、稳定依赖和 Spring Boot Loader 分层基线；fast 校验并复用该基线，只更新 SNAPSHOT 与 application 层。
 - Fast/Full 共用 `english-material-backend` 容器、`18744` 端口和 `vibedeploy-shared` 网络；依赖不兼容时 Fast 必须停止并要求 Full。
-- Context Router Fast/Full 都把 `english-material-image-story` 命名卷挂载到 `/app/runtime/image-story`，以一次性初始化容器校正目录所有者与 `0750` 权限，并向后端注入该容器内路径。
+- Context Router Fast/Full 不挂载图片存储卷；后端从 PostgreSQL 的 `tb_minio_config` 读取连接配置并访问外部 MinIO。
 - 两种模式都执行容器健康、重启次数和 `Started AiTaskCenterApplication` 日志验证，并以非零状态报告失败。
 - 容器镜像包含 Codex CLI，Compose 只在本机挂载 Codex 配置目录，并以当前宿主用户 UID 运行后端；本地凭据不得写入镜像、源码或日志。

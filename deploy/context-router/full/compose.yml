@@ -1,28 +1,4 @@
 services:
-  image-story-volume-init:
-    image: english-material/backend:local
-    user: "0:0"
-    read_only: true
-    network_mode: none
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    cap_add:
-      - CHOWN
-      - FOWNER
-      - DAC_OVERRIDE
-    environment:
-      IMAGE_STORY_APP_UID: ${IMAGE_STORY_APP_UID:?Set IMAGE_STORY_APP_UID before deploying}
-    volumes:
-      - english-material-image-story:/app/runtime/image-story
-    entrypoint:
-      - sh
-      - -ec
-      - |
-        chown "$${IMAGE_STORY_APP_UID}:app" /app/runtime/image-story
-        chmod 0750 /app/runtime/image-story
-
   backend:
     image: english-material/backend:local
     container_name: english-material-backend
@@ -33,9 +9,6 @@ services:
     restart: unless-stopped
     init: true
     read_only: true
-    depends_on:
-      image-story-volume-init:
-        condition: service_completed_successfully
     mem_limit: ${ENGLISH_MATERIAL_BACKEND_MEMORY_LIMIT:-1024m}
     stop_grace_period: 35s
     extra_hosts:
@@ -52,7 +25,6 @@ services:
       TASK_CENTER_DB_USER: ${TASK_CENTER_DB_USER:?Set TASK_CENTER_DB_USER in .env.local}
       TASK_CENTER_DB_PASSWORD: ${TASK_CENTER_DB_PASSWORD:?Set TASK_CENTER_DB_PASSWORD in .env.local}
       TASK_CENTER_EXTERNAL_HOST_ALIAS: host.docker.internal
-      IMAGE_STORY_STORAGE_ROOT: /app/runtime/image-story
       JAVA_TOOL_OPTIONS: >-
         -XX:MaxRAMPercentage=${JAVA_MAX_RAM_PERCENTAGE:-75.0}
         -XX:+ExitOnOutOfMemoryError
@@ -65,7 +37,6 @@ services:
       - "${WORKSPACE_HOST_ROOT}:/workspace:ro"
       - "${CODEX_HOST_HOME}:/home/app/.codex"
       - english-material-backend-dumps:/home/app/dumps
-      - english-material-image-story:/app/runtime/image-story
     healthcheck:
       test:
         - CMD-SHELL
@@ -85,4 +56,3 @@ networks:
 
 volumes:
   english-material-backend-dumps:
-  english-material-image-story:

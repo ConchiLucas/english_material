@@ -38,7 +38,7 @@ React 图片工作台 -> /api/image-agents/*        -> 9 个文本 Agent/版本�
                  -> /api/image-style-presets* -> 画风预设
                  -> /api/image-runs*          -> 故事快照与进程内异步执行
                                                 -> OpenAI Images-compatible Provider
-                                                -> IMAGE_STORY_STORAGE_ROOT 图片文件
+                                                -> 私有 MinIO Bucket 图片对象
                  -> /api/image-assets/{id}/content -> 按元数据路径与 SHA-256 受控读取
 ```
 

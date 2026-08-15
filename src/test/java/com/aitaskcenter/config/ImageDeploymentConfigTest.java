@@ -1,6 +1,7 @@
 package com.aitaskcenter.config;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -13,42 +14,27 @@ import org.junit.jupiter.api.Test;
 
 class ImageDeploymentConfigTest {
     @Test
-    void persistsImageStorageForFastFullAndHostDevelopment() throws Exception {
+    void usesDatabaseConfiguredMinioWithoutLocalImageStoragePathsOrVolumes() throws Exception {
         for (String mode : new String[] {"fast", "full"}) {
             String compose = Files.readString(Path.of("deploy/context-router", mode, "compose.yml"));
-            assertTrue(compose.contains("IMAGE_STORY_STORAGE_ROOT: /app/runtime/image-story"));
-            assertTrue(!compose.contains("IMAGE_STORY_ALLOW_PORTABLE_STORAGE: true"));
-            assertTrue(compose.contains("english-material-image-story:/app/runtime/image-story"));
-            assertTrue(compose.contains("english-material-image-story:"));
-            assertTrue(compose.contains("image-story-volume-init:"));
-            assertTrue(compose.contains("user: \"0:0\""));
+            assertFalse(compose.contains("IMAGE_STORY_STORAGE_ROOT"));
+            assertFalse(compose.contains("IMAGE_STORY_ALLOW_PORTABLE_STORAGE"));
+            assertFalse(compose.contains("english-material-image-story"));
+            assertFalse(compose.contains("image-story-volume-init"));
             assertTrue(compose.contains("read_only: true"));
-            assertTrue(compose.contains("network_mode: none"));
             assertTrue(compose.contains("no-new-privileges:true"));
-            assertTrue(compose.contains("cap_drop:"));
-            assertTrue(compose.contains("- ALL"));
-            assertTrue(compose.contains("- CHOWN"));
-            assertTrue(compose.contains("- FOWNER"));
-            assertTrue(compose.contains("- DAC_OVERRIDE"));
-            assertTrue(compose.contains("IMAGE_STORY_APP_UID: ${IMAGE_STORY_APP_UID:?Set IMAGE_STORY_APP_UID"));
-            assertTrue(compose.contains("condition: service_completed_successfully"));
         }
-        String fastDeploy = Files.readString(Path.of("deploy/context-router/fast/deploy.sh"));
-        assertTrue(fastDeploy.contains("em_image_label \"$BASE_IMAGE\" \"$EM_LABEL_APP_UID\""));
-        assertTrue(fastDeploy.contains("export IMAGE_STORY_APP_UID"));
-        String fullDeploy = Files.readString(Path.of("deploy/context-router/full/deploy.sh"));
-        assertTrue(fullDeploy.contains("export IMAGE_STORY_APP_UID=\"$APP_UID\""));
         String dockerfile = Files.readString(Path.of("deploy/context-router/full/Dockerfile.base"));
-        assertTrue(dockerfile.contains("/app/runtime/image-story"));
+        assertFalse(dockerfile.contains("/app/runtime/image-story"));
         assertTrue(dockerfile.contains("chown -R app:app /app"));
         String start = Files.readString(Path.of("scripts/start-dev.sh"));
-        assertTrue(start.contains("IMAGE_STORY_STORAGE_ROOT"));
-        assertTrue(start.contains("IMAGE_STORY_STORAGE_ROOT=\"$IMAGE_STORY_STORAGE_ROOT\""));
-        assertTrue(start.contains("IMAGE_STORY_ALLOW_PORTABLE_STORAGE=true"));
+        assertFalse(start.contains("IMAGE_STORY_STORAGE_ROOT"));
+        assertFalse(start.contains("IMAGE_STORY_ALLOW_PORTABLE_STORAGE"));
         String application = Files.readString(Path.of("src/main/resources/application.yml"));
-        assertTrue(application.contains("allow-portable-storage: ${IMAGE_STORY_ALLOW_PORTABLE_STORAGE:false}"));
+        assertFalse(application.contains("image-story:"));
         String environmentTemplate = Files.readString(Path.of(".env.local.example"));
-        assertTrue(environmentTemplate.contains("IMAGE_STORY_ALLOW_PORTABLE_STORAGE=false"));
+        assertFalse(environmentTemplate.contains("IMAGE_STORY_STORAGE_ROOT"));
+        assertFalse(environmentTemplate.contains("IMAGE_STORY_ALLOW_PORTABLE_STORAGE"));
     }
 
     @Test

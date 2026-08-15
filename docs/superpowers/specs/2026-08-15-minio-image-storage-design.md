@@ -31,7 +31,7 @@
 
 ## 配置页面
 
-配置管理侧边栏在“图片模型配置”后新增“MinIO 配置”。页面提供：
+配置管理侧边栏在“本地 CLI 配置”后新增“MinIO 配置”。页面提供：
 
 - Endpoint、Access Key、Secret Key、HTTPS、Bucket、基础路径和启用状态表单。
 - “测试连接”按钮：验证身份、Bucket 访问和对象写读删能力，不持久化表单。
@@ -44,9 +44,9 @@
 
 新增以下接口：
 
-- `GET /api/minio/config`：读取脱敏配置。
-- `PUT /api/minio/config`：验证并保存配置；Secret Key 为空时保留已有值。
-- `POST /api/minio/config/test`：使用表单值测试连接；Secret Key 为空时可复用已保存密钥。
+- `GET /api/minio-config`：读取脱敏配置。
+- `PUT /api/minio-config`：验证并保存配置；Secret Key 为空时保留已有值。
+- `POST /api/minio-config/test`：使用表单值测试连接；Secret Key 为空时可复用已保存密钥。
 
 测试与保存流程在私有 Bucket 中使用随机探测对象执行“写入少量字节 → 读取并比对 → 删除”。Bucket 不存在时允许创建；不设置公共策略。探测失败必须尽力删除临时对象，并返回有界中文错误。
 

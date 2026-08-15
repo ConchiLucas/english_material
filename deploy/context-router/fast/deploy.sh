@@ -84,12 +84,6 @@ DEPENDENCIES_HASH=$(em_layer_hash "$LAYERS_DIR/dependencies")
 LOADER_HASH=$(em_layer_hash "$LAYERS_DIR/spring-boot-loader")
 BASE_IMAGE=$(em_resolve_dependency_base "$DEPENDENCIES_HASH" "$LOADER_HASH")
 BASE_KEY=$(em_image_label "$BASE_IMAGE" "$EM_LABEL_KEY")
-IMAGE_STORY_APP_UID=$(em_image_label "$BASE_IMAGE" "$EM_LABEL_APP_UID")
-[ -n "$IMAGE_STORY_APP_UID" ] || {
-  echo "[ERROR] 依赖基线缺少后端运行用户 UID，请先成功执行后端 Full" >&2
-  exit 1
-}
-export IMAGE_STORY_APP_UID
 
 APPLICATION_IMAGE=english-material/backend:dev
 PREVIOUS_APPLICATION_IMAGE_ID=$(em_image_id "$APPLICATION_IMAGE")
