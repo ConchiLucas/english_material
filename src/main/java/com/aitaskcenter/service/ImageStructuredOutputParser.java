@@ -42,6 +42,10 @@ public final class ImageStructuredOutputParser {
             "(?i)\\b(?:asleep\\s+(?:and|while)\\s+(?:is\\s+)?running|running\\s+(?:and|while)\\s+(?:is\\s+)?asleep"
                     + "|open\\s+and\\s+(?:is\\s+)?closed|closed\\s+and\\s+(?:is\\s+)?open"
                     + "|sitting\\s+and\\s+(?:is\\s+)?standing|standing\\s+and\\s+(?:is\\s+)?sitting)\\b");
+    private static final Pattern REPEATED_SUBJECT_CONFLICT = Pattern.compile(
+            "(?i)\\b(?<firstSubject>[a-z](?:[a-z ]{0,58}[a-z])?)\\s+(?:is|are)\\s+(?<firstState>asleep|running|open|closed|sitting|standing)"
+                    + "\\s+(?:and|while)(?:\\s+(?:simultaneously|at\\s+(?:the\\s+)?same\\s+time))?\\s+"
+                    + "(?<secondSubject>[a-z](?:[a-z ]{0,58}[a-z])?)\\s+(?:is|are)\\s+(?<secondState>asleep|running|open|closed|sitting|standing)\\b");
 
     private final ObjectMapper mapper;
 
@@ -522,6 +526,32 @@ public final class ImageStructuredOutputParser {
         if (DIRECT_CONFLICTING_ACTION.matcher(normalized).find()) {
             throw error(label + " 同一镜头包含互斥时间点");
         }
+        Matcher matcher = REPEATED_SUBJECT_CONFLICT.matcher(normalized);
+        while (matcher.find()) {
+            String firstSubject = normalizedSubject(matcher.group("firstSubject"));
+            String secondSubject = normalizedSubject(matcher.group("secondSubject"));
+            if ((firstSubject.equals(secondSubject) || isPronoun(secondSubject))
+                    && conflictingStates(matcher.group("firstState"), matcher.group("secondState"))) {
+                throw error(label + " 同一镜头包含互斥时间点");
+            }
+        }
+    }
+
+    private static String normalizedSubject(String subject) {
+        return subject.trim().replaceAll("\\s+", " ");
+    }
+
+    private static boolean isPronoun(String subject) {
+        return "he".equals(subject) || "she".equals(subject) || "it".equals(subject) || "they".equals(subject);
+    }
+
+    private static boolean conflictingStates(String first, String second) {
+        return ("asleep".equals(first) && "running".equals(second))
+                || ("running".equals(first) && "asleep".equals(second))
+                || ("open".equals(first) && "closed".equals(second))
+                || ("closed".equals(first) && "open".equals(second))
+                || ("sitting".equals(first) && "standing".equals(second))
+                || ("standing".equals(first) && "sitting".equals(second));
     }
 
     private static void captionLength(String label, String text) {

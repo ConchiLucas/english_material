@@ -312,6 +312,14 @@ class ImageStructuredOutputParserTest {
                 .replace("Amy walks before lunch", "Amy is asleep and Ben is running"))));
     }
 
+    @Test
+    void rejectsExplicitRepeatedSubjectAndPronounActionConflicts() {
+        assertConflictingAction("Amy is asleep and Amy is running");
+        assertConflictingAction("Amy is asleep while Amy is running");
+        assertConflictingAction("Amy is asleep while she is running");
+        assertConflictingAction("the door is open and the door is closed");
+    }
+
     private StoryAnalysis storyAnalysis() {
         return parser.storyAnalysis(wrap("STORY_ANALYSIS", storyAnalysisJson()));
     }
@@ -350,6 +358,11 @@ class ImageStructuredOutputParserTest {
     private static void assertMessage(String expected, ThrowingRunnable action) {
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, action::run);
         assertEquals(expected, exception.getMessage());
+    }
+
+    private void assertConflictingAction(String action) {
+        assertMessage("StoryboardProposal 同一镜头包含互斥时间点", () -> parser.storyboardProposal(wrap(
+                "STORYBOARD_PROPOSAL", storyboardProposalJson().replace("Amy walks before lunch", action))));
     }
 
     private static void assertSafeMessage(ThrowingRunnable action, String forbidden) {
