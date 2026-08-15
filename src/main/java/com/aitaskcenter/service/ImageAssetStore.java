@@ -131,6 +131,35 @@ public class ImageAssetStore {
         }
     }
 
+    public void delete(String relativePath, String expectedSha256) {
+        Path relative = validateRelativePath(relativePath);
+        validateSha256(expectedSha256);
+        try (SecureDirectoryStream<Path> root = openSecureRoot();
+                SecureDirectoryStream<Path> run = openRun(root, relative.getName(0).toString(), false)) {
+            Path fileName = relative.getName(1);
+            BasicFileAttributes attributes = run.getFileAttributeView(fileName, BasicFileAttributeView.class,
+                    LinkOption.NOFOLLOW_LINKS).readAttributes();
+            if (!attributes.isRegularFile() || attributes.size() < 1 || attributes.size() > MAX_BYTES) {
+                throw new IllegalArgumentException("图片资产大小或类型不安全");
+            }
+            byte[] content;
+            try (SeekableByteChannel channel = run.newByteChannel(fileName,
+                    Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS))) {
+                long size = channel.size();
+                if (size < 1 || size > MAX_BYTES) throw new IllegalArgumentException("图片资产大小不安全");
+                content = readBounded(channel, size);
+            }
+            if (!sha256(content).equals(expectedSha256)) {
+                throw new IllegalArgumentException("图片资产哈希不匹配，拒绝删除");
+            }
+            run.deleteFile(fileName);
+        } catch (NoSuchFileException ex) {
+            throw new IllegalArgumentException("图片资产不存在", ex);
+        } catch (IOException ex) {
+            throw new IllegalArgumentException("删除图片资产失败", ex);
+        }
+    }
+
     void beforePublish() { }
 
     private SecureDirectoryStream<Path> openSecureRoot() throws IOException {

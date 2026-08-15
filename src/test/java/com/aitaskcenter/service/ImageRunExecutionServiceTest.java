@@ -22,18 +22,29 @@ import com.aitaskcenter.dto.AiConfigRequest;
 import com.aitaskcenter.dto.AiProviderConfigItem;
 import com.aitaskcenter.dto.ImageRunDtos.StartImageRunRequest;
 import com.aitaskcenter.model.ImageAgentConfig;
+import com.aitaskcenter.model.ImageAsset;
 import com.aitaskcenter.model.ImageFlowConfig;
 import com.aitaskcenter.model.ImageRun;
 import com.aitaskcenter.model.ImageRunStep;
+import com.aitaskcenter.model.ImageShot;
 import com.aitaskcenter.model.ImageStylePreset;
 import com.aitaskcenter.model.StoryRun;
 import com.aitaskcenter.repository.ImageAgentConfigRepository;
+import com.aitaskcenter.repository.ImageAssetRepository;
 import com.aitaskcenter.repository.ImageFlowConfigRepository;
 import com.aitaskcenter.repository.ImageRunRepository;
 import com.aitaskcenter.repository.ImageRunStepRepository;
+import com.aitaskcenter.repository.ImageShotRepository;
 import com.aitaskcenter.repository.ImageStylePresetRepository;
 import com.aitaskcenter.repository.StoryRunRepository;
+import com.aitaskcenter.service.AiImageGenerationService.ImageResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -50,13 +61,23 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.mockito.InOrder;
 import org.springframework.core.task.SyncTaskExecutor;
 import org.springframework.core.task.TaskExecutor;
 
 class ImageRunExecutionServiceTest {
+    static {
+        System.setProperty("java.awt.headless", "true");
+    }
+
+    @TempDir
+    Path tempDir;
     private StoryRunRepository stories;
     private ImageRunRepository runs;
     private ImageRunStepRepository steps;
+    private ImageShotRepository shots;
+    private ImageAssetRepository assets;
     private ImageAgentConfigRepository agents;
     private ImageStylePresetRepository styles;
     private ImageFlowConfigRepository flows;
@@ -72,6 +93,9 @@ class ImageRunExecutionServiceTest {
     private AiProviderConfigItem imageProvider;
     private Map<String, String> generationOutputs;
     private List<ImageRunStep> savedSteps;
+    private List<ImageShot> savedShots;
+    private List<ImageAsset> savedAssets;
+    private List<String> savedRunStatuses;
     private Map<String, ImageRunStep> startedSteps;
     private AtomicReference<ImageRun> currentRun;
     private ExecutorService pool;
@@ -81,6 +105,8 @@ class ImageRunExecutionServiceTest {
         stories = mock(StoryRunRepository.class);
         runs = mock(ImageRunRepository.class);
         steps = mock(ImageRunStepRepository.class);
+        shots = mock(ImageShotRepository.class);
+        assets = mock(ImageAssetRepository.class);
         agents = mock(ImageAgentConfigRepository.class);
         styles = mock(ImageStylePresetRepository.class);
         flows = mock(ImageFlowConfigRepository.class);
@@ -90,6 +116,9 @@ class ImageRunExecutionServiceTest {
         assetStore = mock(ImageAssetStore.class);
         mapper = new ObjectMapper().findAndRegisterModules();
         savedSteps = Collections.synchronizedList(new ArrayList<>());
+        savedShots = Collections.synchronizedList(new ArrayList<>());
+        savedAssets = Collections.synchronizedList(new ArrayList<>());
+        savedRunStatuses = Collections.synchronizedList(new ArrayList<>());
         startedSteps = new ConcurrentHashMap<>();
         currentRun = new AtomicReference<>();
 
@@ -116,6 +145,7 @@ class ImageRunExecutionServiceTest {
         when(aiConfigs.getConfig()).thenReturn(allProviders);
         when(runs.saveAndFlush(any(ImageRun.class))).thenAnswer(invocation -> {
             ImageRun run = invocation.getArgument(0);
+            savedRunStatuses.add(run.getStatus());
             currentRun.set(run);
             return run;
         });
@@ -128,8 +158,30 @@ class ImageRunExecutionServiceTest {
             return step;
         });
         when(steps.save(any(ImageRunStep.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(shots.saveAndFlush(any(ImageShot.class))).thenAnswer(invocation -> {
+            ImageShot shot = invocation.getArgument(0);
+            if (!savedShots.contains(shot)) savedShots.add(shot);
+            return shot;
+        });
+        when(assets.saveAndFlush(any(ImageAsset.class))).thenAnswer(invocation -> {
+            ImageAsset asset = invocation.getArgument(0);
+            if (!savedAssets.contains(asset)) savedAssets.add(asset);
+            return asset;
+        });
         when(textGeneration.generateWithUsage(any(), anyString(), anyString(), anyDouble(), anyInt()))
                 .thenAnswer(invocation -> generationResult(invocation.getArgument(1)));
+        try {
+            byte[] image = png(1536, 864);
+            when(imageGeneration.generate(any(), anyString(), anyString(), anyInt(), anyInt(), any()))
+                    .thenReturn(new ImageResult(image, "image/png", 1536, 864,
+                            "request-1", Map.of("quality", "high")));
+            when(assetStore.store(anyString(), anyString(), anyString(), any())).thenAnswer(invocation ->
+                    new ImageAssetStore.StoredAsset(invocation.getArgument(0) + "/" + invocation.getArgument(1) + ".png",
+                            "image/png", 1536, 864, "a".repeat(64)));
+            when(assetStore.read(anyString(), anyString())).thenReturn(image);
+        } catch (Exception exception) {
+            throw new AssertionError(exception);
+        }
     }
 
     @AfterEach
@@ -296,6 +348,7 @@ class ImageRunExecutionServiceTest {
         service.createRun(new StartImageRunRequest("story-run-1", 7L));
 
         List<ImageRunStep> ordered = savedSteps.stream()
+                .filter(step -> "AGENT".equals(step.getNodeKind()))
                 .sorted(Comparator.comparingInt(ImageRunStep::getSequence)).toList();
         assertEquals(ImageAgentCatalog.agents().stream().map(ImageAgentCatalog.NodeDefinition::key).toList(),
                 ordered.stream().map(ImageRunStep::getNodeKey).toList());
@@ -319,7 +372,142 @@ class ImageRunExecutionServiceTest {
         verify(runs, org.mockito.Mockito.atLeast(2)).saveAndFlush(runCaptor.capture());
         ImageRun planned = runCaptor.getAllValues().get(runCaptor.getAllValues().size() - 1);
         assertEquals(9L * 18L, planned.getTotalTextTokens());
-        verifyNoInteractions(imageGeneration);
+        assertEquals(3, currentRun.get().getExpectedImageCount());
+    }
+
+    @Test
+    void generatesCharacterThenLocationReferencesAndExactlyOneBaseImagePerShot() {
+        ImageRunExecutionService service = service(new SyncTaskExecutor(), new SyncTaskExecutor());
+
+        service.createRun(new StartImageRunRequest("story-run-1", 7L));
+
+        InOrder order = org.mockito.Mockito.inOrder(imageGeneration);
+        order.verify(imageGeneration).generate(any(), org.mockito.ArgumentMatchers.contains("Amy portrait"),
+                anyString(), org.mockito.ArgumentMatchers.eq(1536), org.mockito.ArgumentMatchers.eq(864),
+                org.mockito.ArgumentMatchers.eq(List.of()));
+        order.verify(imageGeneration).generate(any(), org.mockito.ArgumentMatchers.contains("Green park"),
+                anyString(), org.mockito.ArgumentMatchers.eq(1536), org.mockito.ArgumentMatchers.eq(864),
+                org.mockito.ArgumentMatchers.eq(List.of()));
+        order.verify(imageGeneration).generate(any(), org.mockito.ArgumentMatchers.contains("Amy walks"),
+                anyString(), org.mockito.ArgumentMatchers.eq(1536), org.mockito.ArgumentMatchers.eq(864),
+                org.mockito.ArgumentMatchers.argThat(references -> references.size() == 2));
+        verify(imageGeneration, org.mockito.Mockito.times(3))
+                .generate(any(), anyString(), anyString(), anyInt(), anyInt(), any());
+
+        assertEquals(List.of("QUEUED", "PLANNING", "GENERATING_REFERENCES", "GENERATING_SHOTS",
+                "COMPOSITING", "COMPLETED"), distinctConsecutive(savedRunStatuses));
+        assertEquals(1, savedShots.size());
+        ImageShot shot = savedShots.get(0);
+        assertEquals("shot-1", shot.getShotKey());
+        assertEquals(1, shot.getSceneIndex());
+        assertEquals(1, shot.getShotIndex());
+        assertEquals(1, shot.getSequence());
+        assertEquals("Amy walks", shot.getSourceExcerpt());
+        assertEquals("show Amy", shot.getVisualGoal());
+        assertEquals("amy", shot.getSpeaker());
+        assertEquals("Hello!", shot.getDialogue());
+        assertEquals("a short narration", shot.getCaption());
+        assertEquals("COMPLETED", shot.getStatus());
+        assertTrue(shot.getTextAnchorJson().contains("0.2"));
+        assertTrue(shot.getReferenceAssetKeysJson().contains("asset-park"));
+        assertEquals(List.of("REFERENCE", "REFERENCE", "BASE", "FINAL"),
+                savedAssets.stream().map(ImageAsset::getAssetType).toList());
+        assertTrue(savedAssets.stream().noneMatch(asset -> asset.getMetadataJson().contains("secret-key")));
+        assertEquals(3, currentRun.get().getExpectedImageCount());
+        assertEquals(3, currentRun.get().getGeneratedImageCount());
+        assertEquals("COMPLETED", currentRun.get().getStatus());
+        assertNotNull(currentRun.get().getFinishedAt());
+    }
+
+    @Test
+    void persistsTheThreeGenerationProgramsAfterTheNineAgentsInActualOrder() {
+        service(new SyncTaskExecutor(), new SyncTaskExecutor())
+                .createRun(new StartImageRunRequest("story-run-1", 7L));
+
+        List<ImageRunStep> ordered = savedSteps.stream()
+                .sorted(Comparator.comparingInt(ImageRunStep::getSequence)).toList();
+        assertEquals(List.of("reference-image-generator", "shot-image-generator", "text-compositor"),
+                ordered.stream().filter(step -> "PROGRAM".equals(step.getNodeKind()))
+                        .map(ImageRunStep::getNodeKey).toList());
+        assertEquals(List.of(10, 11, 12), ordered.stream()
+                .filter(step -> "PROGRAM".equals(step.getNodeKind())).map(ImageRunStep::getSequence).toList());
+        for (ImageRunStep step : ordered.stream().filter(value -> "PROGRAM".equals(value.getNodeKind())).toList()) {
+            assertEquals("generation", step.getStageKey());
+            assertEquals("COMPLETED", step.getStatus());
+            assertFalse(step.getInputJson().isBlank());
+            assertFalse(step.getRawOutput().isBlank());
+            assertFalse(step.getParsedOutputJson().isBlank());
+            assertEquals(0, step.getTotalTokens());
+        }
+        assertEquals("image-provider", ordered.get(9).getProviderId());
+        assertEquals("image-model", ordered.get(10).getProviderModel());
+        assertTrue(ordered.get(11).getProviderId() == null || ordered.get(11).getProviderId().isBlank());
+    }
+
+    @Test
+    void failsBeforeTheShotCallWhenADeclaredStoredReferenceCannotBeRead() {
+        when(assetStore.read(org.mockito.ArgumentMatchers.contains("reference-asset-park"), anyString()))
+                .thenThrow(new IllegalArgumentException("图片资产不存在"));
+
+        service(new SyncTaskExecutor(), new SyncTaskExecutor())
+                .createRun(new StartImageRunRequest("story-run-1", 7L));
+
+        verify(imageGeneration, org.mockito.Mockito.times(2))
+                .generate(any(), anyString(), anyString(), anyInt(), anyInt(), any());
+        assertEquals(List.of("REFERENCE", "REFERENCE"),
+                savedAssets.stream().map(ImageAsset::getAssetType).toList());
+        assertEquals("FAILED", currentRun.get().getStatus());
+        assertTrue(currentRun.get().getErrorMessage().contains("图片资产不存在"));
+        assertNotNull(currentRun.get().getFinishedAt());
+    }
+
+    @Test
+    void keepsCompletedReferencesAndNeverRetriesWhenShotGenerationFails() {
+        try {
+            byte[] image = png(1536, 864);
+            org.mockito.Mockito.doReturn(new ImageResult(image, "image/png", 1536, 864,
+                            "reference-1", Map.of()))
+                    .doReturn(new ImageResult(image, "image/png", 1536, 864,
+                            "reference-2", Map.of()))
+                    .doThrow(new IllegalArgumentException("provider-shot-failure"))
+                    .when(imageGeneration).generate(any(), anyString(), anyString(), anyInt(), anyInt(), any());
+        } catch (Exception exception) {
+            throw new AssertionError(exception);
+        }
+
+        service(new SyncTaskExecutor(), new SyncTaskExecutor())
+                .createRun(new StartImageRunRequest("story-run-1", 7L));
+
+        verify(imageGeneration, org.mockito.Mockito.times(3))
+                .generate(any(), anyString(), anyString(), anyInt(), anyInt(), any());
+        assertEquals(List.of("REFERENCE", "REFERENCE"),
+                savedAssets.stream().map(ImageAsset::getAssetType).toList());
+        assertEquals("FAILED", currentRun.get().getStatus());
+        assertEquals(2, currentRun.get().getGeneratedImageCount());
+        assertTrue(currentRun.get().getErrorMessage().contains("provider-shot-failure"));
+        ImageRunStep program = savedSteps.stream()
+                .filter(step -> "shot-image-generator".equals(step.getNodeKey())).findFirst().orElseThrow();
+        assertEquals("FAILED", program.getStatus());
+        assertFalse(savedSteps.stream().anyMatch(step -> "text-compositor".equals(step.getNodeKey())));
+    }
+
+    @Test
+    void removesJustWrittenFileAndPreservesOriginalErrorWhenAssetDatabaseSaveFails() throws Exception {
+        Path storageRoot = Files.createDirectory(tempDir.toRealPath().resolve("image-assets"));
+        assetStore = new ImageAssetStore(storageRoot.toString());
+        when(assets.saveAndFlush(any(ImageAsset.class)))
+                .thenThrow(new IllegalStateException("db-write-original"));
+
+        service(new SyncTaskExecutor(), new SyncTaskExecutor())
+                .createRun(new StartImageRunRequest("story-run-1", 7L));
+
+        assertEquals("FAILED", currentRun.get().getStatus());
+        assertTrue(currentRun.get().getErrorMessage().contains("db-write-original"));
+        verify(imageGeneration, org.mockito.Mockito.times(1))
+                .generate(any(), anyString(), anyString(), anyInt(), anyInt(), any());
+        try (var files = Files.walk(storageRoot)) {
+            assertEquals(0, files.filter(Files::isRegularFile).count());
+        }
     }
 
     @Test
@@ -414,7 +602,7 @@ class ImageRunExecutionServiceTest {
         service(new SyncTaskExecutor(), new SyncTaskExecutor())
                 .createRun(new StartImageRunRequest("story-run-1", 7L));
 
-        for (ImageRunStep step : savedSteps) {
+        for (ImageRunStep step : savedSteps.stream().filter(value -> "AGENT".equals(value.getNodeKind())).toList()) {
             assertTrue(step.getInputTokens() > 0);
             assertTrue(step.getOutputTokens() > 0);
             assertEquals(step.getInputTokens() + step.getOutputTokens(), step.getTotalTokens());
@@ -428,7 +616,8 @@ class ImageRunExecutionServiceTest {
         service(new SyncTaskExecutor(), new SyncTaskExecutor())
                 .createRun(new StartImageRunRequest("story-run-1", 7L));
 
-        assertTrue(savedSteps.stream().allMatch(step -> step.getTotalTokens() == 30));
+        assertTrue(savedSteps.stream().filter(step -> "AGENT".equals(step.getNodeKind()))
+                .allMatch(step -> step.getTotalTokens() == 30));
         assertEquals(270, currentRun.get().getTotalTextTokens());
     }
 
@@ -439,7 +628,8 @@ class ImageRunExecutionServiceTest {
         service(new SyncTaskExecutor(), new SyncTaskExecutor())
                 .createRun(new StartImageRunRequest("story-run-1", 7L));
 
-        assertTrue(savedSteps.stream().allMatch(step -> step.getTotalTokens() == Long.MAX_VALUE));
+        assertTrue(savedSteps.stream().filter(step -> "AGENT".equals(step.getNodeKind()))
+                .allMatch(step -> step.getTotalTokens() == Long.MAX_VALUE));
         assertEquals(Long.MAX_VALUE, currentRun.get().getTotalTextTokens());
     }
 
@@ -459,8 +649,17 @@ class ImageRunExecutionServiceTest {
     }
 
     private ImageRunExecutionService service(TaskExecutor runExecutor, TaskExecutor planningExecutor) {
-        return new ImageRunExecutionService(stories, runs, steps, agents, styles, flows, aiConfigs,
-                textGeneration, imageGeneration, assetStore, mapper, runExecutor, planningExecutor);
+        return new ImageRunExecutionService(stories, runs, steps, shots, assets, agents, styles, flows, aiConfigs,
+                textGeneration, imageGeneration, assetStore, new ImageTextCompositor(), mapper,
+                runExecutor, planningExecutor);
+    }
+
+    private static List<String> distinctConsecutive(List<String> values) {
+        List<String> result = new ArrayList<>();
+        for (String value : values) {
+            if (result.isEmpty() || !result.get(result.size() - 1).equals(value)) result.add(value);
+        }
+        return result;
     }
 
     private RunMergeTracker simulateMergedPlanningEntity() {
@@ -639,16 +838,32 @@ class ImageRunExecutionServiceTest {
     }
 
     private static String referencePlanJson() {
-        return "{\"referenceAssets\":[{\"assetKey\":\"asset-amy\",\"type\":\"CHARACTER\",\"target\":\"amy\",\"prompt\":\"Amy portrait, no text\",\"negativePrompt\":\"text, watermark\"}]}";
+        return "{\"referenceAssets\":[{\"assetKey\":\"asset-park\",\"type\":\"LOCATION\",\"target\":\"park\",\"prompt\":\"Green park, no text\",\"negativePrompt\":\"text\"},"
+                + "{\"assetKey\":\"asset-amy\",\"type\":\"CHARACTER\",\"target\":\"amy\",\"prompt\":\"Amy portrait, no text\",\"negativePrompt\":\"text, watermark\"}]}";
     }
 
     private static String shotPromptPlanJson() {
-        return "{\"shots\":[{\"shotKey\":\"shot-1\",\"prompt\":\"Amy walks, no text\",\"negativePrompt\":\"text, words\",\"referenceAssetKeys\":[\"asset-amy\"]}]}";
+        return "{\"shots\":[{\"shotKey\":\"shot-1\",\"prompt\":\"Amy walks, no text\",\"negativePrompt\":\"text, words\",\"referenceAssetKeys\":[\"asset-amy\",\"asset-park\"]}]}";
     }
 
     private static String preflightJson() {
-        return "{\"referenceAssets\":[{\"assetKey\":\"asset-amy\",\"type\":\"CHARACTER\",\"target\":\"amy\",\"prompt\":\"Amy portrait, no text\",\"negativePrompt\":\"text\"}],"
-                + "\"shots\":[{\"shotKey\":\"shot-1\",\"sceneIndex\":1,\"shotIndex\":1,\"prompt\":\"Amy walks, no text\",\"negativePrompt\":\"text\",\"referenceAssetKeys\":[\"asset-amy\"],\"speaker\":\"amy\",\"dialogue\":\"Hello!\",\"narration\":\"a short narration\",\"textAnchor\":{\"x\":0.2,\"y\":0.3}}],\"auditSummary\":\"checked\"}";
+        return "{\"referenceAssets\":[{\"assetKey\":\"asset-park\",\"type\":\"LOCATION\",\"target\":\"park\",\"prompt\":\"Green park, no text\",\"negativePrompt\":\"text\"},"
+                + "{\"assetKey\":\"asset-amy\",\"type\":\"CHARACTER\",\"target\":\"amy\",\"prompt\":\"Amy portrait, no text\",\"negativePrompt\":\"text\"}],"
+                + "\"shots\":[{\"shotKey\":\"shot-1\",\"sceneIndex\":1,\"shotIndex\":1,\"prompt\":\"Amy walks, no text\",\"negativePrompt\":\"text\",\"referenceAssetKeys\":[\"asset-amy\",\"asset-park\"],\"speaker\":\"amy\",\"dialogue\":\"Hello!\",\"narration\":\"a short narration\",\"textAnchor\":{\"x\":0.2,\"y\":0.3}}],\"auditSummary\":\"checked\"}";
+    }
+
+    private static byte[] png(int width, int height) throws Exception {
+        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = image.createGraphics();
+        try {
+            graphics.setColor(new Color(72, 112, 160));
+            graphics.fillRect(0, 0, width, height);
+        } finally {
+            graphics.dispose();
+        }
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        if (!javax.imageio.ImageIO.write(image, "png", output)) throw new IllegalStateException("PNG unavailable");
+        return output.toByteArray();
     }
 
     private record RunMergeTracker(

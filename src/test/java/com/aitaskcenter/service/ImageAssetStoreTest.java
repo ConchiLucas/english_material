@@ -118,6 +118,22 @@ class ImageAssetStoreTest {
     }
 
     @Test
+    void deletesOnlyTheExactStoredAssetWhenPathAndHashBothMatch() throws Exception {
+        ImageAssetStore store = new ImageAssetStore(storageRoot().toString());
+        byte[] original = png(4, 3);
+        ImageAssetStore.StoredAsset stored = store.store("run-123", "shot-001", "image/png", original);
+
+        assertThrows(IllegalArgumentException.class,
+                () -> store.delete(stored.relativePath(), "b".repeat(64)));
+        assertArrayEquals(original, store.read(stored.relativePath(), stored.sha256()));
+
+        store.delete(stored.relativePath(), stored.sha256());
+
+        assertThrows(IllegalArgumentException.class,
+                () -> store.read(stored.relativePath(), stored.sha256()));
+    }
+
+    @Test
     void publishesOnlyOneCompleteAssetWhenConcurrentWritersUseTheSameKey() throws Exception {
         byte[] first = png(4, 3);
         byte[] second = png(5, 3);

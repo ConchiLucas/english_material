@@ -2,6 +2,8 @@ server:
   port: ${TASK_CENTER_SERVER_PORT:18744}
 
 spring:
+  main:
+    headless: true
   datasource:
     url: ${TASK_CENTER_DB_URL:jdbc:postgresql://localhost:5432/english_material}
     username: ${TASK_CENTER_DB_USER:postgres}
