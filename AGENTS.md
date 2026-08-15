@@ -1,11 +1,11 @@
 ---
 title: 英语材料开发工作空间文档入口
-summary: 定义英语材料配置后端、React 管理前端、只读单词查询链路和统一部署方式。
+summary: 定义英语材料配置后端、React 管理前端、故事与图片工作台、只读材料查询链路和统一部署方式。
 ---
 
 # 英语材料开发工作空间文档入口
 
-本工作空间是一个单仓库双 Project 应用：根目录为 Spring Boot 配置与材料查询后端，`web-react` 为 React 管理前端。当前源码不包含 Python Worker、任务队列或执行中心。
+本工作空间是一个单仓库双 Project 应用：根目录为 Spring Boot 配置、材料查询及进程内故事/图片执行后端，`web-react` 为 React 管理前端。当前源码不包含 Python Worker 或分布式任务队列；故事和图片批次均由 Java 进程内有界线程池执行。
 
 ## 如何使用本工作空间
 
@@ -45,6 +45,8 @@ summary: 定义英语材料配置后端、React 管理前端、只读单词查�
 - 本仓库只有一个 Git 根；修改前仍需明确变更属于根后端、`web-react` 前端还是共享部署配置。
 - 本地开发入口为 `./scripts/start-dev.sh`；Context Router 编排入口为 `deploy/context-router/`。
 - 本机差异只放入被 Git 忽略的根 `.env.local`，模板使用 `.env.local.example`。
+- 图片故事文件根目录由 `IMAGE_STORY_STORAGE_ROOT` 控制；数据库仅保存受控相对路径和 SHA-256，客户端只能通过资产 ID API 读取。
+- 图片工作台固定为 4 阶段、9 个文本 Agent 和 3 个程序节点；第一版不增加视觉评审、自动重绘、图片重试或审核写入链路。
 - 外部业务数据源只允许参数化只读查询，不得通过本服务执行建表、改表、迁移或写入。
 
 ## Context Router 部署 MCP 使用规则

@@ -1,0 +1,105 @@
+---
+title: 图片故事多 Agent 生成链路
+summary: 说明已有英文故事如何经过九个文本 Agent、参考图/分镜图生成和确定性文字合成，形成可人工查看的连续绘本。
+---
+
+# 图片故事多 Agent 生成链路
+
+## 入口与产品边界
+
+React 一级导航中的“图片工作台”紧邻“Agent 工作台”。它只接受已有故事批次中非空的 `finalStory`，创建时选择一个已启用画风预设；不能直接输入另一份故事，也不会在图片执行时回读外部材料库。
+
+第一版的交付边界是自动规划、一次性出图和人工查看：没有视觉评审 Agent、候选图比较、自动或手工重绘、图片重试、审核状态写入、暂停、删除或跨重启续跑。页面中的图片记录只用于审计和人工判断，不触发新的模型调用。
+
+## 固定流程
+
+`ImageAgentCatalog` 固定四个阶段，前端不能增删或拖拽节点：
+
+| 阶段 | 节点 | 执行关系 |
+| --- | --- | --- |
+| 故事理解与视觉约束 | `image-story-analyst`、`image-continuity-designer`、`image-art-director` | 三个文本 Agent 并行读取同一故事/配置快照 |
+| 双分镜提案与决策 | `image-action-storyboarder`、`image-learning-storyboarder`、`image-storyboard-director` | 两个提案 Agent 并行，总监随后生成唯一分镜表 |
+| 出图提示词准备 | `image-reference-planner`、`image-shot-prompt-engineer`、`image-prompt-preflight` | 三个文本 Agent 顺序规划参考资产、分镜提示词并执行一次预检 |
+| 图片生成与文字合成 | `reference-image-generator`、`shot-image-generator`、`text-compositor` | 三个程序节点顺序生成参考图、分镜底图和最终文字图层 |
+
+九个文本 Agent 都有独立结构化合同。后端保存完整输入、模型原始输出和解析结果，拒绝重复/未知 key、缺失 Scene、图片数量越界、参考资产错绑、同镜互斥动作、图片内文字指令、无说话人的对白和无法安全排版的文本。预检只输出一份最终计划，不循环回退。
+
+固定图片约束为 `1536×864`（16:9）、每个 Scene 1—5 张、全篇最多 20 张。Scene 会按含义、动作和时间点拆成多张分镜，不是固定一 Scene 一图。
+
+## 创建边界与快照
+
+`GET /api/image-runs/source-stories` 只列出 `COMPLETED` 或 `LIMIT_REACHED`、且最终故事非空的最近故事记录；前端从该列表选择来源。`POST /api/image-runs` 只接收 `storyRunId` 和 `stylePresetId`，`ImageRunExecutionService` 在写入 `QUEUED` 批次前完成以下校验：
+
+- 故事存在，且 `finalStory`、单词和目标年级快照完整，并满足共用的故事长度边界；
+- 九个文本 Agent 全部存在、启用，Prompt/版本/温度有效，且引用启用的 `TEXT_GENERATION` Provider；
+- 画风预设存在且启用；
+- 图片流程保持固定尺寸和数量上限，图片 Provider 启用、配置完整、采用 `openai-compatible` 类型，并同时具有 `IMAGE_GENERATION`、`IMAGE_REFERENCE` 能力；
+- 图片文件根目录存在且可安全写入。
+
+批次持久化最终故事、单词、年级、画风、流程、图片 Provider 安全描述，以及九个 Agent 的 Prompt/版本/温度/文本 Provider 安全描述。Provider 快照不保存 API Key 或 Base URL；图片业务表、步骤、资产、错误和日志也不复制密钥。执行所需的 Provider 地址和密钥只由现有 `tb_ai_config` 配置装入当前执行内存，创建后修改原故事、Prompt、画风或 Provider 不会改变已保存的历史快照。
+
+## Provider 与图片文件
+
+`AiImageGenerationService` 是 OpenAI Images-compatible 适配器：
+
+- 没有参考图时请求 Provider Base URL 下的 `/v1/images/generations`；
+- 分镜携带已生成参考图时请求 `/v1/images/edits` multipart 接口；
+- 响应必须包含 `b64_json`，返回图片会被解码并校验类型、尺寸和大小；
+- 角色参考图先于地点参考图生成；每个分镜只调用一次图片接口，并最多携带 8 张已声明参考图；任何图片调用失败都不自动重试。
+
+图片模型只接收无字画面提示词。`ImageTextCompositor` 读取分镜底图，在 Java2D 中将带说话人和锚点的对白排成气泡，将叙事排成底部安全区字幕，并输出最终 PNG。
+
+`ImageAssetStore` 将文件保存到 `IMAGE_STORY_STORAGE_ROOT/<runId>/`。`tb_image_asset` 只记录受控相对路径、MIME、宽高、SHA-256、Provider/模型/请求 ID、提示词和经过投影的元数据。`GET /api/image-assets/{assetId}/content` 通过资产 ID 查元数据，重新校验两段式路径、普通文件、大小和 SHA-256，只返回 PNG/JPEG，并使用 ETag 与长期不可变缓存；客户端不能提交任意文件路径。
+
+## 状态、审计与失败
+
+状态机为：
+
+```text
+QUEUED
+  -> PLANNING
+  -> GENERATING_REFERENCES
+  -> GENERATING_SHOTS
+  -> COMPOSITING
+  -> COMPLETED
+```
+
+任一步骤失败后批次进入 `FAILED`，后续调用停止，已经持久化的步骤和图片仍可查询。应用启动时 `ImageRunRecoveryInitializer` 会把遗留在任一活动状态的批次标记为 `FAILED`，错误说明无法跨重启继续。
+
+`tb_image_run_step` 最多形成 12 个按固定序号排列的记录：九个 `AGENT` 步骤保存完整输入、原始输出、解析输出、Provider/模型、Prompt 版本、Token、耗时和错误；三个 `PROGRAM` 步骤保存实际输入及生成资产 key/数量或完成分镜 key/数量。图片记录全屏页按批次联动单行输入单词、实际步骤、完整输入/输出，并在底部切换参考设定图和最终分镜图；活动批次轮询，终态停止。
+
+## 数据表
+
+| 表 | 当前用途 |
+| --- | --- |
+| `tb_image_agent_config` | 九个 Agent 的当前 Prompt、文本 Provider、温度、启用状态、Prompt 版本与乐观锁 |
+| `tb_image_agent_prompt_version` | 每次保存/恢复产生的追加式 Prompt 快照 |
+| `tb_image_flow_config` | 唯一图片 Provider 和固定尺寸/数量上限 |
+| `tb_image_style_preset` | 内置或自定义画风的正向/负向提示词、说明、启用状态与乐观锁 |
+| `tb_image_run` | 来源故事 ID 及故事、单词、年级、画风、流程、Agent 快照，状态、数量和时间 |
+| `tb_image_run_step` | 九个 Agent 和三个程序步骤的完整运行审计 |
+| `tb_image_shot` | Scene/Shot、来源片段、视觉目标、对白/字幕、最终提示词、引用 key 和状态 |
+| `tb_image_asset` | 参考图、底图、最终图的受控文件元数据与 SHA-256 |
+
+## HTTP 入口
+
+| 方法与路径 | 说明 |
+| --- | --- |
+| `GET /api/image-agents/flow` | 查询固定流程、节点、当前图片配置和画风 |
+| `PUT /api/image-agents/{agentKey}` | 携带 `updatedAt` 保存 Agent 配置并追加版本 |
+| `GET /api/image-agents/{agentKey}/versions` | 倒序查询 Prompt 版本 |
+| `POST /api/image-agents/{agentKey}/versions/{version}/restore` | 恢复历史版本为新的最新版本 |
+| `PUT /api/image-agents/flow/config` | 携带 `updatedAt` 保存唯一双能力图片 Provider |
+| `GET/POST /api/image-style-presets` | 查询或创建画风预设 |
+| `PUT /api/image-style-presets/{presetId}` | 携带 `updatedAt` 更新或停用画风 |
+| `GET /api/image-runs/source-stories` | 查询可用的已有最终故事 |
+| `POST /api/image-runs` | 保存快照并创建异步图片批次 |
+| `GET /api/image-runs` | 查询最近图片批次 |
+| `GET /api/image-runs/{runId}` | 查询快照、步骤、分镜和资产元数据 |
+| `GET /api/image-assets/{assetId}/content` | 按资产 ID 返回校验后的图片内容 |
+
+## 本地与 Context Router 运行
+
+本地开发入口 `./scripts/start-dev.sh` 会创建并注入 `IMAGE_STORY_STORAGE_ROOT`，默认位于 `.runtime/image-story`。Context Router 的 Fast/Full 后端部署共用 `english-material-image-story` 命名卷，并固定挂载到 `/app/runtime/image-story`；初始化容器先按后端 UID 设置所有者与 `0750` 权限。
+
+工作空间启动和代码更新仍遵循根 `AGENTS.md`：先准备 Context Router `task_id`，启动使用 `start_workspace`，变更使用一次 `apply_workspace_changes` 并轮询 Workspace operation 到终态。`.env.local`、Provider API Key 和其他本机凭据不得提交、写入文档、发送给 Context Router 或出现在日志中。
