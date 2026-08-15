@@ -498,6 +498,12 @@ class ImageRunExecutionServiceTest {
     void rejectsTextThatCannotBeComposedBeforeAnyImageOrProgramStep() {
         String oversizedDialogue = "Amy explains every tiny detail without stopping. ".repeat(200);
         assertPreflightFailsBeforeImages(preflightJson().replace("Hello!", oversizedDialogue));
+
+        ImageRunStep preflight = savedSteps.stream()
+                .filter(step -> "image-prompt-preflight".equals(step.getNodeKey()))
+                .findFirst().orElseThrow();
+        assertEquals("FAILED", preflight.getStatus());
+        assertTrue(preflight.getErrorMessage().contains("文字内容无法排入安全区域"));
     }
 
     @Test

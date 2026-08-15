@@ -313,10 +313,10 @@ public class ImageRunExecutionService {
                     raw -> {
                         PreflightPlan value = parser.preflight(raw);
                         parser.validatePreflight(value, finalStoryboard, analysis, continuity);
+                        validateImageLayouts(value);
                         return value;
                     });
             PreflightPlan finalPlan = preflight.parsed(PreflightPlan.class);
-            validateImageLayouts(finalPlan);
             run.setExpectedImageCount(finalPlan.referenceAssets().size() + finalPlan.shots().size());
             run.setTotalTextTokens(state.totalTokens());
             run = runRepository.saveAndFlush(run);
