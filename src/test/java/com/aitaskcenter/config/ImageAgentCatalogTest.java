@@ -130,7 +130,7 @@ class ImageAgentCatalogTest {
                                 "imageSettings")),
                 Map.entry(
                         "image-reference-planner",
-                        List.of("continuityBible", "styleBible", "finalStoryboard", "imageSettings")),
+                        List.of("storyAnalysis", "continuityBible", "styleBible", "finalStoryboard", "imageSettings")),
                 Map.entry(
                         "image-shot-prompt-engineer",
                         List.of(
@@ -299,6 +299,9 @@ class ImageAgentCatalogTest {
                 assertTrue(
                         prompt.contains("字段 shots.textAnchor 必须为 null 或 object，object 必须且只能包含 x、y；x、y 为 0 到 1 的归一化数字。"),
                         agent.key());
+            }
+            if ("REFERENCE_PLAN".equals(contract.markerKey()) || "PREFLIGHT_PLAN".equals(contract.markerKey())) {
+                assertTrue(prompt.contains("字段 referenceAssets.type 必须是 CHARACTER 或 LOCATION。"), agent.key());
             }
             assertFalse(contract.arrayItemContracts().isEmpty(), agent.key());
             for (Map.Entry<String, ArrayItemContract> arrayContract : contract.arrayItemContracts().entrySet()) {

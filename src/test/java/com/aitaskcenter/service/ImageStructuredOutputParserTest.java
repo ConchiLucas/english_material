@@ -2,7 +2,9 @@ package com.aitaskcenter.service;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.aitaskcenter.service.ImageStructuredOutputParser.ContinuityBible;
 import com.aitaskcenter.service.ImageStructuredOutputParser.FinalStoryboard;
@@ -65,10 +67,10 @@ class ImageStructuredOutputParserTest {
 
     @Test
     void rejectsDuplicateUnknownMissingAndWrongTypedFields() {
-        assertMessage("STORY_ANALYSIS JSON 存在重复字段: scenes", () -> parser.storyAnalysis(wrap(
+        assertMessage("STORY_ANALYSIS JSON 存在重复字段", () -> parser.storyAnalysis(wrap(
                 "STORY_ANALYSIS",
                 "{\"scenes\":[],\"scenes\":[],\"beats\":[],\"characters\":[],\"locations\":[],\"props\":[],\"dialogues\":[],\"narration\":[]}")));
-        assertMessage("STORY_ANALYSIS JSON 包含未知字段: extra", () -> parser.storyAnalysis(wrap(
+        assertMessage("STORY_ANALYSIS JSON 包含未知字段", () -> parser.storyAnalysis(wrap(
                 "STORY_ANALYSIS",
                 "{\"scenes\":[],\"beats\":[],\"characters\":[],\"locations\":[],\"props\":[],\"dialogues\":[],\"narration\":[],\"extra\":true}")));
         assertMessage("STORY_ANALYSIS JSON 缺少字段: narration", () -> parser.storyAnalysis(wrap(
@@ -77,20 +79,20 @@ class ImageStructuredOutputParserTest {
         assertMessage("STORY_ANALYSIS.scenes 必须是数组", () -> parser.storyAnalysis(wrap(
                 "STORY_ANALYSIS",
                 "{\"scenes\":{},\"beats\":[],\"characters\":[],\"locations\":[],\"props\":[],\"dialogues\":[],\"narration\":[]}")));
-        assertMessage("STORY_ANALYSIS.scenes item 包含未知字段: extra", () -> parser.storyAnalysis(wrap(
+        assertMessage("STORY_ANALYSIS.scenes item 包含未知字段", () -> parser.storyAnalysis(wrap(
                 "STORY_ANALYSIS", storyAnalysisJson().replace("\"summary\":\"Amy visits the park\"", "\"summary\":\"Amy visits the park\",\"extra\":true"))));
     }
 
     @Test
     void validatesUniqueKeysAndContinuityReferences() {
-        assertMessage("StoryAnalysis characterKey 重复: amy", () -> parser.storyAnalysis(wrap("STORY_ANALYSIS", storyAnalysisJson()
+        assertMessage("StoryAnalysis characterKey 存在重复值", () -> parser.storyAnalysis(wrap("STORY_ANALYSIS", storyAnalysisJson()
                 .replace(
                         "}],\"locations\":",
                         "},{\"characterKey\":\"amy\",\"name\":\"Amy Two\",\"description\":\"duplicate\"}],\"locations\":"))));
 
         ContinuityBible unknownCharacter = parser.continuityBible(wrap("CONTINUITY_BIBLE", continuityBibleJson()
                 .replace("\"characterKey\":\"amy\"", "\"characterKey\":\"ben\"")));
-        assertMessage("ContinuityBible characterKey 未在 StoryAnalysis 中声明: ben", () ->
+        assertMessage("ContinuityBible characterKey 必须引用 StoryAnalysis", () ->
                 parser.validateContinuityReferences(storyAnalysis(), unknownCharacter));
     }
 
@@ -98,20 +100,20 @@ class ImageStructuredOutputParserTest {
     void validatesProposalCharactersAndLocationsAgainstAnalysis() {
         StoryboardProposal proposal = parser.storyboardProposal(wrap("STORYBOARD_PROPOSAL", storyboardProposalJson()
                 .replace("[\"amy\"]", "[\"ben\"]")));
-        assertMessage("StoryboardProposal characterKey 未在 StoryAnalysis 中声明: ben", () ->
+        assertMessage("StoryboardProposal characterKey 必须引用 StoryAnalysis", () ->
                 parser.validateProposalReferences(storyAnalysis(), proposal));
 
         StoryboardProposal unknownLocation = parser.storyboardProposal(wrap("STORYBOARD_PROPOSAL", storyboardProposalJson()
                 .replace("\"park\"", "\"beach\"")));
-        assertMessage("StoryboardProposal locationKey 未在 StoryAnalysis 中声明: beach", () ->
+        assertMessage("StoryboardProposal locationKey 必须引用 StoryAnalysis", () ->
                 parser.validateProposalReferences(storyAnalysis(), unknownLocation));
     }
 
     @Test
     void validatesFinalStoryboardLimitsCoverageOrderDialogueAndAnchor() {
-        assertMessage("FinalStoryboard sceneIndex 超出 StoryAnalysis 场景范围: 6", () -> parser.validateCoverage(
+        assertMessage("FinalStoryboard sceneIndex 必须引用 StoryAnalysis Scene", () -> parser.validateCoverage(
                 storyAnalysis(), parser.finalStoryboard(wrap("FINAL_STORYBOARD", finalStoryboardJson().replace("\"sceneIndex\":1", "\"sceneIndex\":6")))));
-        assertMessage("FinalStoryboard 未覆盖 Scene: 1", () -> parser.validateCoverage(
+        assertMessage("FinalStoryboard 必须覆盖 StoryAnalysis 全部 Scene", () -> parser.validateCoverage(
                 storyAnalysis(), parser.finalStoryboard(wrap("FINAL_STORYBOARD", "{\"shots\":[]}"))));
         assertMessage("FinalStoryboard shotIndex 必须从 1 连续递增", () -> parser.finalStoryboard(wrap(
                 "FINAL_STORYBOARD", finalStoryboardJson().replace("\"shotIndex\":1", "\"shotIndex\":2"))));
@@ -147,7 +149,7 @@ class ImageStructuredOutputParserTest {
         assertDoesNotThrow(() -> parser.validateShotPrompts(finalStoryboard(), shotPromptPlan()));
         ShotPromptPlan unknownReference = parser.shotPromptPlan(wrap("SHOT_PROMPT_PLAN", shotPromptPlanJson()
                 .replace("asset-amy", "asset-missing")));
-        assertMessage("ShotPromptPlan 引用了未知 referenceAssetKey: asset-missing", () ->
+        assertMessage("ShotPromptPlan referenceAssetKeys 必须引用 ReferencePlan", () ->
                 parser.validateReferences(unknownReference, referencePlan()));
         assertMessage("图片提示词不得要求模型绘制文字", () -> parser.shotPromptPlan(wrap(
                 "SHOT_PROMPT_PLAN", shotPromptPlanJson().replace("Amy walks", "render text on a sign"))));
@@ -161,7 +163,7 @@ class ImageStructuredOutputParserTest {
                 "STORYBOARD_PROPOSAL", storyboardProposalJson().replace("Amy walks before lunch", "Amy walks before and after lunch"))));
         assertMessage("PreflightPlan shotIndex 必须从 1 连续递增", () -> parser.preflight(wrap(
                 "PREFLIGHT_PLAN", preflightJson().replace("\"shots\":[", "\"shots\":[" + preflightShot("shot-2", 1, 2) + ","))));
-        assertMessage("PreflightPlan 分镜引用了未知参考资产: asset-missing", () -> parser.preflight(wrap(
+        assertMessage("PreflightPlan 分镜引用了未知参考资产", () -> parser.preflight(wrap(
                 "PREFLIGHT_PLAN", preflightJson().replace(
                         "\"referenceAssetKeys\":[\"asset-amy\"]", "\"referenceAssetKeys\":[\"asset-missing\"]"))));
     }
@@ -200,12 +202,109 @@ class ImageStructuredOutputParserTest {
                 "STORYBOARD_PROPOSAL", storyboardProposalJson().replace("Amy walks before lunch", "he is sitting and standing"))));
         StoryboardProposal proposal = parser.storyboardProposal(wrap("STORYBOARD_PROPOSAL", storyboardProposalJson()
                 .replace("\"beat-1\"", "\"beat-missing\"")));
-        assertMessage("StoryboardProposal 分镜引用了未知故事节拍: beat-missing", () ->
+        assertMessage("StoryboardProposal 分镜引用了未知故事节拍", () ->
                 parser.validateProposalReferences(storyAnalysis(), proposal));
+    }
+
+    @Test
+    void boundsRawJsonStructureStringsAndArraysBeforeMaterializingRecords() {
+        assertMessage("图片规划原始输出超过最大长度", () -> parser.storyAnalysis("x".repeat(512_001)));
+        String deeplyNested = "{\"x\":".repeat(33) + "0" + "}".repeat(33);
+        assertMessage("STORY_ANALYSIS JSON 格式无效", () -> parser.storyAnalysis(wrap("STORY_ANALYSIS", deeplyNested)));
+        assertMessage("STYLE_BIBLE JSON 格式无效", () -> parser.styleBible(wrap(
+                "STYLE_BIBLE", styleBibleJson().replace("warm watercolor", "x".repeat(20_001)))));
+        assertMessage("STYLE_BIBLE.negativeRules 数量不能超过 200", () -> parser.styleBible(wrap(
+                "STYLE_BIBLE", styleBibleJson().replace(
+                        "[\"no text\"]", "[" + String.join(",", java.util.Collections.nCopies(201, "\"no text\"")) + "]"))));
+    }
+
+    @Test
+    void validatesAnalysisSceneReferencesContinuousBeatOrderAndProposalSceneBeatConsistency() {
+        assertMessage("StoryAnalysis scenes 不能为空", () -> parser.storyAnalysis(wrap(
+                "STORY_ANALYSIS", storyAnalysisJson().replace("[{\"sceneIndex\":1,\"title\":\"Park visit\",\"sourceExcerpt\":\"Amy walks\",\"summary\":\"Amy visits the park\"}]", "[]"))));
+        assertMessage("StoryAnalysis beat sceneIndex 必须引用已有 Scene", () -> parser.storyAnalysis(wrap(
+                "STORY_ANALYSIS", storyAnalysisJson().replace("\"sceneIndex\":1,\"order\":1", "\"sceneIndex\":2,\"order\":1"))));
+        assertMessage("StoryAnalysis dialogue sceneIndex 必须引用已有 Scene", () -> parser.storyAnalysis(wrap(
+                "STORY_ANALYSIS", storyAnalysisJson().replace(
+                        "\"dialogues\":[{\"sceneIndex\":1,\"speaker\":\"amy\"",
+                        "\"dialogues\":[{\"sceneIndex\":2,\"speaker\":\"amy\""))));
+        assertMessage("StoryAnalysis narration sceneIndex 必须引用已有 Scene", () -> parser.storyAnalysis(wrap(
+                "STORY_ANALYSIS", storyAnalysisJson().replace("\"narration\":[{\"sceneIndex\":1", "\"narration\":[{\"sceneIndex\":2"))));
+        assertMessage("StoryAnalysis beat order 必须从 1 连续递增", () -> parser.storyAnalysis(wrap(
+                "STORY_ANALYSIS", storyAnalysisJson().replace("\"order\":1", "\"order\":2"))));
+        assertMessage("StoryAnalysis dialogue speaker 必须引用已有 characterKey", () -> parser.storyAnalysis(wrap(
+                "STORY_ANALYSIS", storyAnalysisJson().replace("\"speaker\":\"amy\"", "\"speaker\":\"ben\""))));
+
+        StoryboardProposal unknownScene = parser.storyboardProposal(wrap("STORYBOARD_PROPOSAL", storyboardProposalJson()
+                .replace("\"sceneIndex\":1", "\"sceneIndex\":2")));
+        assertMessage("StoryboardProposal sceneIndex 必须引用 StoryAnalysis Scene", () ->
+                parser.validateProposalReferences(storyAnalysis(), unknownScene));
+        assertMessage("StoryboardProposal beat 必须属于该 Scene", () -> parser.validateProposalReferences(
+                twoSceneAnalysis(), parser.storyboardProposal(wrap("STORYBOARD_PROPOSAL", storyboardProposalJson().replace("\"beat-1\"", "\"beat-2\"")))));
+    }
+
+    @Test
+    void validatesClosedReferenceTypesTargetsAndCompletePreflightCrossPlan() {
+        assertEquals("CHARACTER", parser.referencePlan(wrap("REFERENCE_PLAN", referencePlanJson())).referenceAssets().get(0).type());
+        assertEquals("LOCATION", parser.referencePlan(wrap("REFERENCE_PLAN", referencePlanJson()
+                .replace("\"type\":\"CHARACTER\"", "\"type\":\"location\""))).referenceAssets().get(0).type());
+        assertMessage("ReferencePlan type 必须为 CHARACTER 或 LOCATION", () -> parser.referencePlan(wrap(
+                "REFERENCE_PLAN", referencePlanJson().replace("\"type\":\"CHARACTER\"", "\"type\":\"PROP\""))));
+        assertMessage("ReferencePlan CHARACTER target 必须引用角色", () -> parser.validateReferenceTargets(
+                parser.referencePlan(wrap("REFERENCE_PLAN", referencePlanJson().replace("\"target\":\"amy\"", "\"target\":\"ben\""))),
+                storyAnalysis(), continuityBible()));
+        assertDoesNotThrow(() -> parser.validatePreflight(preflight(), finalStoryboard(), storyAnalysis(), continuityBible()));
+        assertMessage("PreflightPlan 分镜必须与 FinalStoryboard 完全一致", () -> parser.validatePreflight(
+                parser.preflight(wrap("PREFLIGHT_PLAN", preflightJson().replace("\"shotKey\":\"shot-1\"", "\"shotKey\":\"shot-x\""))),
+                finalStoryboard(), storyAnalysis(), continuityBible()));
+        assertMessage("PreflightPlan dialogue speaker 必须引用 StoryAnalysis", () -> parser.validatePreflight(
+                parser.preflight(wrap("PREFLIGHT_PLAN", preflightJson().replace("\"speaker\":\"amy\"", "\"speaker\":\"ben\""))),
+                finalStoryboard(), storyAnalysis(), continuityBible()));
+    }
+
+    @Test
+    void detectsOnlyBoundedExplicitTextInstructionsAndTokenizedActionConflicts() {
+        assertMessage("图片提示词不得要求模型绘制文字", () -> parser.shotPromptPlan(wrap(
+                "SHOT_PROMPT_PLAN", shotPromptPlanJson().replace("Amy walks, no text", "display a placard that says HELLO"))));
+        assertMessage("图片提示词不得要求模型绘制文字", () -> parser.shotPromptPlan(wrap(
+                "SHOT_PROMPT_PLAN", shotPromptPlanJson().replace("Amy walks, no text", "put word HELLO on chalkboard"))));
+        assertDoesNotThrow(() -> parser.shotPromptPlan(wrap("SHOT_PROMPT_PLAN", shotPromptPlanJson()
+                .replace("Amy walks, no text", "do not display text"))));
+        assertDoesNotThrow(() -> parser.shotPromptPlan(wrap("SHOT_PROMPT_PLAN", shotPromptPlanJson()
+                .replace("Amy walks, no text", "no text, letters, logos, watermark"))));
+        assertMessage("图片提示词不得要求模型绘制文字", () -> parser.shotPromptPlan(wrap(
+                "SHOT_PROMPT_PLAN", shotPromptPlanJson().replace("Amy walks, no text", "no text, show the word CAT"))));
+        assertDoesNotThrow(() -> parser.storyboardProposal(wrap("STORYBOARD_PROPOSAL", storyboardProposalJson()
+                .replace("Amy walks before lunch", "walking " + "slowly ".repeat(2_000)))));
+    }
+
+    @Test
+    void normalizesCrossReferencesRejectsNonFiniteAnchorsAndNeverLeaksModelValuesInErrors() {
+        FinalStoryboard storyboard = parser.finalStoryboard(wrap("FINAL_STORYBOARD", finalStoryboardJson()
+                .replace("\"shotKey\":\"shot-1\"", "\"shotKey\":\" shot-1 \"")));
+        ShotPromptPlan prompts = parser.shotPromptPlan(wrap("SHOT_PROMPT_PLAN", shotPromptPlanJson()
+                .replace("\"shotKey\":\"shot-1\"", "\"shotKey\":\" shot-1 \"")));
+        assertEquals("shot-1", storyboard.shots().get(0).shotKey());
+        assertDoesNotThrow(() -> parser.validateShotPrompts(storyboard, prompts));
+        assertMessage("textAnchor.x 必须是有限数字", () -> parser.finalStoryboard(wrap(
+                "FINAL_STORYBOARD", finalStoryboardJson().replace("\"x\":0.2", "\"x\":1e999"))));
+        assertSafeMessage(() -> parser.storyAnalysis(wrap("STORY_ANALYSIS", storyAnalysisJson()
+                .replace("\"narration\":", "\"x\\r\\nInjected\":true,\"narration\":"))), "Injected");
     }
 
     private StoryAnalysis storyAnalysis() {
         return parser.storyAnalysis(wrap("STORY_ANALYSIS", storyAnalysisJson()));
+    }
+
+    private StoryAnalysis twoSceneAnalysis() {
+        String json = storyAnalysisJson()
+                .replace(
+                        "}],\"beats\":",
+                        "},{\"sceneIndex\":2,\"title\":\"Home\",\"sourceExcerpt\":\"Amy rests\",\"summary\":\"Amy rests\"}],\"beats\":")
+                .replace(
+                        "\"temporalMoment\":\"before lunch\"}],\"characters\":",
+                        "\"temporalMoment\":\"before lunch\"},{\"beatKey\":\"beat-2\",\"sceneIndex\":2,\"order\":1,\"action\":\"Amy rests\",\"temporalMoment\":\"after lunch\"}],\"characters\":");
+        return parser.storyAnalysis(wrap("STORY_ANALYSIS", json));
     }
 
     private FinalStoryboard finalStoryboard() {
@@ -216,13 +315,27 @@ class ImageStructuredOutputParserTest {
         return parser.referencePlan(wrap("REFERENCE_PLAN", referencePlanJson()));
     }
 
+    private ContinuityBible continuityBible() {
+        return parser.continuityBible(wrap("CONTINUITY_BIBLE", continuityBibleJson()));
+    }
+
     private ShotPromptPlan shotPromptPlan() {
         return parser.shotPromptPlan(wrap("SHOT_PROMPT_PLAN", shotPromptPlanJson()));
+    }
+
+    private PreflightPlan preflight() {
+        return parser.preflight(wrap("PREFLIGHT_PLAN", preflightJson()));
     }
 
     private static void assertMessage(String expected, ThrowingRunnable action) {
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, action::run);
         assertEquals(expected, exception.getMessage());
+    }
+
+    private static void assertSafeMessage(ThrowingRunnable action, String forbidden) {
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, action::run);
+        assertFalse(exception.getMessage().contains(forbidden));
+        assertTrue(exception.getMessage().length() < 200);
     }
 
     private static String wrap(String schemaKey, String json) {

@@ -2,6 +2,7 @@ package com.aitaskcenter.service;
 
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.StreamReadConstraints;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -10,6 +11,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -20,17 +22,21 @@ import java.util.regex.Pattern;
 public final class ImageStructuredOutputParser {
     private static final int MAX_SHOTS_PER_SCENE = 5;
     private static final int MAX_SHOTS_PER_STORY = 20;
+    private static final int MAX_RAW_CHARS = 512_000;
+    private static final int MAX_STRING_CHARS = 20_000;
+    private static final int MAX_GENERAL_ARRAY_ITEMS = 200;
     private static final int MAX_CAPTION_LENGTH = 180;
     private static final Pattern DUPLICATE_FIELD = Pattern.compile("Duplicate field '([^']+)'");
     private static final Pattern NO_RENDERED_TEXT = Pattern.compile(
-            "(?i)\\b(?:no|without|avoid|exclude)\\s+(?:(?:visible|written|any)\\s+)?(?:text|words?|letters?|captions?|subtitles?|signs?|logos?|watermarks?)\\b");
+            "(?i)\\b(?:(?:no|without|avoid|exclude)\\s+(?:(?:visible|written|any)\\s+)?(?:text|words?|letters?|captions?|subtitles?|signs?|logos?|watermarks?)|do\\s+not\\s+(?:render|add|show|display|draw|include)\\s+(?:text|words?|letters?|captions?|subtitles?|signs?|logos?|watermarks?))\\b");
     private static final Pattern LITERAL_TEXT_INSTRUCTION = Pattern.compile(
             "(?i)\\b(?:write|spell|print|type|inscribe)\\b\\s+(?:(?:the\\s+)?(?:text|words?|letters?|caption|subtitle)|[\\\"'“][^\\\"'”]{1,80}[\\\"'”]|[A-Z][A-Z0-9]{1,})");
     private static final Pattern MEDIA_TEXT_INSTRUCTION = Pattern.compile(
             "(?i)\\b(?:render|add|show|display|draw|include)\\b(?:\\s+(?:a|an|the|some|visible|written|large|small|bold|colorful|word|words|text|letters|caption|subtitle|sign|logo|watermark|speech|bubble)){0,8}\\s+(?:text|words?|letters?|captions?|subtitles?|signs?|logos?|watermarks?|speech\\s+bubble)\\b");
-    private static final Pattern CONFLICTING_MOMENT = Pattern.compile(
-            "(?i)\\bbefore\\s+and\\s+after\\b|\\bat\\s+first\\b.*\\blater\\b|\\bthen\\b.*\\blater\\b"
-                    + "|\\b(?:asleep.*\\band\\b.*running|running.*\\band\\b.*asleep|open.*\\band\\b.*closed|closed.*\\band\\b.*open|sitting.*\\band\\b.*standing|standing.*\\band\\b.*sitting)\\b");
+    private static final Pattern DISPLAYED_MEDIUM_TEXT = Pattern.compile(
+            "(?i)\\b(?:display|put)\\b\\s+(?:a\\s+|the\\s+)?(?:placard|sign|chalkboard)\\s+(?:that\\s+says|with)\\s+(?:[\\\"'“][^\\\"'”]{1,80}[\\\"'”]|[A-Z][A-Z0-9]{1,})\\b");
+    private static final Pattern WORD_ON_MEDIUM = Pattern.compile(
+            "(?i)\\bput\\b\\s+(?:the\\s+)?word\\s+(?:[\\\"'“][^\\\"'”]{1,80}[\\\"'”]|[A-Z][A-Z0-9]{1,})\\s+on\\s+(?:a\\s+|the\\s+)?(?:placard|sign|chalkboard)\\b");
 
     private final ObjectMapper mapper;
 
@@ -39,7 +45,13 @@ public final class ImageStructuredOutputParser {
     }
 
     public ImageStructuredOutputParser(ObjectMapper objectMapper) {
-        mapper = Objects.requireNonNull(objectMapper, "objectMapper").copy()
+        mapper = Objects.requireNonNull(objectMapper, "objectMapper").copy();
+        mapper.getFactory().setStreamReadConstraints(StreamReadConstraints.builder()
+                .maxNestingDepth(32)
+                .maxStringLength(MAX_STRING_CHARS)
+                .maxNumberLength(32)
+                .build());
+        mapper
                 .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
                 .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
     }
@@ -47,27 +59,27 @@ public final class ImageStructuredOutputParser {
     public StoryAnalysis storyAnalysis(String raw) {
         JsonNode root = root(raw, "STORY_ANALYSIS", fields(
                 "scenes", "beats", "characters", "locations", "props", "dialogues", "narration"));
-        List<Scene> scenes = objects(root, "scenes", "STORY_ANALYSIS", "sceneIndex", "title", "sourceExcerpt", "summary").stream()
+        List<Scene> scenes = objects(root, "scenes", "STORY_ANALYSIS", 20, "sceneIndex", "title", "sourceExcerpt", "summary").stream()
                 .map(node -> new Scene(integer(node, "sceneIndex", "STORY_ANALYSIS.scenes"), text(node, "title", "STORY_ANALYSIS.scenes"),
                         text(node, "sourceExcerpt", "STORY_ANALYSIS.scenes"), text(node, "summary", "STORY_ANALYSIS.scenes")))
                 .toList();
-        List<Beat> beats = objects(root, "beats", "STORY_ANALYSIS", "beatKey", "sceneIndex", "order", "action", "temporalMoment").stream()
+        List<Beat> beats = objects(root, "beats", "STORY_ANALYSIS", 100, "beatKey", "sceneIndex", "order", "action", "temporalMoment").stream()
                 .map(node -> new Beat(text(node, "beatKey", "STORY_ANALYSIS.beats"), integer(node, "sceneIndex", "STORY_ANALYSIS.beats"),
                         integer(node, "order", "STORY_ANALYSIS.beats"), text(node, "action", "STORY_ANALYSIS.beats"), text(node, "temporalMoment", "STORY_ANALYSIS.beats")))
                 .toList();
-        List<Character> characters = objects(root, "characters", "STORY_ANALYSIS", "characterKey", "name", "description").stream()
+        List<Character> characters = objects(root, "characters", "STORY_ANALYSIS", 100, "characterKey", "name", "description").stream()
                 .map(node -> new Character(text(node, "characterKey", "STORY_ANALYSIS.characters"), text(node, "name", "STORY_ANALYSIS.characters"), text(node, "description", "STORY_ANALYSIS.characters")))
                 .toList();
-        List<Location> locations = objects(root, "locations", "STORY_ANALYSIS", "locationKey", "name", "description").stream()
+        List<Location> locations = objects(root, "locations", "STORY_ANALYSIS", 100, "locationKey", "name", "description").stream()
                 .map(node -> new Location(text(node, "locationKey", "STORY_ANALYSIS.locations"), text(node, "name", "STORY_ANALYSIS.locations"), text(node, "description", "STORY_ANALYSIS.locations")))
                 .toList();
-        List<Prop> props = objects(root, "props", "STORY_ANALYSIS", "propKey", "name", "description").stream()
+        List<Prop> props = objects(root, "props", "STORY_ANALYSIS", 100, "propKey", "name", "description").stream()
                 .map(node -> new Prop(text(node, "propKey", "STORY_ANALYSIS.props"), text(node, "name", "STORY_ANALYSIS.props"), text(node, "description", "STORY_ANALYSIS.props")))
                 .toList();
-        List<Dialogue> dialogues = objects(root, "dialogues", "STORY_ANALYSIS", "sceneIndex", "speaker", "text").stream()
+        List<Dialogue> dialogues = objects(root, "dialogues", "STORY_ANALYSIS", 200, "sceneIndex", "speaker", "text").stream()
                 .map(node -> new Dialogue(integer(node, "sceneIndex", "STORY_ANALYSIS.dialogues"), text(node, "speaker", "STORY_ANALYSIS.dialogues"), text(node, "text", "STORY_ANALYSIS.dialogues")))
                 .toList();
-        List<Narration> narration = objects(root, "narration", "STORY_ANALYSIS", "sceneIndex", "text").stream()
+        List<Narration> narration = objects(root, "narration", "STORY_ANALYSIS", 200, "sceneIndex", "text").stream()
                 .map(node -> new Narration(integer(node, "sceneIndex", "STORY_ANALYSIS.narration"), text(node, "text", "STORY_ANALYSIS.narration")))
                 .toList();
         StoryAnalysis analysis = new StoryAnalysis(scenes, beats, characters, locations, props, dialogues, narration);
@@ -77,14 +89,14 @@ public final class ImageStructuredOutputParser {
 
     public ContinuityBible continuityBible(String raw) {
         JsonNode root = root(raw, "CONTINUITY_BIBLE", fields("characters", "props", "invariants", "forbiddenChanges"));
-        List<ContinuityCharacter> characters = objects(root, "characters", "CONTINUITY_BIBLE", "characterKey", "name", "visualDescription", "clothing", "colors", "proportions", "expressionRules").stream()
+        List<ContinuityCharacter> characters = objects(root, "characters", "CONTINUITY_BIBLE", 100, "characterKey", "name", "visualDescription", "clothing", "colors", "proportions", "expressionRules").stream()
                 .map(node -> new ContinuityCharacter(text(node, "characterKey", "CONTINUITY_BIBLE.characters"), text(node, "name", "CONTINUITY_BIBLE.characters"),
                         text(node, "visualDescription", "CONTINUITY_BIBLE.characters"), text(node, "clothing", "CONTINUITY_BIBLE.characters"), text(node, "colors", "CONTINUITY_BIBLE.characters"), text(node, "proportions", "CONTINUITY_BIBLE.characters"), text(node, "expressionRules", "CONTINUITY_BIBLE.characters")))
                 .toList();
-        List<ContinuityProp> props = objects(root, "props", "CONTINUITY_BIBLE", "propKey", "visualDescription", "colors", "invariants").stream()
+        List<ContinuityProp> props = objects(root, "props", "CONTINUITY_BIBLE", 100, "propKey", "visualDescription", "colors", "invariants").stream()
                 .map(node -> new ContinuityProp(text(node, "propKey", "CONTINUITY_BIBLE.props"), text(node, "visualDescription", "CONTINUITY_BIBLE.props"), text(node, "colors", "CONTINUITY_BIBLE.props"), text(node, "invariants", "CONTINUITY_BIBLE.props")))
                 .toList();
-        ContinuityBible bible = new ContinuityBible(characters, props, strings(root, "invariants", "CONTINUITY_BIBLE"), strings(root, "forbiddenChanges", "CONTINUITY_BIBLE"));
+        ContinuityBible bible = new ContinuityBible(characters, props, strings(root, "invariants", "CONTINUITY_BIBLE", MAX_GENERAL_ARRAY_ITEMS), strings(root, "forbiddenChanges", "CONTINUITY_BIBLE", MAX_GENERAL_ARRAY_ITEMS));
         uniqueKeys("ContinuityBible characterKey", bible.characters(), ContinuityCharacter::characterKey);
         uniqueKeys("ContinuityBible propKey", bible.props(), ContinuityProp::propKey);
         return bible;
@@ -93,12 +105,12 @@ public final class ImageStructuredOutputParser {
     public StyleBible styleBible(String raw) {
         JsonNode root = root(raw, "STYLE_BIBLE", fields("palette", "renderingStyle", "lighting", "cameraRules", "environmentRules", "negativeRules"));
         return new StyleBible(text(root, "palette", "STYLE_BIBLE"), text(root, "renderingStyle", "STYLE_BIBLE"), text(root, "lighting", "STYLE_BIBLE"),
-                text(root, "cameraRules", "STYLE_BIBLE"), text(root, "environmentRules", "STYLE_BIBLE"), strings(root, "negativeRules", "STYLE_BIBLE"));
+                text(root, "cameraRules", "STYLE_BIBLE"), text(root, "environmentRules", "STYLE_BIBLE"), strings(root, "negativeRules", "STYLE_BIBLE", MAX_GENERAL_ARRAY_ITEMS));
     }
 
     public StoryboardProposal storyboardProposal(String raw) {
         JsonNode root = root(raw, "STORYBOARD_PROPOSAL", fields("shots"));
-        List<ProposalShot> shots = objects(root, "shots", "STORYBOARD_PROPOSAL", "sceneIndex", "beat", "action", "characters", "location", "dialogue", "narration", "splitReason").stream()
+        List<ProposalShot> shots = objects(root, "shots", "STORYBOARD_PROPOSAL", 100, "sceneIndex", "beat", "action", "characters", "location", "dialogue", "narration", "splitReason").stream()
                 .map(node -> new ProposalShot(integer(node, "sceneIndex", "STORYBOARD_PROPOSAL.shots"), text(node, "beat", "STORYBOARD_PROPOSAL.shots"),
                         text(node, "action", "STORYBOARD_PROPOSAL.shots"), stringArrayField(node, "characters", "STORYBOARD_PROPOSAL.shots"), text(node, "location", "STORYBOARD_PROPOSAL.shots"),
                         text(node, "dialogue", "STORYBOARD_PROPOSAL.shots"), text(node, "narration", "STORYBOARD_PROPOSAL.shots"), text(node, "splitReason", "STORYBOARD_PROPOSAL.shots")))
@@ -115,7 +127,7 @@ public final class ImageStructuredOutputParser {
 
     public FinalStoryboard finalStoryboard(String raw) {
         JsonNode root = root(raw, "FINAL_STORYBOARD", fields("shots"));
-        List<FinalShot> shots = objects(root, "shots", "FINAL_STORYBOARD", "shotKey", "sceneIndex", "shotIndex", "sourceExcerpt", "visualGoal", "dialogue", "narration", "speaker", "textAnchor").stream()
+        List<FinalShot> shots = objects(root, "shots", "FINAL_STORYBOARD", 20, "shotKey", "sceneIndex", "shotIndex", "sourceExcerpt", "visualGoal", "dialogue", "narration", "speaker", "textAnchor").stream()
                 .map(node -> new FinalShot(text(node, "shotKey", "FINAL_STORYBOARD.shots"), integer(node, "sceneIndex", "FINAL_STORYBOARD.shots"),
                         integer(node, "shotIndex", "FINAL_STORYBOARD.shots"), text(node, "sourceExcerpt", "FINAL_STORYBOARD.shots"), text(node, "visualGoal", "FINAL_STORYBOARD.shots"),
                         text(node, "dialogue", "FINAL_STORYBOARD.shots"), text(node, "narration", "FINAL_STORYBOARD.shots"), text(node, "speaker", "FINAL_STORYBOARD.shots"), anchor(node, "FINAL_STORYBOARD.shots")))
@@ -127,8 +139,8 @@ public final class ImageStructuredOutputParser {
 
     public ReferencePlan referencePlan(String raw) {
         JsonNode root = root(raw, "REFERENCE_PLAN", fields("referenceAssets"));
-        List<ReferenceAsset> assets = objects(root, "referenceAssets", "REFERENCE_PLAN", "assetKey", "type", "target", "prompt", "negativePrompt").stream()
-                .map(node -> new ReferenceAsset(text(node, "assetKey", "REFERENCE_PLAN.referenceAssets"), text(node, "type", "REFERENCE_PLAN.referenceAssets"), text(node, "target", "REFERENCE_PLAN.referenceAssets"), text(node, "prompt", "REFERENCE_PLAN.referenceAssets"), text(node, "negativePrompt", "REFERENCE_PLAN.referenceAssets")))
+        List<ReferenceAsset> assets = objects(root, "referenceAssets", "REFERENCE_PLAN", 100, "assetKey", "type", "target", "prompt", "negativePrompt").stream()
+                .map(node -> new ReferenceAsset(text(node, "assetKey", "REFERENCE_PLAN.referenceAssets"), referenceType(text(node, "type", "REFERENCE_PLAN.referenceAssets")), text(node, "target", "REFERENCE_PLAN.referenceAssets"), text(node, "prompt", "REFERENCE_PLAN.referenceAssets"), text(node, "negativePrompt", "REFERENCE_PLAN.referenceAssets")))
                 .toList();
         ReferencePlan plan = new ReferencePlan(assets);
         uniqueKeys("ReferencePlan assetKey", plan.referenceAssets(), ReferenceAsset::assetKey);
@@ -138,7 +150,7 @@ public final class ImageStructuredOutputParser {
 
     public ShotPromptPlan shotPromptPlan(String raw) {
         JsonNode root = root(raw, "SHOT_PROMPT_PLAN", fields("shots"));
-        List<ShotPrompt> shots = objects(root, "shots", "SHOT_PROMPT_PLAN", "shotKey", "prompt", "negativePrompt", "referenceAssetKeys").stream()
+        List<ShotPrompt> shots = objects(root, "shots", "SHOT_PROMPT_PLAN", 100, "shotKey", "prompt", "negativePrompt", "referenceAssetKeys").stream()
                 .map(node -> new ShotPrompt(text(node, "shotKey", "SHOT_PROMPT_PLAN.shots"), text(node, "prompt", "SHOT_PROMPT_PLAN.shots"),
                         text(node, "negativePrompt", "SHOT_PROMPT_PLAN.shots"), stringArrayField(node, "referenceAssetKeys", "SHOT_PROMPT_PLAN.shots")))
                 .toList();
@@ -153,10 +165,10 @@ public final class ImageStructuredOutputParser {
 
     public PreflightPlan preflight(String raw) {
         JsonNode root = root(raw, "PREFLIGHT_PLAN", fields("referenceAssets", "shots", "auditSummary"));
-        List<ReferenceAsset> assets = objects(root, "referenceAssets", "PREFLIGHT_PLAN", "assetKey", "type", "target", "prompt", "negativePrompt").stream()
-                .map(node -> new ReferenceAsset(text(node, "assetKey", "PREFLIGHT_PLAN.referenceAssets"), text(node, "type", "PREFLIGHT_PLAN.referenceAssets"), text(node, "target", "PREFLIGHT_PLAN.referenceAssets"), text(node, "prompt", "PREFLIGHT_PLAN.referenceAssets"), text(node, "negativePrompt", "PREFLIGHT_PLAN.referenceAssets")))
+        List<ReferenceAsset> assets = objects(root, "referenceAssets", "PREFLIGHT_PLAN", 100, "assetKey", "type", "target", "prompt", "negativePrompt").stream()
+                .map(node -> new ReferenceAsset(text(node, "assetKey", "PREFLIGHT_PLAN.referenceAssets"), referenceType(text(node, "type", "PREFLIGHT_PLAN.referenceAssets")), text(node, "target", "PREFLIGHT_PLAN.referenceAssets"), text(node, "prompt", "PREFLIGHT_PLAN.referenceAssets"), text(node, "negativePrompt", "PREFLIGHT_PLAN.referenceAssets")))
                 .toList();
-        List<PreflightShot> shots = objects(root, "shots", "PREFLIGHT_PLAN", "shotKey", "sceneIndex", "shotIndex", "prompt", "negativePrompt", "referenceAssetKeys", "speaker", "dialogue", "narration", "textAnchor").stream()
+        List<PreflightShot> shots = objects(root, "shots", "PREFLIGHT_PLAN", 20, "shotKey", "sceneIndex", "shotIndex", "prompt", "negativePrompt", "referenceAssetKeys", "speaker", "dialogue", "narration", "textAnchor").stream()
                 .map(node -> new PreflightShot(text(node, "shotKey", "PREFLIGHT_PLAN.shots"), integer(node, "sceneIndex", "PREFLIGHT_PLAN.shots"), integer(node, "shotIndex", "PREFLIGHT_PLAN.shots"),
                         text(node, "prompt", "PREFLIGHT_PLAN.shots"), text(node, "negativePrompt", "PREFLIGHT_PLAN.shots"), stringArrayField(node, "referenceAssetKeys", "PREFLIGHT_PLAN.shots"),
                         text(node, "speaker", "PREFLIGHT_PLAN.shots"), text(node, "dialogue", "PREFLIGHT_PLAN.shots"), text(node, "narration", "PREFLIGHT_PLAN.shots"), anchor(node, "PREFLIGHT_PLAN.shots")))
@@ -174,14 +186,14 @@ public final class ImageStructuredOutputParser {
         Set<Integer> covered = new HashSet<>();
         Set<String> characters = keys(analysis.characters(), Character::characterKey);
         for (FinalShot shot : storyboard.shots()) {
-            if (!scenes.contains(shot.sceneIndex())) throw error("FinalStoryboard sceneIndex 超出 StoryAnalysis 场景范围: " + shot.sceneIndex());
+            if (!scenes.contains(shot.sceneIndex())) throw error("FinalStoryboard sceneIndex 必须引用 StoryAnalysis Scene");
             covered.add(shot.sceneIndex());
             if (hasText(shot.dialogue()) && !characters.contains(trimmed(shot.speaker()))) {
-                throw error("FinalStoryboard speaker 未在 StoryAnalysis 中声明: " + shot.speaker());
+                throw error("FinalStoryboard speaker 必须引用 StoryAnalysis");
             }
         }
         for (Scene scene : analysis.scenes()) {
-            if (!covered.contains(scene.sceneIndex())) throw error("FinalStoryboard 未覆盖 Scene: " + scene.sceneIndex());
+            if (!covered.contains(scene.sceneIndex())) throw error("FinalStoryboard 必须覆盖 StoryAnalysis 全部 Scene");
         }
     }
 
@@ -189,25 +201,29 @@ public final class ImageStructuredOutputParser {
         Set<String> characters = keys(analysis.characters(), Character::characterKey);
         Set<String> props = keys(analysis.props(), Prop::propKey);
         for (ContinuityCharacter character : bible.characters()) {
-            if (!characters.contains(trimmed(character.characterKey()))) throw error("ContinuityBible characterKey 未在 StoryAnalysis 中声明: " + character.characterKey());
+            if (!characters.contains(trimmed(character.characterKey()))) throw error("ContinuityBible characterKey 必须引用 StoryAnalysis");
         }
         for (ContinuityProp prop : bible.props()) {
-            if (!props.contains(trimmed(prop.propKey()))) throw error("ContinuityBible propKey 未在 StoryAnalysis 中声明: " + prop.propKey());
+            if (!props.contains(trimmed(prop.propKey()))) throw error("ContinuityBible propKey 必须引用 StoryAnalysis");
         }
     }
 
     public void validateProposalReferences(StoryAnalysis analysis, StoryboardProposal proposal) {
-        Set<String> beats = keys(analysis.beats(), Beat::beatKey);
+        Set<Integer> sceneIndexes = new HashSet<>();
+        for (Scene scene : analysis.scenes()) sceneIndexes.add(scene.sceneIndex());
+        Map<String, Beat> beats = new HashMap<>();
+        for (Beat beat : analysis.beats()) beats.put(trimmed(beat.beatKey()), beat);
         Set<String> characters = keys(analysis.characters(), Character::characterKey);
         Set<String> locations = keys(analysis.locations(), Location::locationKey);
         for (ProposalShot shot : proposal.shots()) {
-            if (!beats.contains(trimmed(shot.beat()))) {
-                throw error("StoryboardProposal 分镜引用了未知故事节拍: " + shot.beat());
-            }
+            if (!sceneIndexes.contains(shot.sceneIndex())) throw error("StoryboardProposal sceneIndex 必须引用 StoryAnalysis Scene");
+            Beat beat = beats.get(trimmed(shot.beat()));
+            if (beat == null) throw error("StoryboardProposal 分镜引用了未知故事节拍");
+            if (beat.sceneIndex() != shot.sceneIndex()) throw error("StoryboardProposal beat 必须属于该 Scene");
             for (String character : shot.characters()) {
-                if (!characters.contains(trimmed(character))) throw error("StoryboardProposal characterKey 未在 StoryAnalysis 中声明: " + character);
+                if (!characters.contains(trimmed(character))) throw error("StoryboardProposal characterKey 必须引用 StoryAnalysis");
             }
-            if (!locations.contains(trimmed(shot.location()))) throw error("StoryboardProposal locationKey 未在 StoryAnalysis 中声明: " + shot.location());
+            if (!locations.contains(trimmed(shot.location()))) throw error("StoryboardProposal locationKey 必须引用 StoryAnalysis");
         }
     }
 
@@ -215,7 +231,7 @@ public final class ImageStructuredOutputParser {
         Set<String> assets = keys(references.referenceAssets(), ReferenceAsset::assetKey);
         for (ShotPrompt shot : plan.shots()) {
             for (String reference : shot.referenceAssetKeys()) {
-                if (!assets.contains(trimmed(reference))) throw error("ShotPromptPlan 引用了未知 referenceAssetKey: " + reference);
+                if (!assets.contains(trimmed(reference))) throw error("ShotPromptPlan referenceAssetKeys 必须引用 ReferencePlan");
             }
         }
     }
@@ -224,10 +240,10 @@ public final class ImageStructuredOutputParser {
         Set<String> finalShotKeys = keys(storyboard.shots(), FinalShot::shotKey);
         Set<String> planShotKeys = keys(plan.shots(), ShotPrompt::shotKey);
         for (String shotKey : planShotKeys) {
-            if (!finalShotKeys.contains(shotKey)) throw error("ShotPromptPlan shotKey 未在 FinalStoryboard 中声明: " + shotKey);
+            if (!finalShotKeys.contains(shotKey)) throw error("ShotPromptPlan shotKey 必须引用 FinalStoryboard");
         }
         for (String shotKey : finalShotKeys) {
-            if (!planShotKeys.contains(shotKey)) throw error("ShotPromptPlan 缺少 FinalStoryboard shotKey: " + shotKey);
+            if (!planShotKeys.contains(shotKey)) throw error("ShotPromptPlan 必须覆盖 FinalStoryboard 全部 shotKey");
         }
     }
 
@@ -236,7 +252,47 @@ public final class ImageStructuredOutputParser {
         Set<String> assets = keys(plan.referenceAssets(), ReferenceAsset::assetKey);
         for (PreflightShot shot : plan.shots()) {
             for (String reference : shot.referenceAssetKeys()) {
-                if (!assets.contains(trimmed(reference))) throw error("PreflightPlan 分镜引用了未知参考资产: " + reference);
+                if (!assets.contains(trimmed(reference))) throw error("PreflightPlan 分镜引用了未知参考资产");
+            }
+        }
+    }
+
+    public void validateReferenceTargets(ReferencePlan plan, StoryAnalysis analysis, ContinuityBible continuity) {
+        Set<String> characters = keys(analysis.characters(), Character::characterKey);
+        characters.addAll(keys(continuity.characters(), ContinuityCharacter::characterKey));
+        Set<String> locations = keys(analysis.locations(), Location::locationKey);
+        for (ReferenceAsset asset : plan.referenceAssets()) {
+            String type = referenceType(asset.type());
+            if ("CHARACTER".equals(type) && !characters.contains(trimmed(asset.target()))) {
+                throw error("ReferencePlan CHARACTER target 必须引用角色");
+            }
+            if ("LOCATION".equals(type) && !locations.contains(trimmed(asset.target()))) {
+                throw error("ReferencePlan LOCATION target 必须引用 StoryAnalysis locationKey");
+            }
+        }
+    }
+
+    public void validatePreflight(
+            PreflightPlan plan,
+            FinalStoryboard storyboard,
+            StoryAnalysis analysis,
+            ContinuityBible continuity) {
+        validatePreflight(plan);
+        validateReferenceTargets(new ReferencePlan(plan.referenceAssets()), analysis, continuity);
+        Map<String, FinalShot> finalShots = new HashMap<>();
+        for (FinalShot shot : storyboard.shots()) finalShots.put(trimmed(shot.shotKey()), shot);
+        Map<String, PreflightShot> preflightShots = new HashMap<>();
+        for (PreflightShot shot : plan.shots()) preflightShots.put(trimmed(shot.shotKey()), shot);
+        if (!finalShots.keySet().equals(preflightShots.keySet())) throw error("PreflightPlan 分镜必须与 FinalStoryboard 完全一致");
+        Set<String> characters = keys(analysis.characters(), Character::characterKey);
+        for (Map.Entry<String, PreflightShot> entry : preflightShots.entrySet()) {
+            FinalShot finalShot = finalShots.get(entry.getKey());
+            PreflightShot preflightShot = entry.getValue();
+            if (finalShot.sceneIndex() != preflightShot.sceneIndex() || finalShot.shotIndex() != preflightShot.shotIndex()) {
+                throw error("PreflightPlan 分镜必须与 FinalStoryboard 完全一致");
+            }
+            if (hasText(preflightShot.dialogue()) && !characters.contains(trimmed(preflightShot.speaker()))) {
+                throw error("PreflightPlan dialogue speaker 必须引用 StoryAnalysis");
             }
         }
     }
@@ -251,13 +307,14 @@ public final class ImageStructuredOutputParser {
             return root;
         } catch (JsonProcessingException exception) {
             Matcher matcher = DUPLICATE_FIELD.matcher(exception.getOriginalMessage());
-            if (matcher.find()) throw error(schema + " JSON 存在重复字段: " + matcher.group(1));
+            if (matcher.find()) throw error(schema + " JSON 存在重复字段");
             throw error(schema + " JSON 格式无效");
         }
     }
 
     private static String boundedJson(String raw, String schema) {
         if (raw == null) throw error("缺少 " + schema + " JSON 输出边界");
+        if (raw.length() > MAX_RAW_CHARS) throw error("图片规划原始输出超过最大长度");
         String begin = "<" + schema + "_JSON_BEGIN>";
         String end = "<" + schema + "_JSON_END>";
         List<Marker> markers = markers(raw, begin, end);
@@ -291,13 +348,14 @@ public final class ImageStructuredOutputParser {
     private static void verifyFields(JsonNode node, Set<String> expected, String context) {
         Set<String> actual = new HashSet<>();
         node.fieldNames().forEachRemaining(actual::add);
-        for (String name : actual) if (!expected.contains(name)) throw error(context + " 包含未知字段: " + name);
+        for (String name : actual) if (!expected.contains(name)) throw error(context + " 包含未知字段");
         for (String name : expected) if (!actual.contains(name)) throw error(context + " 缺少字段: " + name);
     }
 
-    private static List<JsonNode> objects(JsonNode root, String name, String schema, String... itemFields) {
+    private static List<JsonNode> objects(JsonNode root, String name, String schema, int maxItems, String... itemFields) {
         JsonNode array = root.get(name);
         if (!array.isArray()) throw error(schema + "." + name + " 必须是数组");
+        if (array.size() > maxItems) throw error(arrayLimitMessage(schema, name, maxItems));
         List<JsonNode> result = new ArrayList<>();
         for (JsonNode node : array) {
             if (!node.isObject()) throw error(schema + "." + name + " 的每项必须是 object");
@@ -307,13 +365,14 @@ public final class ImageStructuredOutputParser {
         return result;
     }
 
-    private static List<String> strings(JsonNode root, String name, String schema) {
+    private static List<String> strings(JsonNode root, String name, String schema, int maxItems) {
         JsonNode array = root.get(name);
         if (!array.isArray()) throw error(schema + "." + name + " 必须是数组");
+        if (array.size() > maxItems) throw error(schema + "." + name + " 数量不能超过 " + maxItems);
         List<String> result = new ArrayList<>();
         for (JsonNode node : array) {
             if (!node.isTextual()) throw error(schema + "." + name + " 的每项必须是 string");
-            result.add(node.textValue());
+            result.add(normalizedString(node.textValue()));
         }
         return result;
     }
@@ -321,10 +380,11 @@ public final class ImageStructuredOutputParser {
     private static List<String> stringArrayField(JsonNode node, String name, String context) {
         JsonNode array = node.get(name);
         if (!array.isArray()) throw error(context + "." + name + " 必须是数组");
+        if (array.size() > MAX_GENERAL_ARRAY_ITEMS) throw error(context + "." + name + " 数量不能超过 " + MAX_GENERAL_ARRAY_ITEMS);
         List<String> result = new ArrayList<>();
         for (JsonNode item : array) {
             if (!item.isTextual()) throw error(context + "." + name + " 的每项必须是 string");
-            result.add(item.textValue());
+            result.add(normalizedString(item.textValue()));
         }
         return result;
     }
@@ -333,7 +393,7 @@ public final class ImageStructuredOutputParser {
         verifyRequired(node, name, context);
         JsonNode value = node.get(name);
         if (!value.isTextual()) throw error(context + "." + name + " 必须是 string");
-        return value.textValue();
+        return normalizedString(value.textValue());
     }
 
     private static int integer(JsonNode node, String name, String context) {
@@ -353,6 +413,8 @@ public final class ImageStructuredOutputParser {
         if (!value.get("y").isNumber()) throw error("textAnchor.y 必须是数字");
         double x = value.get("x").doubleValue();
         double y = value.get("y").doubleValue();
+        if (!Double.isFinite(x)) throw error("textAnchor.x 必须是有限数字");
+        if (!Double.isFinite(y)) throw error("textAnchor.y 必须是有限数字");
         if (x < 0 || x > 1) throw error("textAnchor.x 必须在 0 到 1 之间");
         if (y < 0 || y > 1) throw error("textAnchor.y 必须在 0 到 1 之间");
         return new TextAnchor(x, y);
@@ -363,19 +425,31 @@ public final class ImageStructuredOutputParser {
     }
 
     private static void validateStoryAnalysis(StoryAnalysis analysis) {
+        if (analysis.scenes().isEmpty()) throw error("StoryAnalysis scenes 不能为空");
         uniqueKeys("StoryAnalysis sceneIndex", analysis.scenes(), scene -> String.valueOf(scene.sceneIndex()));
         for (Scene scene : analysis.scenes()) positive("StoryAnalysis sceneIndex", scene.sceneIndex());
         uniqueKeys("StoryAnalysis beatKey", analysis.beats(), Beat::beatKey);
         uniqueKeys("StoryAnalysis characterKey", analysis.characters(), Character::characterKey);
         uniqueKeys("StoryAnalysis locationKey", analysis.locations(), Location::locationKey);
         uniqueKeys("StoryAnalysis propKey", analysis.props(), Prop::propKey);
+        Set<Integer> sceneIndexes = new HashSet<>();
+        for (Scene scene : analysis.scenes()) sceneIndexes.add(scene.sceneIndex());
+        Map<Integer, Integer> expectedBeatOrders = new HashMap<>();
         for (Beat beat : analysis.beats()) {
-            positive("StoryAnalysis beat sceneIndex", beat.sceneIndex());
-            positive("StoryAnalysis beat order", beat.order());
+            if (!sceneIndexes.contains(beat.sceneIndex())) throw error("StoryAnalysis beat sceneIndex 必须引用已有 Scene");
+            int expectedOrder = expectedBeatOrders.getOrDefault(beat.sceneIndex(), 1);
+            if (beat.order() != expectedOrder) throw error("StoryAnalysis beat order 必须从 1 连续递增");
+            expectedBeatOrders.put(beat.sceneIndex(), expectedOrder + 1);
         }
-        for (Dialogue dialogue : analysis.dialogues()) positive("StoryAnalysis dialogue sceneIndex", dialogue.sceneIndex());
+        Set<String> characterKeys = keys(analysis.characters(), Character::characterKey);
+        for (Dialogue dialogue : analysis.dialogues()) {
+            if (!sceneIndexes.contains(dialogue.sceneIndex())) throw error("StoryAnalysis dialogue sceneIndex 必须引用已有 Scene");
+            if (hasText(dialogue.speaker()) && !characterKeys.contains(trimmed(dialogue.speaker()))) {
+                throw error("StoryAnalysis dialogue speaker 必须引用已有 characterKey");
+            }
+        }
         for (Narration narration : analysis.narration()) {
-            positive("StoryAnalysis narration sceneIndex", narration.sceneIndex());
+            if (!sceneIndexes.contains(narration.sceneIndex())) throw error("StoryAnalysis narration sceneIndex 必须引用已有 Scene");
             captionLength("StoryAnalysis narration", narration.text());
         }
     }
@@ -425,13 +499,34 @@ public final class ImageStructuredOutputParser {
         if (!hasText(prompt)) throw error(label + " 不能为空");
         String withoutNegativeConstraint = NO_RENDERED_TEXT.matcher(prompt).replaceAll("");
         if (LITERAL_TEXT_INSTRUCTION.matcher(withoutNegativeConstraint).find()
-                || MEDIA_TEXT_INSTRUCTION.matcher(withoutNegativeConstraint).find()) {
+                || MEDIA_TEXT_INSTRUCTION.matcher(withoutNegativeConstraint).find()
+                || DISPLAYED_MEDIUM_TEXT.matcher(withoutNegativeConstraint).find()
+                || WORD_ON_MEDIUM.matcher(withoutNegativeConstraint).find()) {
             throw error("图片提示词不得要求模型绘制文字");
         }
     }
 
     private static void noConflictingMoment(String label, String action) {
-        if (action != null && CONFLICTING_MOMENT.matcher(action).find()) throw error(label + " 同一镜头包含互斥时间点");
+        if (action == null) return;
+        String normalized = action.toLowerCase(Locale.ROOT);
+        if (normalized.contains("before and after")
+                || (normalized.contains("at first") && normalized.contains("later"))
+                || (normalized.contains("then") && normalized.contains("later"))) {
+            throw error(label + " 同一镜头包含互斥时间点");
+        }
+        Set<String> tokens = new HashSet<>(List.of(normalized.split("[^a-z]+")));
+        boolean simultaneous = tokens.contains("simultaneously")
+                || tokens.contains("and")
+                || (tokens.contains("at") && tokens.contains("same") && tokens.contains("time"));
+        if (simultaneous && (containsPair(tokens, "asleep", "running")
+                || containsPair(tokens, "open", "closed")
+                || containsPair(tokens, "sitting", "standing"))) {
+            throw error(label + " 同一镜头包含互斥时间点");
+        }
+    }
+
+    private static boolean containsPair(Set<String> tokens, String first, String second) {
+        return tokens.contains(first) && tokens.contains(second);
     }
 
     private static void captionLength(String label, String text) {
@@ -446,7 +541,7 @@ public final class ImageStructuredOutputParser {
         Set<String> found = new HashSet<>();
         for (String value : values) {
             String key = requiredKey(label, value);
-            if (!found.add(key)) throw error(label + " 重复: " + value);
+            if (!found.add(key)) throw error(label + " 存在重复值");
         }
     }
 
@@ -454,7 +549,7 @@ public final class ImageStructuredOutputParser {
         Set<String> found = new HashSet<>();
         for (T value : values) {
             String key = requiredKey(label, keyExtractor.get(value));
-            if (!found.add(key)) throw error(label + " 重复: " + keyExtractor.get(value));
+            if (!found.add(key)) throw error(label + " 存在重复值");
         }
     }
 
@@ -467,6 +562,25 @@ public final class ImageStructuredOutputParser {
     private static String requiredKey(String label, String value) {
         if (!hasText(value)) throw error(label + " 不能为空");
         return trimmed(value);
+    }
+
+    private static String arrayLimitMessage(String schema, String name, int maxItems) {
+        if ("FINAL_STORYBOARD".equals(schema) && "shots".equals(name)) return "FinalStoryboard 全篇最多 20 个镜头";
+        if ("PREFLIGHT_PLAN".equals(schema) && "shots".equals(name)) return "PreflightPlan 全篇最多 20 个镜头";
+        return schema + "." + name + " 数量不能超过 " + maxItems;
+    }
+
+    private static String normalizedString(String value) {
+        if (value.length() > MAX_STRING_CHARS) throw error("图片规划字符串长度超过限制");
+        return value.trim();
+    }
+
+    private static String referenceType(String value) {
+        String normalized = normalizedString(value).toUpperCase(Locale.ROOT);
+        if (!"CHARACTER".equals(normalized) && !"LOCATION".equals(normalized)) {
+            throw error("ReferencePlan type 必须为 CHARACTER 或 LOCATION");
+        }
+        return normalized;
     }
 
     private static boolean hasText(String value) {
