@@ -67,7 +67,7 @@ React 一级导航中的“图片工作台”紧邻“Agent 工作台”。它�
 
 图片模型只接收无字画面提示词。`ImageTextCompositor` 读取分镜底图，在 Java2D 中将带说话人和锚点的对白排成气泡，将叙事排成底部安全区字幕，并输出最终 PNG。
 
-`ImageAssetStore` 将文件保存为私有 MinIO Bucket 中的 `<basePath>/<runId>/<assetKey>.<ext>` 对象。写入使用 `If-None-Match: *` 原子创建，已有审计对象不能覆盖；读取限制为 25 MiB 并重新校验 SHA-256，数据库写入失败时只有路径与哈希都匹配才补偿删除。Bucket 缺失时由保存/测试配置或批次前置探测创建，代码不设置公开 Policy。
+`ImageAssetStore` 将文件保存为私有 MinIO Bucket 中的 `<basePath>/<runId>/<assetKey>.<ext>` 对象，并把创建时的 Bucket 与完整对象键写入资产记录。写入使用 `If-None-Match: *` 原子创建，已有审计对象不能覆盖；读取限制为 25 MiB 并重新校验 SHA-256，数据库写入失败时只有固定对象位置与哈希都匹配才补偿删除。后续修改默认 Bucket/基础路径不影响历史资产；Bucket 缺失时由保存/测试配置或批次前置探测创建，代码不设置公开 Policy。
 
 `tb_image_asset` 只记录受控的两段式相对对象键、MIME、宽高、SHA-256、Provider/模型/请求 ID、提示词和经过投影的元数据。`GET /api/image-assets/{assetId}/content` 通过资产 ID 查元数据，从 MinIO 有界读取并重新校验 SHA-256，只返回 PNG/JPEG，并使用 ETag 与长期不可变缓存；客户端不能提交对象键，也拿不到 MinIO 地址或凭据。
 

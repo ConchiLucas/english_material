@@ -13,6 +13,7 @@ import static org.mockito.Mockito.when;
 import com.aitaskcenter.dto.MinioConfigRequest;
 import com.aitaskcenter.dto.MinioConfigView;
 import com.aitaskcenter.model.MinioConfig;
+import com.aitaskcenter.repository.ImageAssetRepository;
 import com.aitaskcenter.repository.MinioConfigRepository;
 import java.time.OffsetDateTime;
 import java.util.Optional;
@@ -27,14 +28,16 @@ class MinioConfigServiceTest {
     private static final OffsetDateTime UPDATED_AT = OffsetDateTime.parse("2026-08-16T09:30:00+08:00");
 
     private MinioConfigRepository repository;
+    private ImageAssetRepository imageAssetRepository;
     private MinioConnectionVerifier verifier;
     private MinioConfigService service;
 
     @BeforeEach
     void setUp() {
         repository = Mockito.mock(MinioConfigRepository.class);
+        imageAssetRepository = Mockito.mock(ImageAssetRepository.class);
         verifier = Mockito.mock(MinioConnectionVerifier.class);
-        service = new MinioConfigService(repository, verifier);
+        service = new MinioConfigService(repository, imageAssetRepository, verifier);
         when(repository.saveAndFlush(any(MinioConfig.class))).thenAnswer(invocation -> invocation.getArgument(0));
     }
 
@@ -140,6 +143,40 @@ class MinioConfigServiceTest {
         assertFalse(endpointError.getMessage().contains("password"));
         assertFalse(endpointError.getMessage().contains("token"));
         verify(repository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void rejectsEndpointChangesWhileImageAssetsExist() {
+        MinioConfig existing = configured();
+        when(repository.findByConfigKey("default")).thenReturn(Optional.of(existing));
+        when(imageAssetRepository.count()).thenReturn(1L);
+
+        IllegalArgumentException endpoint = assertThrows(IllegalArgumentException.class, () -> service.save(
+                new MinioConfigRequest(true, "other-minio.internal:9000", "english-app", "",
+                        false, "english-material", "image-story", UPDATED_AT)));
+        IllegalArgumentException ssl = assertThrows(IllegalArgumentException.class, () -> service.save(
+                new MinioConfigRequest(true, "minio.internal:9000", "english-app", "",
+                        true, "english-material", "image-story", UPDATED_AT)));
+        assertEquals("已有图片资产时不能修改 MinIO 存储位置", endpoint.getMessage());
+        assertEquals(endpoint.getMessage(), ssl.getMessage());
+        verify(verifier, never()).verify(any());
+        verify(repository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void allowsCredentialBucketAndBasePathChangesWhileImageAssetsExist() {
+        MinioConfig existing = configured();
+        when(repository.findByConfigKey("default")).thenReturn(Optional.of(existing));
+        when(imageAssetRepository.count()).thenReturn(1L);
+
+        service.save(new MinioConfigRequest(
+                true, "minio.internal:9000", "rotated-access", "rotated-secret",
+                false, "other-english-material", "other-story", UPDATED_AT));
+
+        verify(verifier).verify(any(MinioStorageConfig.class));
+        verify(repository).saveAndFlush(existing);
+        assertEquals("other-english-material", existing.getBucketName());
+        assertEquals("other-story", existing.getBasePath());
     }
 
     private MinioConfig configured() {

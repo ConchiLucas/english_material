@@ -3,6 +3,7 @@ package com.aitaskcenter.service;
 import com.aitaskcenter.dto.MinioConfigRequest;
 import com.aitaskcenter.dto.MinioConfigView;
 import com.aitaskcenter.model.MinioConfig;
+import com.aitaskcenter.repository.ImageAssetRepository;
 import com.aitaskcenter.repository.MinioConfigRepository;
 import java.time.OffsetDateTime;
 import java.util.Locale;
@@ -22,10 +23,15 @@ public class MinioConfigService {
     private static final Pattern PATH_SEGMENT = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,62}");
 
     private final MinioConfigRepository repository;
+    private final ImageAssetRepository imageAssetRepository;
     private final MinioConnectionVerifier verifier;
 
-    public MinioConfigService(MinioConfigRepository repository, MinioConnectionVerifier verifier) {
+    public MinioConfigService(
+            MinioConfigRepository repository,
+            ImageAssetRepository imageAssetRepository,
+            MinioConnectionVerifier verifier) {
         this.repository = repository;
+        this.imageAssetRepository = imageAssetRepository;
         this.verifier = verifier;
     }
 
@@ -42,6 +48,10 @@ public class MinioConfigService {
         MinioConfig current = found.orElseGet(MinioConfig::new);
         if (found.isPresent()) requireCurrentTimestamp(current.getUpdatedAt(), request == null ? null : request.updatedAt());
         Normalized normalized = normalize(request, found.map(MinioConfig::getSecretAccessKey).orElse(""));
+        if (found.isPresent() && storageLocationChanged(current, normalized)
+                && imageAssetRepository.count() > 0) {
+            throw new IllegalArgumentException("已有图片资产时不能修改 MinIO 存储位置");
+        }
         if (normalized.enabled()) verifier.verify(normalized.toStorageConfig());
         current.setConfigKey(DEFAULT_KEY);
         current.setEnabled(normalized.enabled());
@@ -133,6 +143,11 @@ public class MinioConfigService {
         if (current != null && (requested == null || !current.toInstant().equals(requested.toInstant()))) {
             throw new IllegalArgumentException(STALE_MESSAGE);
         }
+    }
+
+    private static boolean storageLocationChanged(MinioConfig current, Normalized requested) {
+        return !clean(current.getEndpoint()).equals(requested.endpoint())
+                || current.isUseSsl() != requested.useSsl();
     }
 
     private MinioConfigView toView(MinioConfig config) {

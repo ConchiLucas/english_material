@@ -63,7 +63,8 @@ public class ImageAssetStore {
             if (metadata == null || metadata.size() != bytes.length || !mime.equals(metadata.contentType())) {
                 throw new IllegalStateException("MinIO 图片对象元数据校验失败");
             }
-            return new StoredAsset(relativePath, mime, image.width(), image.height(), sha256(bytes));
+            return new StoredAsset(config.bucketName() + "/" + objectKey,
+                    mime, image.width(), image.height(), sha256(bytes));
         } catch (MinioClientFactory.ObjectAlreadyExistsException exception) {
             throw duplicate();
         } catch (Exception exception) {
@@ -79,11 +80,11 @@ public class ImageAssetStore {
     }
 
     public byte[] read(String relativePath, String expectedSha256) {
-        String safePath = validateRelativePath(relativePath);
+        StoredLocation location = validateStoredLocation(relativePath);
         validateSha256(expectedSha256);
         MinioStorageConfig config = configService.requireEnabled();
         try (InputStream input = clientFactory.create(config)
-                .getObject(config.bucketName(), objectKey(config, safePath))) {
+                .getObject(location.bucket(), location.objectKey())) {
             byte[] content = readBounded(input);
             if (!sha256(content).equals(expectedSha256)) {
                 throw new IllegalArgumentException("图片资产哈希不匹配");
@@ -100,17 +101,17 @@ public class ImageAssetStore {
     }
 
     public void delete(String relativePath, String expectedSha256) {
-        String safePath = validateRelativePath(relativePath);
+        StoredLocation location = validateStoredLocation(relativePath);
         validateSha256(expectedSha256);
         MinioStorageConfig config = configService.requireEnabled();
         MinioClientFactory.Client client = clientFactory.create(config);
-        try (InputStream input = client.getObject(config.bucketName(), objectKey(config, safePath))) {
+        try (InputStream input = client.getObject(location.bucket(), location.objectKey())) {
             byte[] content = readBounded(input);
             if (!sha256(content).equals(expectedSha256)) {
                 throw new IllegalArgumentException("图片资产哈希不匹配，拒绝删除");
             }
             inspect(content);
-            client.removeObject(config.bucketName(), objectKey(config, safePath));
+            client.removeObject(location.bucket(), location.objectKey());
         } catch (MinioClientFactory.ObjectMissingException exception) {
             throw new IllegalArgumentException("图片资产不存在");
         } catch (IllegalArgumentException exception) {
@@ -156,15 +157,25 @@ public class ImageAssetStore {
         }
     }
 
-    private static String validateRelativePath(String value) {
-        if (value == null || value.isBlank() || value.startsWith("/") || value.contains("\\")) {
-            throw new IllegalArgumentException("图片相对路径不能为空或不安全");
+    private static StoredLocation validateStoredLocation(String value) {
+        if (value == null || value.isBlank() || value.length() > 500
+                || value.startsWith("/") || value.contains("\\")) {
+            throw new IllegalArgumentException("图片存储位置不能为空或不安全");
         }
         String[] parts = value.split("/", -1);
-        if (parts.length != 2) throw new IllegalArgumentException("图片路径必须恰好包含批次和文件名");
-        validateSegment(parts[0], MAX_RUN_ID_LENGTH, "runId");
-        validateSegment(parts[1], MAX_ASSET_KEY_LENGTH + 5, "fileName");
-        return parts[0] + "/" + parts[1];
+        if (parts.length < 4) throw new IllegalArgumentException("图片存储位置格式无效");
+        String bucket = parts[0];
+        if (bucket.length() < 3 || bucket.length() > 63
+                || !bucket.matches("[a-z0-9](?:[a-z0-9.-]{1,61}[a-z0-9])?")
+                || bucket.contains("..")) {
+            throw new IllegalArgumentException("图片 Bucket 格式无效");
+        }
+        for (int index = 1; index < parts.length - 2; index++) {
+            validateSegment(parts[index], 63, "basePath");
+        }
+        validateSegment(parts[parts.length - 2], MAX_RUN_ID_LENGTH, "runId");
+        validateSegment(parts[parts.length - 1], MAX_ASSET_KEY_LENGTH + 5, "fileName");
+        return new StoredLocation(bucket, String.join("/", java.util.Arrays.copyOfRange(parts, 1, parts.length)));
     }
 
     private static void validateSha256(String value) {
@@ -231,6 +242,8 @@ public class ImageAssetStore {
     }
 
     private record ImageMetadata(String mime, int width, int height) { }
+
+    private record StoredLocation(String bucket, String objectKey) { }
 
     public record StoredAsset(String relativePath, String mime, int width, int height, String sha256) { }
 }

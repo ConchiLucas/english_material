@@ -72,7 +72,7 @@ class ImageAssetStoreTest {
 
         ImageAssetStore.StoredAsset stored = store.store("run-123", "shot-001", "image/png", png);
 
-        assertEquals("run-123/shot-001.png", stored.relativePath());
+        assertEquals("english-material/image-story/run-123/shot-001.png", stored.relativePath());
         assertEquals("image/png", stored.mime());
         assertEquals(16, stored.width());
         assertEquals(9, stored.height());
@@ -80,6 +80,27 @@ class ImageAssetStoreTest {
         verify(client).putObject("english-material", "image-story/run-123/shot-001.png", png,
                 "image/png", true);
         assertArrayEquals(png, store.read(stored.relativePath(), stored.sha256()));
+    }
+
+    @Test
+    void readsFromThePersistedBucketAndObjectKeyAfterTheDefaultLocationChanges() throws Exception {
+        byte[] png = png(16, 9);
+        MinioStorageConfig changed = new MinioStorageConfig(
+                true, ENDPOINT, "english-app", SECRET, false,
+                "other-bucket", "other-prefix");
+        MinioClientFactory.Client changedClient = mock(MinioClientFactory.Client.class);
+        when(configService.requireEnabled()).thenReturn(CONFIG, changed);
+        when(factory.create(changed)).thenReturn(changedClient);
+        when(client.statObject("english-material", "image-story/run-123/shot-001.png"))
+                .thenReturn(new MinioClientFactory.ObjectMetadata(png.length, "image/png"));
+        when(changedClient.getObject("english-material", "image-story/run-123/shot-001.png"))
+                .thenReturn(new ByteArrayInputStream(png));
+
+        ImageAssetStore.StoredAsset stored = store.store("run-123", "shot-001", "image/png", png);
+
+        assertArrayEquals(png, store.read(stored.relativePath(), stored.sha256()));
+        verify(changedClient).getObject("english-material", "image-story/run-123/shot-001.png");
+        verify(changedClient, never()).getObject("other-bucket", "other-prefix/run-123/shot-001.png");
     }
 
     @Test
@@ -150,12 +171,12 @@ class ImageAssetStoreTest {
         when(client.getObject("english-material", "image-story/run-123/shot-001.png"))
                 .thenReturn(new ByteArrayInputStream(png(5, 3)));
         assertThrows(IllegalArgumentException.class,
-                () -> store.read("run-123/shot-001.png", sha256(original)));
+                () -> store.read("english-material/image-story/run-123/shot-001.png", sha256(original)));
 
         when(client.getObject("english-material", "image-story/run-123/oversized.png"))
                 .thenReturn(new RepeatingInputStream(26L * 1024 * 1024));
         assertThrows(IllegalArgumentException.class,
-                () -> store.read("run-123/oversized.png", "a".repeat(64)));
+                () -> store.read("english-material/image-story/run-123/oversized.png", "a".repeat(64)));
     }
 
     @Test
@@ -166,8 +187,8 @@ class ImageAssetStoreTest {
                 .thenReturn(new ByteArrayInputStream(png), new ByteArrayInputStream(png));
 
         assertThrows(IllegalArgumentException.class,
-                () -> store.delete("run-123/shot-001.png", "b".repeat(64)));
-        store.delete("run-123/shot-001.png", sha256(png));
+                () -> store.delete("english-material/image-story/run-123/shot-001.png", "b".repeat(64)));
+        store.delete("english-material/image-story/run-123/shot-001.png", sha256(png));
 
         verify(client).removeObject("english-material", key);
     }
@@ -179,7 +200,7 @@ class ImageAssetStoreTest {
                 .thenThrow(new IOException("connect " + ENDPOINT + " using " + SECRET));
 
         IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
-                () -> store.read("run-123/shot-001.png", sha256(png)));
+                () -> store.read("english-material/image-story/run-123/shot-001.png", sha256(png)));
 
         assertEquals("读取图片资产失败", error.getMessage());
         assertFalse(error.getMessage().contains(ENDPOINT));
@@ -206,7 +227,7 @@ class ImageAssetStoreTest {
             assertEquals("图片资产已存在，不能覆盖审计记录", rejected.error().getMessage());
             StoreAttempt winner = results.stream().filter(StoreAttempt::succeeded).findFirst().orElseThrow();
             assertArrayEquals(atomicClient.bytes("image-story/run-123/shot-001.png"),
-                    concurrentStore.read("run-123/shot-001.png", winner.stored().sha256()));
+                    concurrentStore.read(winner.stored().relativePath(), winner.stored().sha256()));
         } finally {
             workers.shutdownNow();
         }

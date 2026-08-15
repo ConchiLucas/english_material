@@ -73,7 +73,7 @@ summary: 维护数据库、AI、故事与图片 Agent 配置及有界执行，�
 | `POST /api/image-runs` | 接收 `storyRunId + stylePresetId`，保存快照并创建异步图片批次 |
 | `GET /api/image-runs` | 按创建时间倒序查询图片批次 |
 | `GET /api/image-runs/{runId}` | 查询故事/配置快照、全部步骤、分镜和资产元数据 |
-| `GET /api/image-assets/{assetId}/content` | 按资产 ID 校验相对路径与 SHA-256 后返回 PNG/JPEG 内容和长期缓存头 |
+| `GET /api/image-assets/{assetId}/content` | 按资产 ID 校验持久化 Bucket/对象键与 SHA-256 后返回 PNG/JPEG 内容和长期缓存头 |
 | `/api/word-clean` | 分页查询去重单词 |
 | `/api/word-clean/facets` | 查询难度和来源筛选项 |
 | `/api/word-clean/{id}/sentences` | 查询指定单词的候选例句 |
@@ -93,7 +93,7 @@ summary: 维护数据库、AI、故事与图片 Agent 配置及有界执行，�
 - 图片 Provider Base URL 必须是带 host 的绝对 HTTP(S) URI，不得包含用户信息、query、fragment，也不得直接以 `/images/generations` 或 `/images/edits` 结尾。可选 `options` 只能使用长度不超过 64 的字符串 `responseFormat`、`quality`、`size`：格式固定 `b64_json`，尺寸固定 `1536x864`，quality 只接受受控枚举。前端使用同一组资格规则过滤下拉项。
 - 图片画风的名称、正向提示词、负向提示词和说明四个文本字段在前后端都必填；创建或更新时任一字段为空都会被拒绝，启用状态仍独立保存。
 - 图片批次创建边界会复制已校验的 `finalStory`、输入单词、目标年级、画风、固定流程和 9 个 Agent/Provider 的安全快照；之后修改原故事、Prompt、画风或 Provider 不改变历史批次含义。Provider 快照不含 API Key 或 Base URL。
-- `ImageAssetStore` 将 PNG/JPEG 写入私有 MinIO Bucket 的 `<basePath>/<runId>/<assetKey>.<ext>` 对象；创建使用 `If-None-Match: *` 原子拒绝覆盖。数据库保存两段式相对对象键、MIME、尺寸和 SHA-256；读取和补偿删除都重新有界读取并校验哈希，客户端不能提交对象键。
+- `ImageAssetStore` 将 PNG/JPEG 写入私有 MinIO Bucket 的 `<basePath>/<runId>/<assetKey>.<ext>` 对象；创建使用 `If-None-Match: *` 原子拒绝覆盖。数据库保存创建时的 Bucket、完整对象键、MIME、尺寸和 SHA-256；读取和补偿删除使用该固定位置并重新有界读取、校验哈希，修改默认 Bucket/基础路径不会切断历史资产，客户端不能提交对象键。
 - 图片状态按 `QUEUED → PLANNING → GENERATING_REFERENCES → GENERATING_SHOTS → COMPOSITING → COMPLETED` 前进；任一步骤失败进入 `FAILED` 并保留已完成审计/文件。应用启动时会为每个残留活动批次开启独立新事务，把该批次所有 `RUNNING` 步骤与批次本身以同一错误和完成时间一起标为 `FAILED`；已完成步骤保持不变，批次不会续跑。
 - 纯故事协议不新增模型调用、数据库表或 HTTP 接口；现有数据库中的用户 Prompt 不被初始化覆盖，运行时协议独立保证交付格式。
 - 故事配置与运行记录写入只发生在本地配置库；不得把外部连接的写入、DDL 或迁移能力加入材料链路。

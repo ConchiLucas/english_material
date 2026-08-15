@@ -9,6 +9,7 @@
 - MinIO 是图片故事资产的唯一存储后端，不提供本地/MinIO 切换开关。
 - 复用 `ai-datahub` 当前 MinIO 服务与凭据，但使用独立 Bucket `english-material`。
 - Bucket 内统一使用基础前缀 `image-story`。
+- 每条资产记录保存创建时的 Bucket 与完整对象键，后续修改默认 Bucket/基础路径不重定向历史资产。
 - Bucket 保持私有，不设置匿名读取策略。
 - 浏览器继续通过 `/api/image-assets/{assetId}` 获取图片，不直接访问 MinIO。
 - 当前环境没有历史图片批次，因此不实现旧本地资产迁移或读取回退。
