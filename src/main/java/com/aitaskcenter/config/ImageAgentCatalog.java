@@ -15,22 +15,22 @@ public final class ImageAgentCatalog {
     private static final SchemaContract STORY_ANALYSIS_CONTRACT = new SchemaContract(
             "StoryAnalysis",
             "STORY_ANALYSIS",
-            List.of("scenes[]", "beats[]", "characters[]", "locations[]", "props[]", "dialogues[]", "narration[]"),
+            List.of(arrayField("scenes"), arrayField("beats"), arrayField("characters"), arrayField("locations"), arrayField("props"), arrayField("dialogues"), arrayField("narration")),
             Map.ofEntries(
-                    Map.entry("scenes[]", objectArray("sceneIndex", "title", "sourceExcerpt", "summary")),
-                    Map.entry("beats[]", objectArray("beatKey", "sceneIndex", "order", "action", "temporalMoment")),
-                    Map.entry("characters[]", objectArray("characterKey", "name", "description")),
-                    Map.entry("locations[]", objectArray("locationKey", "name", "description")),
-                    Map.entry("props[]", objectArray("propKey", "name", "description")),
-                    Map.entry("dialogues[]", objectArray("sceneIndex", "speaker", "text")),
-                    Map.entry("narration[]", objectArray("sceneIndex", "text"))));
+                    Map.entry("scenes", objectArray("sceneIndex", "title", "sourceExcerpt", "summary")),
+                    Map.entry("beats", objectArray("beatKey", "sceneIndex", "order", "action", "temporalMoment")),
+                    Map.entry("characters", objectArray("characterKey", "name", "description")),
+                    Map.entry("locations", objectArray("locationKey", "name", "description")),
+                    Map.entry("props", objectArray("propKey", "name", "description")),
+                    Map.entry("dialogues", objectArray("sceneIndex", "speaker", "text")),
+                    Map.entry("narration", objectArray("sceneIndex", "text"))));
     private static final SchemaContract CONTINUITY_BIBLE_CONTRACT = new SchemaContract(
             "ContinuityBible",
             "CONTINUITY_BIBLE",
-            List.of("characters[]", "props[]", "invariants[]", "forbiddenChanges[]"),
+            List.of(arrayField("characters"), arrayField("props"), arrayField("invariants"), arrayField("forbiddenChanges")),
             Map.ofEntries(
                     Map.entry(
-                            "characters[]",
+                            "characters",
                             objectArray(
                                     "characterKey",
                                     "name",
@@ -39,27 +39,27 @@ public final class ImageAgentCatalog {
                                     "colors",
                                     "proportions",
                                     "expressionRules")),
-                    Map.entry("props[]", objectArray("propKey", "visualDescription", "colors", "invariants")),
-                    Map.entry("invariants[]", stringArray()),
-                    Map.entry("forbiddenChanges[]", stringArray())));
+                    Map.entry("props", objectArray("propKey", "visualDescription", "colors", "invariants")),
+                    Map.entry("invariants", stringArray()),
+                    Map.entry("forbiddenChanges", stringArray())));
     private static final SchemaContract STYLE_BIBLE_CONTRACT = new SchemaContract(
             "StyleBible",
             "STYLE_BIBLE",
-            List.of("palette", "renderingStyle", "lighting", "cameraRules", "environmentRules", "negativeRules[]"),
-            Map.of("negativeRules[]", stringArray()));
+            List.of(field("palette"), field("renderingStyle"), field("lighting"), field("cameraRules"), field("environmentRules"), arrayField("negativeRules")),
+            Map.of("negativeRules", stringArray()));
     private static final SchemaContract STORYBOARD_PROPOSAL_CONTRACT = new SchemaContract(
             "StoryboardProposal",
             "STORYBOARD_PROPOSAL",
-            List.of("shots[]"),
+            List.of(arrayField("shots")),
             Map.of(
-                    "shots[]",
+                    "shots",
                     objectArray("sceneIndex", "beat", "action", "characters", "location", "dialogue", "narration", "splitReason")));
     private static final SchemaContract FINAL_STORYBOARD_CONTRACT = new SchemaContract(
             "FinalStoryboard",
             "FINAL_STORYBOARD",
-            List.of("shots[]"),
+            List.of(arrayField("shots")),
             Map.of(
-                    "shots[]",
+                    "shots",
                     objectArray(
                             "shotKey",
                             "sceneIndex",
@@ -73,35 +73,35 @@ public final class ImageAgentCatalog {
     private static final SchemaContract REFERENCE_PLAN_CONTRACT = new SchemaContract(
             "ReferencePlan",
             "REFERENCE_PLAN",
-            List.of("referenceAssets[]"),
-            Map.of("referenceAssets[]", objectArray("assetKey", "type", "target", "prompt", "negativePrompt")));
+            List.of(arrayField("referenceAssets")),
+            Map.of("referenceAssets", objectArray("assetKey", "type", "target", "prompt", "negativePrompt")));
     private static final SchemaContract SHOT_PROMPT_PLAN_CONTRACT = new SchemaContract(
             "ShotPromptPlan",
             "SHOT_PROMPT_PLAN",
-            List.of("shots[]"),
+            List.of(arrayField("shots")),
             Map.ofEntries(
-                    Map.entry("shots[]", objectArray("shotKey", "prompt", "negativePrompt", "referenceAssetKeys[]")),
-                    Map.entry("shots[].referenceAssetKeys[]", stringArray())));
+                    Map.entry("shots", objectArray("shotKey", "prompt", "negativePrompt", "referenceAssetKeys")),
+                    Map.entry("shots.referenceAssetKeys", stringArray())));
     private static final SchemaContract PREFLIGHT_PLAN_CONTRACT = new SchemaContract(
             "PreflightPlan",
             "PREFLIGHT_PLAN",
-            List.of("referenceAssets[]", "shots[]", "auditSummary"),
+            List.of(arrayField("referenceAssets"), arrayField("shots"), field("auditSummary")),
             Map.ofEntries(
-                    Map.entry("referenceAssets[]", objectArray("assetKey", "type", "target", "prompt", "negativePrompt")),
+                    Map.entry("referenceAssets", objectArray("assetKey", "type", "target", "prompt", "negativePrompt")),
                     Map.entry(
-                            "shots[]",
+                            "shots",
                             objectArray(
                                     "shotKey",
                                     "sceneIndex",
                                     "shotIndex",
                                     "prompt",
                                     "negativePrompt",
-                                    "referenceAssetKeys[]",
+                                    "referenceAssetKeys",
                                     "speaker",
                                     "dialogue",
                                     "narration",
                                     "textAnchor")),
-                    Map.entry("shots[].referenceAssetKeys[]", stringArray())));
+                    Map.entry("shots.referenceAssetKeys", stringArray())));
 
     private static final List<StageDefinition> STAGES = List.of(
             new StageDefinition(
@@ -341,8 +341,8 @@ public final class ImageAgentCatalog {
         String arrayContracts = schemaContract.arrayItemContracts().entrySet().stream()
                 .sorted(Map.Entry.comparingByKey())
                 .map(entry -> entry.getValue().scalarString()
-                        ? "数组 " + entry.getKey() + " 的每项必须是 string。"
-                        : "数组 " + entry.getKey() + " 的每项必须且只能包含 "
+                        ? "数组字段 " + entry.getKey() + " 的每项必须是 string。"
+                        : "数组字段 " + entry.getKey() + " 的每项必须且只能包含 "
                                 + String.join("、", entry.getValue().objectFields()) + "。")
                 .collect(Collectors.joining("\n"));
         String beginMarker = "<" + schemaContract.markerKey() + "_JSON_BEGIN>";
@@ -367,7 +367,7 @@ public final class ImageAgentCatalog {
                 beginMarker,
                 endMarker,
                 schemaContract.schemaName(),
-                String.join("、", schemaContract.topLevelFields()),
+                schemaContract.topLevelDeclaration(),
                 arrayContracts).strip();
     }
 
@@ -377,6 +377,14 @@ public final class ImageAgentCatalog {
 
     private static ArrayItemContract stringArray() {
         return new ArrayItemContract(true, List.of());
+    }
+
+    private static FieldContract field(String name) {
+        return new FieldContract(name, false);
+    }
+
+    private static FieldContract arrayField(String name) {
+        return new FieldContract(name, true);
     }
 
     public record StageDefinition(String key, String name, String note, int order, List<NodeDefinition> nodes) {
@@ -416,7 +424,7 @@ public final class ImageAgentCatalog {
     private record SchemaContract(
             String schemaName,
             String markerKey,
-            List<String> topLevelFields,
+            List<FieldContract> topLevelFields,
             Map<String, ArrayItemContract> arrayItemContracts) {
         private SchemaContract {
             Objects.requireNonNull(schemaName, "schemaName");
@@ -424,6 +432,15 @@ public final class ImageAgentCatalog {
             topLevelFields = List.copyOf(topLevelFields);
             arrayItemContracts = Map.copyOf(arrayItemContracts);
         }
+
+        private String topLevelDeclaration() {
+            return topLevelFields.stream()
+                    .map(field -> field.name() + (field.array() ? "（array）" : ""))
+                    .collect(Collectors.joining("、"));
+        }
+    }
+
+    private record FieldContract(String name, boolean array) {
     }
 
     private record ArrayItemContract(boolean scalarString, List<String> objectFields) {

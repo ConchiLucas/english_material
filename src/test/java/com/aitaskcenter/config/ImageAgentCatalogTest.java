@@ -13,6 +13,7 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import jakarta.persistence.Version;
+import org.hibernate.annotations.Immutable;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -156,24 +157,31 @@ class ImageAgentCatalogTest {
                         new SchemaContract(
                                 "StoryAnalysis",
                                 "STORY_ANALYSIS",
-                                List.of("scenes[]", "beats[]", "characters[]", "locations[]", "props[]", "dialogues[]", "narration[]"),
+                                List.of(
+                                        arrayField("scenes"),
+                                        arrayField("beats"),
+                                        arrayField("characters"),
+                                        arrayField("locations"),
+                                        arrayField("props"),
+                                        arrayField("dialogues"),
+                                        arrayField("narration")),
                                 Map.ofEntries(
-                                        Map.entry("scenes[]", objectArray("sceneIndex", "title", "sourceExcerpt", "summary")),
-                                        Map.entry("beats[]", objectArray("beatKey", "sceneIndex", "order", "action", "temporalMoment")),
-                                        Map.entry("characters[]", objectArray("characterKey", "name", "description")),
-                                        Map.entry("locations[]", objectArray("locationKey", "name", "description")),
-                                        Map.entry("props[]", objectArray("propKey", "name", "description")),
-                                        Map.entry("dialogues[]", objectArray("sceneIndex", "speaker", "text")),
-                                        Map.entry("narration[]", objectArray("sceneIndex", "text"))))),
+                                        Map.entry("scenes", objectArray("sceneIndex", "title", "sourceExcerpt", "summary")),
+                                        Map.entry("beats", objectArray("beatKey", "sceneIndex", "order", "action", "temporalMoment")),
+                                        Map.entry("characters", objectArray("characterKey", "name", "description")),
+                                        Map.entry("locations", objectArray("locationKey", "name", "description")),
+                                        Map.entry("props", objectArray("propKey", "name", "description")),
+                                        Map.entry("dialogues", objectArray("sceneIndex", "speaker", "text")),
+                                        Map.entry("narration", objectArray("sceneIndex", "text"))))),
                 Map.entry(
                         "image-continuity-designer",
                         new SchemaContract(
                                 "ContinuityBible",
                                 "CONTINUITY_BIBLE",
-                                List.of("characters[]", "props[]", "invariants[]", "forbiddenChanges[]"),
+                                List.of(arrayField("characters"), arrayField("props"), arrayField("invariants"), arrayField("forbiddenChanges")),
                                 Map.ofEntries(
                                         Map.entry(
-                                                "characters[]",
+                                                "characters",
                                                 objectArray(
                                                         "characterKey",
                                                         "name",
@@ -182,16 +190,16 @@ class ImageAgentCatalogTest {
                                                         "colors",
                                                         "proportions",
                                                         "expressionRules")),
-                                        Map.entry("props[]", objectArray("propKey", "visualDescription", "colors", "invariants")),
-                                        Map.entry("invariants[]", stringArray()),
-                                        Map.entry("forbiddenChanges[]", stringArray())))),
+                                        Map.entry("props", objectArray("propKey", "visualDescription", "colors", "invariants")),
+                                        Map.entry("invariants", stringArray()),
+                                        Map.entry("forbiddenChanges", stringArray())))),
                 Map.entry(
                         "image-art-director",
                         new SchemaContract(
                                 "StyleBible",
                                 "STYLE_BIBLE",
-                                List.of("palette", "renderingStyle", "lighting", "cameraRules", "environmentRules", "negativeRules[]"),
-                                Map.of("negativeRules[]", stringArray()))),
+                                List.of(field("palette"), field("renderingStyle"), field("lighting"), field("cameraRules"), field("environmentRules"), arrayField("negativeRules")),
+                                Map.of("negativeRules", stringArray()))),
                 Map.entry(
                         "image-action-storyboarder",
                         storyboardProposalContract()),
@@ -203,9 +211,9 @@ class ImageAgentCatalogTest {
                         new SchemaContract(
                                 "FinalStoryboard",
                                 "FINAL_STORYBOARD",
-                                List.of("shots[]"),
+                                List.of(arrayField("shots")),
                                 Map.of(
-                                        "shots[]",
+                                        "shots",
                                         objectArray(
                                                 "shotKey",
                                                 "sceneIndex",
@@ -221,45 +229,45 @@ class ImageAgentCatalogTest {
                         new SchemaContract(
                                 "ReferencePlan",
                                 "REFERENCE_PLAN",
-                                List.of("referenceAssets[]"),
+                                List.of(arrayField("referenceAssets")),
                                 Map.of(
-                                        "referenceAssets[]",
+                                        "referenceAssets",
                                         objectArray("assetKey", "type", "target", "prompt", "negativePrompt")))),
                 Map.entry(
                         "image-shot-prompt-engineer",
                         new SchemaContract(
                                 "ShotPromptPlan",
                                 "SHOT_PROMPT_PLAN",
-                                List.of("shots[]"),
+                                List.of(arrayField("shots")),
                                 Map.ofEntries(
                                         Map.entry(
-                                                "shots[]",
-                                                objectArray("shotKey", "prompt", "negativePrompt", "referenceAssetKeys[]")),
-                                        Map.entry("shots[].referenceAssetKeys[]", stringArray())))),
+                                                "shots",
+                                                objectArray("shotKey", "prompt", "negativePrompt", "referenceAssetKeys")),
+                                        Map.entry("shots.referenceAssetKeys", stringArray())))),
                 Map.entry(
                         "image-prompt-preflight",
                         new SchemaContract(
                                 "PreflightPlan",
                                 "PREFLIGHT_PLAN",
-                                List.of("referenceAssets[]", "shots[]", "auditSummary"),
+                                List.of(arrayField("referenceAssets"), arrayField("shots"), field("auditSummary")),
                                 Map.ofEntries(
                                         Map.entry(
-                                                "referenceAssets[]",
+                                                "referenceAssets",
                                                 objectArray("assetKey", "type", "target", "prompt", "negativePrompt")),
                                         Map.entry(
-                                                "shots[]",
+                                                "shots",
                                                 objectArray(
                                                         "shotKey",
                                                         "sceneIndex",
                                                         "shotIndex",
                                                         "prompt",
                                                         "negativePrompt",
-                                                        "referenceAssetKeys[]",
+                                                        "referenceAssetKeys",
                                                         "speaker",
                                                         "dialogue",
                                                         "narration",
                                                         "textAnchor")),
-                                        Map.entry("shots[].referenceAssetKeys[]", stringArray())))));
+                                        Map.entry("shots.referenceAssetKeys", stringArray())))));
 
         for (ImageAgentCatalog.NodeDefinition agent : ImageAgentCatalog.agents()) {
             String prompt = agent.defaultPrompt();
@@ -281,19 +289,21 @@ class ImageAgentCatalogTest {
             assertFalse(prompt.contains("```"), agent.key());
             assertTrue(prompt.contains("输出 schema：" + contract.schemaName() + "。"), agent.key());
             assertTrue(
-                    prompt.contains("顶层字段必须且只能包含 " + String.join("、", contract.topLevelFields()) + "。"),
+                    prompt.contains("顶层字段必须且只能包含 " + contract.topLevelDeclaration() + "。"),
                     agent.key());
+            assertFalse(prompt.contains("["), agent.key());
+            assertFalse(prompt.contains("]"), agent.key());
             assertTrue(prompt.contains("所有 object 字段均为必填；数组可为空但不得省略。"), agent.key());
             assertTrue(prompt.contains("禁止添加未声明的顶层字段。"), agent.key());
             assertFalse(contract.arrayItemContracts().isEmpty(), agent.key());
             for (Map.Entry<String, ArrayItemContract> arrayContract : contract.arrayItemContracts().entrySet()) {
                 if (arrayContract.getValue().scalarString()) {
                     assertTrue(
-                            prompt.contains("数组 " + arrayContract.getKey() + " 的每项必须是 string。"),
+                            prompt.contains("数组字段 " + arrayContract.getKey() + " 的每项必须是 string。"),
                             agent.key() + " " + arrayContract.getKey());
                 } else {
                     assertTrue(
-                            prompt.contains("数组 " + arrayContract.getKey() + " 的每项必须且只能包含 "
+                            prompt.contains("数组字段 " + arrayContract.getKey() + " 的每项必须且只能包含 "
                                     + String.join("、", arrayContract.getValue().objectFields()) + "。"),
                             agent.key() + " " + arrayContract.getKey());
                 }
@@ -305,9 +315,9 @@ class ImageAgentCatalogTest {
         return new SchemaContract(
                 "StoryboardProposal",
                 "STORYBOARD_PROPOSAL",
-                List.of("shots[]"),
+                List.of(arrayField("shots")),
                 Map.of(
-                        "shots[]",
+                        "shots",
                         objectArray(
                                 "sceneIndex",
                                 "beat",
@@ -321,6 +331,14 @@ class ImageAgentCatalogTest {
 
     private static ArrayItemContract objectArray(String... fields) {
         return new ArrayItemContract(false, List.of(fields));
+    }
+
+    private static FieldContract field(String name) {
+        return new FieldContract(name, false);
+    }
+
+    private static FieldContract arrayField(String name) {
+        return new FieldContract(name, true);
     }
 
     private static ArrayItemContract stringArray() {
@@ -380,6 +398,13 @@ class ImageAgentCatalogTest {
         assertColumn(ImageAgentPromptVersion.class, "aiProviderId", "ai_provider_id", true, false, false);
         assertColumn(ImageAgentPromptVersion.class, "temperature", "temperature", false, false, false);
         assertColumn(ImageAgentPromptVersion.class, "enabled", "enabled", false, false, false);
+        assertTrue(ImageAgentPromptVersion.class.isAnnotationPresent(Immutable.class));
+        assertSnapshotColumnIsImmutable(ImageAgentPromptVersion.class, "agentKey");
+        assertSnapshotColumnIsImmutable(ImageAgentPromptVersion.class, "promptVersion");
+        assertSnapshotColumnIsImmutable(ImageAgentPromptVersion.class, "systemPrompt");
+        assertSnapshotColumnIsImmutable(ImageAgentPromptVersion.class, "aiProviderId");
+        assertSnapshotColumnIsImmutable(ImageAgentPromptVersion.class, "temperature");
+        assertSnapshotColumnIsImmutable(ImageAgentPromptVersion.class, "enabled");
 
         assertTable(ImageFlowConfig.class, "tb_image_flow_config");
         assertColumn(ImageFlowConfig.class, "flowKey", "flow_key", false, true, false);
@@ -430,11 +455,23 @@ class ImageAgentCatalogTest {
                 .anyMatch(field -> field.getType() == long.class && field.isAnnotationPresent(Version.class)));
     }
 
+    private static void assertSnapshotColumnIsImmutable(Class<?> type, String fieldName) throws Exception {
+        assertFalse(type.getDeclaredField(fieldName).getAnnotation(Column.class).updatable(), fieldName);
+    }
+
     private record SchemaContract(
             String schemaName,
             String markerKey,
-            List<String> topLevelFields,
+            List<FieldContract> topLevelFields,
             Map<String, ArrayItemContract> arrayItemContracts) {
+        private String topLevelDeclaration() {
+            return topLevelFields.stream()
+                    .map(field -> field.name() + (field.array() ? "（array）" : ""))
+                    .collect(java.util.stream.Collectors.joining("、"));
+        }
+    }
+
+    private record FieldContract(String name, boolean array) {
     }
 
     private record ArrayItemContract(boolean scalarString, List<String> objectFields) {
