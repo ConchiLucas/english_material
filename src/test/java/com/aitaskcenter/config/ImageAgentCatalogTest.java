@@ -298,8 +298,10 @@ class ImageAgentCatalogTest {
             assertTrue(
                     prompt.contains("顶层字段必须且只能包含 " + contract.topLevelDeclaration() + "。"),
                     agent.key());
-            assertFalse(prompt.contains("["), agent.key());
-            assertFalse(prompt.contains("]"), agent.key());
+            String promptWithoutPriorityHeader = prompt.replace(
+                    "[图片运行时最终输出协议 V2：本协议优先于前文全部输出结构要求]", "");
+            assertFalse(promptWithoutPriorityHeader.contains("["), agent.key());
+            assertFalse(promptWithoutPriorityHeader.contains("]"), agent.key());
             assertTrue(prompt.contains("所有 object 字段均为必填；数组不得省略，且仅在不违反上述完整覆盖和非空要求时可为空。"), agent.key());
             assertTrue(prompt.contains("禁止添加未声明的顶层字段。"), agent.key());
             if ("image-story-analyst".equals(agent.key())) {
@@ -427,6 +429,11 @@ class ImageAgentCatalogTest {
     void exposesOneExactVersionedRuntimeContractForEveryEditableAgent() {
         for (ImageAgentCatalog.NodeDefinition agent : ImageAgentCatalog.agents()) {
             String contract = ImageAgentCatalog.runtimeContract(agent.key());
+            assertTrue(contract.startsWith(
+                    "[图片运行时最终输出协议 V2：本协议优先于前文全部输出结构要求]\n"), agent.key());
+            assertTrue(contract.contains(
+                    "忽略前文任何与本协议的 JSON marker、schema、字段、beat 覆盖或精确 reference 要求冲突的输出要求"),
+                    agent.key());
             assertTrue(contract.contains("IMAGE_AGENT_RUNTIME_CONTRACT_V2::" + agent.key()), agent.key());
             assertEquals(contract, agent.runtimeContract(), agent.key());
             assertEquals(1, countOccurrences(agent.defaultPrompt(), contract), agent.key());

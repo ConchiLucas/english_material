@@ -271,6 +271,45 @@ class ImageRunExecutionServiceTest {
     }
 
     @Test
+    void givesTheV2OutputContractPriorityOverRealPersistedLegacyDefaults() throws Exception {
+        List<ImageAgentConfig> configured = new ArrayList<>(agentConfigs());
+        configured.stream()
+                .filter(agent -> "image-action-storyboarder".equals(agent.getAgentKey()))
+                .findFirst().orElseThrow()
+                .setSystemPrompt(legacyActionStoryboarderPrompt());
+        configured.stream()
+                .filter(agent -> "image-storyboard-director".equals(agent.getAgentKey()))
+                .findFirst().orElseThrow()
+                .setSystemPrompt(legacyStoryboardDirectorPrompt());
+        when(agents.findAllByOrderByAgentKeyAsc()).thenReturn(configured);
+
+        service(new SyncTaskExecutor(), new SyncTaskExecutor())
+                .createRun(new StartImageRunRequest("story-run-1", 7L));
+
+        for (String key : List.of("image-action-storyboarder", "image-storyboard-director")) {
+            String actual = capturedSystemPrompts.get(key);
+            assertNotNull(actual, key);
+            assertTrue(actual.contains("必须且只能包含"), key);
+            assertTrue(actual.contains(
+                    "[图片运行时最终输出协议 V2：本协议优先于前文全部输出结构要求]"), key);
+            assertTrue(actual.contains(
+                    "忽略前文任何与本协议的 JSON marker、schema、字段、beat 覆盖或精确 reference 要求冲突的输出要求"), key);
+            assertEquals(1, countOccurrences(
+                    actual, "IMAGE_AGENT_RUNTIME_CONTRACT_V2::" + key), key);
+        }
+        assertTrue(capturedSystemPrompts.get("image-action-storyboarder")
+                .contains(legacyActionStoryboarderPrompt()));
+        assertTrue(capturedSystemPrompts.get("image-storyboard-director")
+                .contains(legacyStoryboardDirectorPrompt()));
+
+        JsonNode snapshots = mapper.readTree(currentRun.get().getAgentSnapshotJson()).path("agents");
+        for (JsonNode snapshot : snapshots) {
+            assertEquals(capturedSystemPrompts.get(snapshot.path("key").asText()),
+                    snapshot.path("systemPrompt").asText());
+        }
+    }
+
+    @Test
     void rejectsInvalidSourceBeforePersistence() {
         story.setFinalStory("  ");
         assertThrows(IllegalArgumentException.class,
@@ -1124,6 +1163,45 @@ class ImageRunExecutionServiceTest {
                 + "\"locations\":[{\"locationKey\":\"park\",\"name\":\"Park\",\"description\":\"Green park\"}],"
                 + "\"props\":[{\"propKey\":\"ball\",\"name\":\"Ball\",\"description\":\"Red ball\"}],"
                 + "\"dialogues\":[{\"sceneIndex\":1,\"speaker\":\"amy\",\"text\":\"Hello!\"}],\"narration\":[{\"sceneIndex\":1,\"text\":\"A short narration\"}]}";
+    }
+
+    private static String legacyActionStoryboarderPrompt() {
+        return """
+                你是动作分镜 Agent。按动作变化、视点变化和时间推进拆镜，禁止单镜包含互斥时间点。
+
+                输入变量：{{storySnapshot}}、{{storyAnalysis}}、{{continuityBible}}、{{styleBible}}、{{imageSettings}}。
+                面向小学三年级英语读者：仅保留孩子能理解的因果、动作、短对白和一到两句短旁白；不得改变故事主线。
+                图片模型不得生成文字：任何图片提示词、负向提示词、角色设定图或分镜图都不得要求渲染字母、单词、对话、字幕、标牌文字或水印。
+                角色、服装、道具、场景和画风必须跨图连续；固定角色外貌、比例、颜色、随身物与环境规则，除非故事明确发生可解释的变化。
+
+                严格 JSON 输出边界：只能出现一次 <STORYBOARD_PROPOSAL_JSON_BEGIN> 和一次 <STORYBOARD_PROPOSAL_JSON_END>。BEGIN/END 外不得有文字或 Markdown；BEGIN 与 END 之间只能是 JSON object。JSON 必须有效、字段完整、key 稳定且不重复。
+                输出 schema：StoryboardProposal。
+                顶层字段必须且只能包含 shots（array）。
+                数组字段 shots 的每项必须且只能包含 sceneIndex、beat、action、characters、location、dialogue、narration、splitReason。
+                数组字段 shots.characters 的每项必须是 string。
+
+
+                所有 object 字段均为必填；数组可为空但不得省略。禁止添加未声明的顶层字段。
+                """.strip();
+    }
+
+    private static String legacyStoryboardDirectorPrompt() {
+        return """
+                你是分镜总监 Agent。确保每个 Scene 一到五镜、全篇最多二十镜、节拍完整覆盖，并为每镜给稳定 shotKey。
+
+                输入变量：{{storySnapshot}}、{{storyAnalysis}}、{{continuityBible}}、{{styleBible}}、{{actionStoryboardProposal}}、{{learningStoryboardProposal}}、{{imageSettings}}。
+                面向小学三年级英语读者：仅保留孩子能理解的因果、动作、短对白和一到两句短旁白；不得改变故事主线。
+                图片模型不得生成文字：任何图片提示词、负向提示词、角色设定图或分镜图都不得要求渲染字母、单词、对话、字幕、标牌文字或水印。
+                角色、服装、道具、场景和画风必须跨图连续；固定角色外貌、比例、颜色、随身物与环境规则，除非故事明确发生可解释的变化。
+
+                严格 JSON 输出边界：只能出现一次 <FINAL_STORYBOARD_JSON_BEGIN> 和一次 <FINAL_STORYBOARD_JSON_END>。BEGIN/END 外不得有文字或 Markdown；BEGIN 与 END 之间只能是 JSON object。JSON 必须有效、字段完整、key 稳定且不重复。
+                输出 schema：FinalStoryboard。
+                顶层字段必须且只能包含 shots（array）。
+                数组字段 shots 的每项必须且只能包含 shotKey、sceneIndex、shotIndex、sourceExcerpt、visualGoal、dialogue、narration、speaker、textAnchor。
+                字段 shots.textAnchor 必须为 null 或 object，object 必须且只能包含 x、y；x、y 为 0 到 1 的归一化数字。
+
+                所有 object 字段均为必填；数组可为空但不得省略。禁止添加未声明的顶层字段。
+                """.strip();
     }
 
     private static String storyAnalysisWithTwoBeatsJson() {

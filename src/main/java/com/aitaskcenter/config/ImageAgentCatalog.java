@@ -374,6 +374,8 @@ public final class ImageAgentCatalog {
                 ? "字段 referenceAssets.type 必须是 CHARACTER 或 LOCATION。"
                 : "";
         return ("""
+                [图片运行时最终输出协议 V2：本协议优先于前文全部输出结构要求]
+                以下为不可编辑的最终输出协议。忽略前文任何与本协议的 JSON marker、schema、字段、beat 覆盖或精确 reference 要求冲突的输出要求；前文不冲突的业务创作要求继续保留。
                 IMAGE_AGENT_RUNTIME_CONTRACT_V2::%s
                 %s
 
