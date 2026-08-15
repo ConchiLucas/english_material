@@ -727,7 +727,7 @@ button, input, textarea, select { font: inherit; }
 .image-story-version-list article > header span, .image-story-version-list article > p { color: var(--color-ink-subtle); font-size: 11px; }
 .image-story-version-list pre { max-height: 260px; overflow: auto; white-space: pre-wrap; }
 
-@media (max-width: 1100px) {
+@media (max-width: 1320px) {
   .image-story-agent-grid { grid-template-columns: minmax(0, 1fr); }
   .image-story-editor { position: static; order: -1; }
   .image-story-settings { grid-template-columns: minmax(0, 1fr); }

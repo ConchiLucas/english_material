@@ -1,7 +1,7 @@
 import { App as AntApp } from 'antd';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AIProviderConfigItem } from './api';
 import ImageAgentFlowPage from './ImageAgentFlowPage';
 import type { ImageAgentFlow, ImageAgentNode, ImagePromptVersion, ImageStylePreset } from './image-story-types';
@@ -15,6 +15,13 @@ const apiMocks = vi.hoisted(() => ({
 vi.mock('./api', async (importOriginal) => ({ ...await importOriginal<typeof import('./api')>(), ...apiMocks }));
 
 const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = new Promise<T>((done) => { resolve = done; }); return { promise, resolve }; };
+interface ConfirmLifecycle { title?: unknown; onCancel?: () => void; onOk?: () => void; afterClose?: () => void; }
+const installConfirmHarness = () => {
+  const confirms: ConfirmLifecycle[] = [];
+  const confirm = vi.fn((config: ConfirmLifecycle) => { confirms.push(config); return { destroy: vi.fn(), update: vi.fn() }; });
+  vi.spyOn(AntApp, 'useApp').mockReturnValue({ message: { error: vi.fn(), success: vi.fn() }, notification: {}, modal: { confirm } } as never);
+  return { confirms, confirm };
+};
 const node = (key: string, name: string, stageKey: string, order: number, overrides: Partial<ImageAgentNode> = {}): ImageAgentNode => ({
   key, name, stageKey, order, nodeKind: 'AGENT', roleType: 'PLANNER', parallelGroup: null,
   description: `${name} description`, variables: ['storySnapshot'], systemPrompt: `${key} prompt`, aiProviderId: 'text-ok',
@@ -40,12 +47,14 @@ const providers: AIProviderConfigItem[] = [
   { id: 'text-ok', label: 'Text', type: 'openai-compatible', base_url: '', api_key: '', model: 'text-model', max_tokens: 4096, capabilities: ['TEXT_GENERATION'], enabled: true },
   { id: 'text-off', label: 'Text Off', type: 'openai-compatible', base_url: '', api_key: '', model: 'off', max_tokens: 4096, capabilities: ['TEXT_GENERATION'], enabled: false },
   { id: 'image-ok', label: 'Image', type: 'openai-compatible', base_url: '', api_key: '', model: 'image-model', max_tokens: 4096, capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'], enabled: true },
+  { id: 'image-two', label: 'Image Two', type: 'openai-compatible', base_url: '', api_key: '', model: 'image-two-model', max_tokens: 4096, capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'], enabled: true },
   { id: 'image-no-ref', label: 'No refs', type: 'openai-compatible', base_url: '', api_key: '', model: 'bad', max_tokens: 4096, capabilities: ['IMAGE_GENERATION'], enabled: true },
 ];
 const renderPage = (flow = makeFlow(), onDirtyChange = vi.fn()) => { apiMocks.getImageAgentFlow.mockResolvedValue(flow); apiMocks.getImageStylePresets.mockResolvedValue(flow.stylePresets); return render(<AntApp><ImageAgentFlowPage providers={providers} onDirtyChange={onDirtyChange} /></AntApp>); };
 
 describe('ImageAgentFlowPage', () => {
   beforeEach(() => { vi.clearAllMocks(); apiMocks.getImageSourceStories.mockResolvedValue([]); });
+  afterEach(() => { vi.restoreAllMocks(); });
 
   it('renders four fixed stages, nine Agents and three clickable read-only programs', async () => {
     const user = userEvent.setup(); renderPage(); expect(await screen.findByText('故事理解')).toBeInTheDocument();
@@ -97,9 +106,9 @@ describe('ImageAgentFlowPage', () => {
   });
 
   it('protects dirty edits when switching tabs and discards only after confirmation', async () => {
-    const user = userEvent.setup(); renderPage(); await user.type(await screen.findByLabelText('System Prompt'), ' changed'); await user.click(screen.getByRole('tab', { name: '画风预设' }));
-    const titles = await screen.findAllByText('离开未保存的 Agent？'); const firstConfirm = titles.at(-1)!.closest('.ant-modal-confirm')!; await user.click(firstConfirm.querySelectorAll('button')[0] as HTMLButtonElement); expect(screen.getByLabelText('System Prompt')).toBeInTheDocument();
-    await user.click(screen.getByRole('tab', { name: '画风预设' })); const nextTitles = await screen.findAllByText('离开未保存的 Agent？'); const secondConfirm = nextTitles.at(-1)!.closest('.ant-modal-confirm')!; const secondButtons = secondConfirm.querySelectorAll('button'); await user.click(secondButtons[secondButtons.length - 1] as HTMLButtonElement); expect(await screen.findByRole('heading', { name: '画风预设' })).toBeInTheDocument();
+    const modal = installConfirmHarness(); const user = userEvent.setup(); renderPage(); await user.type(await screen.findByLabelText('System Prompt'), ' changed'); await user.click(screen.getByRole('tab', { name: '画风预设' }));
+    expect(modal.confirm).toHaveBeenCalledTimes(1); act(() => modal.confirms[0]?.onCancel?.()); expect(screen.getByLabelText('System Prompt')).toBeInTheDocument(); act(() => modal.confirms[0]?.afterClose?.());
+    await user.click(screen.getByRole('tab', { name: '画风预设' })); act(() => { modal.confirms[1]?.onOk?.(); modal.confirms[1]?.afterClose?.(); }); expect(await screen.findByRole('heading', { name: '画风预设' })).toBeInTheDocument();
   });
 
   it('protects dirty edits when switching nodes', async () => {
@@ -107,6 +116,31 @@ describe('ImageAgentFlowPage', () => {
     await user.click(screen.getByRole('button', { name: '连续性 Agent Agent' }));
     const titles = await screen.findAllByText('离开未保存的 Agent？'); const confirm = titles.at(-1)!.closest('.ant-modal-confirm')!; const buttons = confirm.querySelectorAll('button'); await user.click(buttons[buttons.length - 1] as HTMLButtonElement);
     expect(await screen.findByRole('heading', { name: '连续性 Agent' })).toBeInTheDocument();
+  });
+
+  it('keeps one dirty confirmation locked until afterClose', async () => {
+    const modal = installConfirmHarness(); const user = userEvent.setup(); renderPage();
+    await user.type(await screen.findByLabelText('System Prompt'), ' changed');
+    await user.click(screen.getByRole('tab', { name: '画风预设' }));
+    expect(modal.confirm).toHaveBeenCalledTimes(1);
+    act(() => modal.confirms[0]?.onCancel?.());
+    await user.click(screen.getByRole('tab', { name: '图片模型' }));
+    expect(modal.confirm).toHaveBeenCalledTimes(1);
+    act(() => modal.confirms[0]?.afterClose?.());
+    await user.click(screen.getByRole('tab', { name: '图片模型' }));
+    expect(modal.confirm).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not recreate Agent dirty state when a discarded draft save resolves late', async () => {
+    const modal = installConfirmHarness(); const pending = deferred<ImageAgentNode>(); const dirty = vi.fn();
+    apiMocks.updateImageAgent.mockReturnValue(pending.promise); const user = userEvent.setup(); renderPage(makeFlow(), dirty);
+    const prompt = await screen.findByLabelText('System Prompt'); await user.clear(prompt); await user.type(prompt, 'submitted');
+    await user.click(screen.getByRole('button', { name: '保存 Agent' })); await user.clear(prompt); await user.type(prompt, 'discard me');
+    await user.click(screen.getByRole('tab', { name: '画风预设' })); act(() => { modal.confirms[0]?.onOk?.(); modal.confirms[0]?.afterClose?.(); });
+    await act(async () => { pending.resolve({ ...makeFlow().stages[0].nodes[0], systemPrompt: 'submitted', updatedAt: '2026-08-15T02:00:00Z', promptVersion: 2 }); await pending.promise; });
+    await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(false));
+    await user.click(screen.getByRole('tab', { name: '图片模型' })); expect(modal.confirm).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole('heading', { name: '图片模型' })).toBeInTheDocument();
   });
 
   it('loads versions newest-first and restores using the latest timestamp', async () => {
@@ -147,6 +181,26 @@ describe('ImageAgentFlowPage', () => {
     expect(apiMocks.updateImageStylePreset).toHaveBeenCalledWith(7, expect.objectContaining({ enabled: false, updatedAt: '2026-08-15T01:00:00Z' }));
   });
 
+  it('guards a dirty style before editing another preset or creating a new one', async () => {
+    const modal = installConfirmHarness(); const flow = makeFlow(); flow.stylePresets.push(style({ id: 8, key: 'ink', name: '线稿风', builtIn: false }));
+    const user = userEvent.setup(); renderPage(flow); await user.click(await screen.findByRole('tab', { name: '画风预设' }));
+    await user.click(screen.getByRole('button', { name: '编辑 水彩绘本' })); await user.type(screen.getByLabelText('画风名称'), ' changed');
+    await user.click(screen.getByRole('button', { name: '编辑 线稿风' })); expect(modal.confirm).toHaveBeenCalledTimes(1);
+    act(() => modal.confirms[0]?.onCancel?.()); expect(screen.getByLabelText('画风名称')).toHaveValue('水彩绘本 changed');
+    act(() => modal.confirms[0]?.afterClose?.()); await user.click(screen.getByRole('button', { name: '新增画风' })); expect(modal.confirm).toHaveBeenCalledTimes(2);
+    act(() => { modal.confirms[1]?.onOk?.(); modal.confirms[1]?.afterClose?.(); }); expect(screen.getByLabelText('画风名称')).toHaveValue('');
+  });
+
+  it('keeps a late created style identity away from a newly selected draft', async () => {
+    const modal = installConfirmHarness(); const pending = deferred<ImageStylePreset>(); apiMocks.createImageStylePreset.mockReturnValueOnce(pending.promise).mockResolvedValueOnce(style({ id: 9, key: 'second', name: '第二个', builtIn: false }));
+    const user = userEvent.setup(); renderPage(); await user.click(await screen.findByRole('tab', { name: '画风预设' })); await user.click(screen.getByRole('button', { name: '新增画风' }));
+    await user.type(screen.getByLabelText('画风名称'), '第一个'); await user.type(screen.getByLabelText('正向风格约束'), 'bright'); await user.click(screen.getByRole('button', { name: '保存画风' }));
+    await user.click(screen.getByRole('button', { name: '新增画风' })); act(() => { modal.confirms[0]?.onOk?.(); modal.confirms[0]?.afterClose?.(); });
+    await act(async () => { pending.resolve(style({ id: 8, key: 'first', name: '第一个', positivePrompt: 'bright', builtIn: false, updatedAt: '2026-08-15T02:00:00Z' })); await pending.promise; });
+    expect(screen.getByLabelText('画风名称')).toHaveValue(''); await user.type(screen.getByLabelText('画风名称'), '第二个'); await user.type(screen.getByLabelText('正向风格约束'), 'clean'); await waitFor(() => expect(screen.getByRole('button', { name: /保存画风/ })).not.toBeDisabled()); await user.click(screen.getByRole('button', { name: /保存画风/ }));
+    await waitFor(() => expect(apiMocks.createImageStylePreset).toHaveBeenCalledTimes(2)); expect(apiMocks.updateImageStylePreset).not.toHaveBeenCalled();
+  });
+
   it('filters image providers by both capabilities and keeps fixed limits read-only', async () => {
     const user = userEvent.setup(); renderPage(); await user.click(await screen.findByRole('tab', { name: '图片模型' })); expect(screen.getByText('1536 × 864')).toBeInTheDocument(); expect(screen.getByText('每 Scene 最多 5 张')).toBeInTheDocument(); expect(screen.getByText('全篇最多 20 张')).toBeInTheDocument();
     await user.click(screen.getByRole('combobox', { name: '图片 Provider' })); expect(screen.getAllByText('Image · image-model').length).toBeGreaterThan(0); expect(screen.queryByText('No refs · bad')).not.toBeInTheDocument();
@@ -155,6 +209,22 @@ describe('ImageAgentFlowPage', () => {
   it('saves image flow config with optimistic timestamp', async () => {
     apiMocks.updateImageFlowConfig.mockResolvedValue({ ...makeFlow().config, updatedAt: '2026-08-15T02:00:00Z' }); const user = userEvent.setup(); renderPage(); await user.click(await screen.findByRole('tab', { name: '图片模型' })); await user.click(screen.getByRole('button', { name: '保存图片模型' }));
     expect(apiMocks.updateImageFlowConfig).toHaveBeenCalledWith({ imageProviderId: 'image-ok', width: 1536, height: 864, maxShotsPerScene: 5, maxShotsPerStory: 20, updatedAt: '2026-08-15T01:00:00Z' });
+  });
+
+  it('does not recreate image-model dirty state when its discarded save resolves late', async () => {
+    const modal = installConfirmHarness(); const pending = deferred<ImageAgentFlow['config']>(); const dirty = vi.fn(); apiMocks.updateImageFlowConfig.mockReturnValue(pending.promise);
+    const user = userEvent.setup(); renderPage(makeFlow(), dirty); await user.click(await screen.findByRole('tab', { name: '图片模型' }));
+    await user.click(screen.getByRole('combobox', { name: '图片 Provider' })); await user.click(await screen.findByText('Image Two · image-two-model')); await user.click(screen.getByRole('button', { name: '保存图片模型' }));
+    await user.click(screen.getByRole('tab', { name: '画风预设' })); act(() => { modal.confirms[0]?.onOk?.(); modal.confirms[0]?.afterClose?.(); });
+    await act(async () => { pending.resolve({ ...makeFlow().config, imageProviderId: 'image-two', updatedAt: '2026-08-15T02:00:00Z' }); await pending.promise; });
+    await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(false)); await user.click(screen.getByRole('tab', { name: 'Agent 配置' })); expect(modal.confirm).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a newer image-model draft dirty and advances its timestamp after a late save', async () => {
+    const pending = deferred<ImageAgentFlow['config']>(); apiMocks.updateImageFlowConfig.mockReturnValueOnce(pending.promise).mockResolvedValueOnce({ ...makeFlow().config, updatedAt: '2026-08-15T03:00:00Z' });
+    const user = userEvent.setup(); renderPage(); await user.click(await screen.findByRole('tab', { name: '图片模型' })); await user.click(screen.getByRole('combobox', { name: '图片 Provider' })); await user.click(await screen.findByText('Image Two · image-two-model')); await user.click(screen.getByRole('button', { name: '保存图片模型' }));
+    await user.click(screen.getByRole('combobox', { name: '图片 Provider' })); await user.click(screen.getAllByText('Image · image-model').at(-1)!); await act(async () => { pending.resolve({ ...makeFlow().config, imageProviderId: 'image-two', updatedAt: '2026-08-15T02:00:00Z' }); await pending.promise; });
+    await waitFor(() => expect(screen.getByRole('button', { name: /保存图片模型/ })).not.toBeDisabled()); await user.click(screen.getByRole('button', { name: /保存图片模型/ })); await waitFor(() => expect(apiMocks.updateImageFlowConfig).toHaveBeenCalledTimes(2)); expect(apiMocks.updateImageFlowConfig.mock.calls[1][0]).toEqual(expect.objectContaining({ imageProviderId: 'image-ok', updatedAt: '2026-08-15T02:00:00Z' }));
   });
 
   it('previews a source story and prevents double-submit when creating a batch', async () => {
@@ -175,6 +245,38 @@ describe('ImageAgentFlowPage', () => {
     const flow = makeFlow(); flow.stages[0].nodes[0].enabled = false; flow.stages[0].nodes[1].aiProviderId = 'deleted-provider'; const user = userEvent.setup(); renderPage(flow); await user.click(await screen.findByRole('button', { name: '开始生成' }));
     const dialogs = await screen.findAllByRole('dialog'); const startDialog = dialogs.at(-1)!;
     expect(within(startDialog).getByText(/故事分析 Agent.*已停用/)).toBeInTheDocument(); expect(within(startDialog).getByText(/连续性 Agent.*文本 Provider 不可用/)).toBeInTheDocument(); expect(within(startDialog).getByRole('button', { name: '创建图片批次' })).toBeDisabled();
+  });
+
+  it('clears a selected story that is absent from the latest source response', async () => {
+    const first = { runId: 'story-run-1', words: [], wordsError: null, targetGrade: '三年级上册', status: 'COMPLETED', finalStory: 'A complete story.', createdAt: '2026-08-14T01:00:00Z', finishedAt: null };
+    const second = { ...first, runId: 'story-run-2', finalStory: 'Another complete story.' }; apiMocks.getImageSourceStories.mockResolvedValueOnce([first]).mockResolvedValueOnce([second]);
+    const user = userEvent.setup(); renderPage(); await user.click(await screen.findByRole('button', { name: '开始生成' })); let dialog = (await screen.findAllByRole('dialog')).at(-1)!;
+    await user.click(within(dialog).getByRole('combobox', { name: '故事批次' })); await user.click((await screen.findAllByText(/story-run-1/)).at(-1)!); await user.click(within(dialog).getByRole('combobox', { name: '画风预设' })); await user.click(screen.getAllByText('水彩绘本').at(-1)!);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' })); fireEvent.click(screen.getByRole('button', { name: '开始生成' })); await waitFor(() => expect(apiMocks.getImageSourceStories).toHaveBeenCalledTimes(2)); dialog = (await screen.findAllByRole('dialog')).at(-1)!; await waitFor(() => expect(within(dialog).getByRole('button', { name: '创建图片批次' })).toBeDisabled());
+    fireEvent.click(within(dialog).getByRole('button', { name: '创建图片批次' })); expect(apiMocks.createImageRun).not.toHaveBeenCalled();
+  });
+
+  it('blocks a selected style after it becomes disabled even when another style is enabled', async () => {
+    const source = { runId: 'story-run-1', words: [], wordsError: null, targetGrade: '三年级上册', status: 'COMPLETED', finalStory: 'A complete story.', createdAt: '2026-08-14T01:00:00Z', finishedAt: null }; apiMocks.getImageSourceStories.mockResolvedValue([source]);
+    const flow = makeFlow(); flow.stylePresets.push(style({ id: 8, key: 'ink', name: '线稿风', builtIn: false })); apiMocks.updateImageStylePreset.mockResolvedValue(style({ enabled: false, updatedAt: '2026-08-15T02:00:00Z' }));
+    const user = userEvent.setup(); renderPage(flow); await user.click(await screen.findByRole('button', { name: '开始生成' })); let dialog = (await screen.findAllByRole('dialog')).at(-1)!;
+    await user.click(within(dialog).getByRole('combobox', { name: '画风预设' })); await user.click(screen.getAllByText('水彩绘本').at(-1)!); fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    fireEvent.click(screen.getByRole('tab', { name: '画风预设' })); await user.click(await screen.findByRole('button', { name: '编辑 水彩绘本' })); await user.click(screen.getByRole('switch', { name: '启用画风' })); await user.click(screen.getByRole('button', { name: '保存画风' })); await waitFor(() => expect(apiMocks.updateImageStylePreset).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: '开始生成' })); dialog = (await screen.findAllByRole('dialog')).at(-1)!; await user.click(within(dialog).getByRole('combobox', { name: '故事批次' })); await user.click((await screen.findAllByText(/story-run-1/)).at(-1)!); await waitFor(() => expect(within(dialog).getByRole('button', { name: '创建图片批次' })).toBeDisabled());
+    fireEvent.click(within(dialog).getByRole('button', { name: '创建图片批次' })); expect(apiMocks.createImageRun).not.toHaveBeenCalled();
+  });
+
+  it('shows preflight as a direct dependency of both generation programs', async () => {
+    const user = userEvent.setup(); renderPage(); const detail = await screen.findByLabelText('图片节点详情');
+    await user.click(screen.getByRole('button', { name: '分镜图生成 PROGRAM' })); expect(within(detail).getByText(/出图校对 Agent.*参考图生成/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '文字合成 PROGRAM' })); expect(within(detail).getByText(/出图校对 Agent.*分镜图生成/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '出图校对 Agent Agent' })); expect(within(detail).getByText(/参考图生成.*分镜图生成.*文字合成/)).toBeInTheDocument();
+  });
+
+  it('uses the single-column detail-first layout at 1300px and scrolls the selected detail', async () => {
+    vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({ matches: query === '(max-width: 1320px)', media: query, onchange: null, addListener: vi.fn(), removeListener: vi.fn(), addEventListener: vi.fn(), removeEventListener: vi.fn(), dispatchEvent: vi.fn() } as MediaQueryList));
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => { callback(0); return 1; }); const user = userEvent.setup(); renderPage(); const detail = await screen.findByLabelText('图片节点详情'); const scroll = vi.fn(); detail.scrollIntoView = scroll;
+    await user.click(screen.getByRole('button', { name: '连续性 Agent Agent' })); expect(scroll).toHaveBeenCalledWith({ block: 'start', behavior: 'smooth' });
   });
 
   it('blocks an empty or invalid image provider and has no review, scoring, or redraw controls', async () => {

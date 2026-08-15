@@ -27,8 +27,8 @@ const upstreamByNode: Record<string, string[]> = {
   'image-shot-prompt-engineer': ['image-continuity-designer', 'image-art-director', 'image-storyboard-director', 'image-reference-planner'],
   'image-prompt-preflight': ['image-story-analyst', 'image-continuity-designer', 'image-art-director', 'image-storyboard-director', 'image-reference-planner', 'image-shot-prompt-engineer'],
   'reference-image-generator': ['image-prompt-preflight'],
-  'shot-image-generator': ['reference-image-generator'],
-  'text-compositor': ['shot-image-generator'],
+  'shot-image-generator': ['image-prompt-preflight', 'reference-image-generator'],
+  'text-compositor': ['image-prompt-preflight', 'shot-image-generator'],
 };
 
 const fromNode = (node: ImageAgentNode): AgentDraft => ({ systemPrompt: node.systemPrompt ?? '', aiProviderId: node.aiProviderId ?? '', temperature: node.temperature ?? 0.7, enabled: node.enabled !== false, updatedAt: node.updatedAt });
@@ -56,7 +56,8 @@ export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAg
   const [sources, setSources] = useState<ImageSourceStory[]>([]); const [sourcesLoading, setSourcesLoading] = useState(false); const [sourcesError, setSourcesError] = useState('');
   const [storyRunId, setStoryRunId] = useState(''); const [stylePresetId, setStylePresetId] = useState<number | null>(null); const [creating, setCreating] = useState(false); const [createdRunId, setCreatedRunId] = useState('');
   const flowRef = useRef<ImageAgentFlow | null>(null); const selectedKeyRef = useRef(''); const draftRef = useRef<AgentDraft | null>(null);
-  const dirtyRef = useRef(false); const confirmOpenRef = useRef(false); const versionRequestRef = useRef(0); const sourceRequestRef = useRef(0); const detailRef = useRef<HTMLElement | null>(null); const onDirtyRef = useRef(onDirtyChange);
+  const dirtyRef = useRef(false); const confirmOpenRef = useRef(false); const versionRequestRef = useRef(0); const sourceRequestRef = useRef(0); const loadRequestRef = useRef(0); const detailRef = useRef<HTMLElement | null>(null); const onDirtyRef = useRef(onDirtyChange);
+  const agentDraftGenerationRef = useRef(0); const styleDraftGenerationRef = useRef(0); const modelDraftGenerationRef = useRef(0);
 
   const nodes = useMemo(() => flow?.stages.flatMap((stage) => stage.nodes) ?? [], [flow]);
   const selected = useMemo(() => nodes.find((item) => item.key === selectedKey) ?? null, [nodes, selectedKey]);
@@ -64,8 +65,10 @@ export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAg
   const currentTextProviderValid = !!draft && textProviders.some((item) => item.id === draft.aiProviderId);
   const currentImageProviderValid = imageProviders.some((item) => item.id === modelProviderId);
   const savedImageProviderValid = imageProviders.some((item) => item.id === flow?.config.imageProviderId);
-  const enabledStyles = (flow?.stylePresets ?? []).filter((item) => item.enabled);
+  const enabledStyles = useMemo(() => (flow?.stylePresets ?? []).filter((item) => item.enabled), [flow]);
   const selectedStory = sources.find((item) => item.runId === storyRunId) ?? null;
+  const selectedStoryValid = !!selectedStory?.finalStory.trim();
+  const selectedStyleValid = stylePresetId !== null && enabledStyles.some((item) => item.id === stylePresetId);
   const savedStyle = styleDraft?.id === null ? null : flow?.stylePresets.find((item) => item.id === styleDraft?.id) ?? null;
   const styleDirty = !!styleDraft && (styleDraft.id === null || !savedStyle || !sameStyle(styleDraft, fromStyle(savedStyle)));
   const modelDirty = !!flow && modelProviderId !== (flow.config.imageProviderId ?? '');
@@ -94,15 +97,17 @@ export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAg
   useEffect(() => { if (!pageDirty) return; const before = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; }; window.addEventListener('beforeunload', before); return () => window.removeEventListener('beforeunload', before); }, [pageDirty]);
 
   const loadFlow = useCallback(async () => {
+    const request = ++loadRequestRef.current;
     setLoading(true); setLoadError('');
     try {
-      const loaded = await getImageAgentFlow(); flowRef.current = loaded; setFlow(loaded);
+      const loaded = await getImageAgentFlow(); if (request !== loadRequestRef.current) return; flowRef.current = loaded; setFlow(loaded);
       const initial = loaded.stages.flatMap((stage) => stage.nodes).find((item) => item.editable);
-      setSelectedKey(initial?.key ?? ''); setDraft(initial ? fromNode(initial) : null); setDirty(false);
-      setModelProviderId(loaded.config.imageProviderId ?? ''); setModelUpdatedAt(loaded.config.updatedAt);
-    } catch (error) { setLoadError(errorText(error)); } finally { setLoading(false); }
+      agentDraftGenerationRef.current += 1; styleDraftGenerationRef.current += 1; modelDraftGenerationRef.current += 1;
+      setSelectedKey(initial?.key ?? ''); setDraft(initial ? fromNode(initial) : null); setDirty(false); setStyleDraft(null);
+      const providerId = loaded.config.imageProviderId ?? ''; setModelProviderId(providerId); setModelUpdatedAt(loaded.config.updatedAt);
+    } catch (error) { if (request === loadRequestRef.current) setLoadError(errorText(error)); } finally { if (request === loadRequestRef.current) setLoading(false); }
   }, []);
-  useEffect(() => { void loadFlow(); return () => { versionRequestRef.current += 1; sourceRequestRef.current += 1; }; }, [loadFlow]);
+  useEffect(() => { void loadFlow(); return () => { loadRequestRef.current += 1; versionRequestRef.current += 1; sourceRequestRef.current += 1; }; }, [loadFlow]);
 
   const mergeNode = (replacement: ImageAgentNode) => {
     const current = flowRef.current; if (!current) return;
@@ -110,17 +115,18 @@ export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAg
     flowRef.current = next; setFlow(next);
   };
   const replaceStyles = (styles: ImageStylePreset[]) => { const current = flowRef.current; if (!current) return; const next = { ...current, stylePresets: styles }; flowRef.current = next; setFlow(next); };
-  const scrollDetail = () => { if (!window.matchMedia?.('(max-width: 1100px)').matches) return; window.requestAnimationFrame(() => detailRef.current?.scrollIntoView?.({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })); };
-  const selectNodeNow = (node: ImageAgentNode) => { versionRequestRef.current += 1; setVersionsOpen(false); setSelectedKey(node.key); setDraft(node.editable ? fromNode(node) : null); setDirty(false); scrollDetail(); };
+  const scrollDetail = () => { if (!window.matchMedia?.('(max-width: 1320px)').matches) return; window.requestAnimationFrame(() => detailRef.current?.scrollIntoView?.({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })); };
+  const selectNodeNow = (node: ImageAgentNode) => { agentDraftGenerationRef.current += 1; versionRequestRef.current += 1; setVersionsOpen(false); setSelectedKey(node.key); setDraft(node.editable ? fromNode(node) : null); setDirty(false); scrollDetail(); };
   const discardUnsaved = () => {
+    agentDraftGenerationRef.current += 1; styleDraftGenerationRef.current += 1; modelDraftGenerationRef.current += 1;
     const persisted = flowRef.current;
     const persistedNode = persisted?.stages.flatMap((stage) => stage.nodes).find((item) => item.key === selectedKeyRef.current);
     setDraft(persistedNode?.editable ? fromNode(persistedNode) : null); setDirty(false); setStyleDraft(null);
-    setModelProviderId(persisted?.config.imageProviderId ?? ''); setModelUpdatedAt(persisted?.config.updatedAt ?? null);
+    const providerId = persisted?.config.imageProviderId ?? ''; setModelProviderId(providerId); setModelUpdatedAt(persisted?.config.updatedAt ?? null);
   };
   const confirmDiscard = (action: () => void) => {
     if (!dirtyRef.current) { action(); return; } if (confirmOpenRef.current) return; confirmOpenRef.current = true;
-    modal.confirm({ title: '离开未保存的 Agent？', content: '当前配置尚未保存，继续将丢失这些修改。', okText: '确定', cancelText: '取消', onOk: () => { discardUnsaved(); action(); confirmOpenRef.current = false; }, onCancel: () => { confirmOpenRef.current = false; }, afterClose: () => { confirmOpenRef.current = false; } });
+    modal.confirm({ title: '离开未保存的 Agent？', content: '当前配置尚未保存，继续将丢失这些修改。', okText: '确定', cancelText: '取消', onOk: () => { discardUnsaved(); action(); }, onCancel: () => undefined, afterClose: () => { confirmOpenRef.current = false; } });
   };
   const changeTab = (next: TabKey) => { if (next !== tab) confirmDiscard(() => setTab(next)); };
   const updateDraft = <K extends keyof AgentDraft>(key: K, value: AgentDraft[K]) => { if (!draft || !selected) return; const next = { ...draft, [key]: value }; draftRef.current = next; setDraft(next); setDirty(!sameDraft(next, fromNode(selected))); };
@@ -129,11 +135,12 @@ export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAg
     if (!selected || !draft || saving) return; const prompt = draft.systemPrompt.trim();
     if (!prompt) return void message.error('System Prompt 不能为空'); if (prompt.length > 20_000) return void message.error('System Prompt 不能超过 20000 字符');
     if (!currentTextProviderValid) return void message.error('请选择已启用的文本生成 Provider'); if (!Number.isFinite(draft.temperature) || draft.temperature < 0 || draft.temperature > 2) return void message.error('Temperature 必须在 0 到 2 之间');
-    const key = selected.key; const submitted = { ...draft }; setSaving(true);
+    const key = selected.key; const submitted = { ...draft }; const generation = agentDraftGenerationRef.current; setSaving(true);
     try {
       const saved = await updateImageAgent(key, { systemPrompt: prompt, aiProviderId: draft.aiProviderId, temperature: draft.temperature, enabled: draft.enabled, updatedAt: draft.updatedAt }); mergeNode(saved);
       const current = draftRef.current;
-      if (selectedKeyRef.current === key && current && sameDraft(current, submitted)) { const next = fromNode(saved); draftRef.current = next; setDraft(next); setDirty(false); }
+      if (generation !== agentDraftGenerationRef.current) { if (selectedKeyRef.current === key) { const next = fromNode(saved); draftRef.current = next; setDraft(next); setDirty(false); } }
+      else if (selectedKeyRef.current === key && current && sameDraft(current, submitted)) { const next = fromNode(saved); draftRef.current = next; setDraft(next); setDirty(false); }
       else if (selectedKeyRef.current === key && current) { const next = { ...current, updatedAt: saved.updatedAt }; draftRef.current = next; setDraft(next); setDirty(true); }
       message.success('Agent 配置已保存');
     } catch (error) { message.error(errorText(error)); } finally { setSaving(false); }
@@ -156,14 +163,18 @@ export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAg
     } });
   };
 
-  const editStyle = (preset?: ImageStylePreset) => setStyleDraft(fromStyle(preset));
+  const selectStyleNow = (preset?: ImageStylePreset) => { styleDraftGenerationRef.current += 1; setStyleDraft(fromStyle(preset)); };
+  const editStyle = (preset?: ImageStylePreset) => {
+    if (preset && styleDraft?.id === preset.id) return;
+    if (styleDirty) confirmDiscard(() => selectStyleNow(preset)); else selectStyleNow(preset);
+  };
   const saveStyle = async () => {
-    if (!styleDraft || styleSaving) return; const submitted = { ...styleDraft }; const name = submitted.name.trim(); const positivePrompt = submitted.positivePrompt.trim();
+    if (!styleDraft || styleSaving) return; const submitted = { ...styleDraft }; const generation = styleDraftGenerationRef.current; const name = submitted.name.trim(); const positivePrompt = submitted.positivePrompt.trim();
     if (!name || !positivePrompt) return void message.error('画风名称和正向风格约束不能为空'); setStyleSaving(true);
     try {
       const saved = submitted.id === null ? await createImageStylePreset({ name, positivePrompt, negativePrompt: submitted.negativePrompt.trim(), description: submitted.description.trim(), enabled: submitted.enabled }) : await updateImageStylePreset(submitted.id, { name, positivePrompt, negativePrompt: submitted.negativePrompt.trim(), description: submitted.description.trim(), enabled: submitted.enabled, updatedAt: submitted.updatedAt });
       const currentStyles = flowRef.current?.stylePresets ?? []; const nextStyles = submitted.id === null ? [...currentStyles, saved] : currentStyles.map((item) => item.id === saved.id ? saved : item); replaceStyles(nextStyles);
-      setStyleDraft((current) => {
+      if (generation === styleDraftGenerationRef.current) setStyleDraft((current) => {
         if (!current) return current;
         if (sameStyle(current, submitted)) return fromStyle(saved);
         if (submitted.id === null && current.id === null) return { ...current, id: saved.id, updatedAt: saved.updatedAt };
@@ -173,8 +184,8 @@ export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAg
   };
 
   const saveModel = async () => {
-    if (!currentImageProviderValid || modelSaving) return void message.error('请选择同时支持图片生成和多参考图的 Provider'); const submittedProvider = modelProviderId; const submittedTimestamp = modelUpdatedAt; setModelSaving(true);
-    try { const saved = await updateImageFlowConfig({ imageProviderId: submittedProvider, width: 1536, height: 864, maxShotsPerScene: 5, maxShotsPerStory: 20, updatedAt: submittedTimestamp }); const current = flowRef.current; if (current) { const next = { ...current, config: saved }; flowRef.current = next; setFlow(next); } setModelUpdatedAt(saved.updatedAt); message.success('图片模型已保存'); }
+    if (!currentImageProviderValid || modelSaving) return void message.error('请选择同时支持图片生成和多参考图的 Provider'); const submittedProvider = modelProviderId; const submittedTimestamp = modelUpdatedAt; const generation = modelDraftGenerationRef.current; setModelSaving(true);
+    try { const saved = await updateImageFlowConfig({ imageProviderId: submittedProvider, width: 1536, height: 864, maxShotsPerScene: 5, maxShotsPerStory: 20, updatedAt: submittedTimestamp }); const current = flowRef.current; if (current) { const next = { ...current, config: saved }; flowRef.current = next; setFlow(next); } setModelUpdatedAt(saved.updatedAt); if (generation !== modelDraftGenerationRef.current) setModelProviderId(saved.imageProviderId ?? ''); message.success('图片模型已保存'); }
     catch (error) { message.error(errorText(error)); } finally { setModelSaving(false); }
   };
 
@@ -185,7 +196,9 @@ export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAg
   };
   useEffect(() => { if (startOpen) void loadSources(); else sourceRequestRef.current += 1; }, [startOpen]);
   const createRun = async () => {
-    if (creating || !storyRunId || stylePresetId === null || !savedImageProviderValid || enabledStyles.length === 0 || requiredAgentProblems.length > 0) return; setCreating(true);
+    if (creating) return;
+    if (!selectedStoryValid || !selectedStyleValid || !savedImageProviderValid || requiredAgentProblems.length > 0) return void message.error('当前故事、画风或模型配置已失效，请重新选择后再创建');
+    setCreating(true);
     try { const created = await createImageRun({ storyRunId, stylePresetId }); setCreatedRunId(created.runId); message.success('图片批次已创建'); }
     catch (error) { message.error(errorText(error)); } finally { setCreating(false); }
   };
@@ -247,10 +260,12 @@ export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAg
       <Alert type="info" showIcon message="16:9 · 每个 Scene 1–5 张 · 最多 20 张" description="根据故事含义动态拆成多张图片，生成后由人工审核；第一版不自动重绘。" />
       {sources.length === 0 && <Alert type="warning" showIcon message="没有可用的故事批次，请先完成英文故事生成。" />}
       {enabledStyles.length === 0 && <Alert type="warning" showIcon message="没有启用的画风预设，请先启用或新增画风。" />}
+      {!!storyRunId && !selectedStoryValid && <Alert type="warning" showIcon message="之前选择的故事已不可用，请重新选择故事批次。" />}
+      {stylePresetId !== null && !selectedStyleValid && <Alert type="warning" showIcon message="之前选择的画风已停用或不存在，请重新选择画风。" />}
       {!savedImageProviderValid && <Alert type="warning" showIcon message="尚未配置可用的图片 Provider，请先在图片模型中保存配置。" />}
       {requiredAgentProblems.length > 0 && <Alert type="warning" showIcon message="必需 Agent 尚未就绪" description={<ul>{requiredAgentProblems.map((problem) => <li key={problem}>{problem}</li>)}</ul>} />}
       {createdRunId && <Alert type="success" showIcon message={`批次已创建：${createdRunId}`} description="图片记录将在下一步接入；当前可继续留在本页查看批次编号。" />}
-      <Button type="primary" loading={creating} disabled={creating || !storyRunId || stylePresetId === null || !savedImageProviderValid || !sources.length || !enabledStyles.length || requiredAgentProblems.length > 0} onClick={() => void createRun()}>创建图片批次</Button>
+      <Button type="primary" loading={creating} disabled={creating || !selectedStoryValid || !selectedStyleValid || !savedImageProviderValid || requiredAgentProblems.length > 0} onClick={() => void createRun()}>创建图片批次</Button>
     </Form>}
   </div>;
 
