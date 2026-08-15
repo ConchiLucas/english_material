@@ -22,9 +22,11 @@ public class MinioConfigService {
     private static final Pattern PATH_SEGMENT = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,62}");
 
     private final MinioConfigRepository repository;
+    private final MinioConnectionVerifier verifier;
 
-    public MinioConfigService(MinioConfigRepository repository) {
+    public MinioConfigService(MinioConfigRepository repository, MinioConnectionVerifier verifier) {
         this.repository = repository;
+        this.verifier = verifier;
     }
 
     @Transactional(readOnly = true)
@@ -40,6 +42,7 @@ public class MinioConfigService {
         MinioConfig current = found.orElseGet(MinioConfig::new);
         if (found.isPresent()) requireCurrentTimestamp(current.getUpdatedAt(), request == null ? null : request.updatedAt());
         Normalized normalized = normalize(request, found.map(MinioConfig::getSecretAccessKey).orElse(""));
+        if (normalized.enabled()) verifier.verify(normalized.toStorageConfig());
         current.setConfigKey(DEFAULT_KEY);
         current.setEnabled(normalized.enabled());
         current.setEndpoint(normalized.endpoint());
@@ -49,6 +52,26 @@ public class MinioConfigService {
         current.setBucketName(normalized.bucketName());
         current.setBasePath(normalized.basePath());
         return toView(repository.saveAndFlush(current));
+    }
+
+    @Transactional(readOnly = true)
+    public void test(MinioConfigRequest request) {
+        String savedSecret = repository.findByConfigKey(DEFAULT_KEY)
+                .map(MinioConfig::getSecretAccessKey)
+                .orElse("");
+        Normalized normalized = normalize(request, savedSecret);
+        verifier.verify(normalized.toStorageConfig());
+    }
+
+    @Transactional(readOnly = true)
+    MinioStorageConfig requireEnabled() {
+        MinioConfig config = repository.findByConfigKey(DEFAULT_KEY)
+                .orElseThrow(() -> new IllegalArgumentException("尚未配置 MinIO"));
+        MinioStorageConfig resolved = new MinioStorageConfig(config.isEnabled(), config.getEndpoint(),
+                config.getAccessKeyId(), config.getSecretAccessKey(), config.isUseSsl(),
+                config.getBucketName(), config.getBasePath());
+        if (!resolved.enabled()) throw new IllegalArgumentException("MinIO 配置未启用");
+        return resolved;
     }
 
     Normalized normalize(MinioConfigRequest request, String savedSecret) {
@@ -126,5 +149,10 @@ public class MinioConfigService {
     private static String clean(String value) { return value == null ? "" : value.trim(); }
 
     record Normalized(boolean enabled, String endpoint, String accessKeyId, String secretAccessKey,
-                      boolean useSsl, String bucketName, String basePath) { }
+                      boolean useSsl, String bucketName, String basePath) {
+        MinioStorageConfig toStorageConfig() {
+            return new MinioStorageConfig(enabled, endpoint, accessKeyId, secretAccessKey,
+                    useSsl, bucketName, basePath);
+        }
+    }
 }

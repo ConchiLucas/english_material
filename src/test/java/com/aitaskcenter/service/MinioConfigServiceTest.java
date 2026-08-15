@@ -27,12 +27,14 @@ class MinioConfigServiceTest {
     private static final OffsetDateTime UPDATED_AT = OffsetDateTime.parse("2026-08-16T09:30:00+08:00");
 
     private MinioConfigRepository repository;
+    private MinioConnectionVerifier verifier;
     private MinioConfigService service;
 
     @BeforeEach
     void setUp() {
         repository = Mockito.mock(MinioConfigRepository.class);
-        service = new MinioConfigService(repository);
+        verifier = Mockito.mock(MinioConnectionVerifier.class);
+        service = new MinioConfigService(repository, verifier);
         when(repository.saveAndFlush(any(MinioConfig.class))).thenAnswer(invocation -> invocation.getArgument(0));
     }
 
@@ -72,6 +74,22 @@ class MinioConfigServiceTest {
         assertEquals("image-story", saved.getBasePath());
         assertTrue(result.secretConfigured());
         assertFalse(result.toString().contains(SECRET));
+        verify(verifier).verify(any(MinioStorageConfig.class));
+    }
+
+    @Test
+    void testsUsingSavedSecretWithoutPersisting() {
+        MinioConfig existing = configured();
+        when(repository.findByConfigKey("default")).thenReturn(Optional.of(existing));
+
+        service.test(new MinioConfigRequest(
+                true, "minio.internal:9000", "english-app", "",
+                false, "english-material", "image-story", UPDATED_AT));
+
+        ArgumentCaptor<MinioStorageConfig> capture = ArgumentCaptor.forClass(MinioStorageConfig.class);
+        verify(verifier).verify(capture.capture());
+        assertEquals(SECRET, capture.getValue().secretAccessKey());
+        verify(repository, never()).saveAndFlush(any());
     }
 
     @Test
