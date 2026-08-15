@@ -1,7 +1,9 @@
 package com.aitaskcenter.service;
 
+import com.aitaskcenter.config.ImageProviderPolicy;
 import com.aitaskcenter.dto.AiConfigRequest;
 import com.aitaskcenter.dto.AiProviderConfigItem;
+import com.aitaskcenter.dto.ImageProviderBootstrapRequest;
 import com.aitaskcenter.dto.LocalCliConfigItem;
 import com.aitaskcenter.dto.LocalCliConfigRequest;
 import com.aitaskcenter.model.AiConfig;
@@ -24,6 +26,9 @@ public class AiConfigService {
     private static final String OPENAI_COMPATIBLE = "openai-compatible";
     private static final String ANTHROPIC_COMPATIBLE = "anthropic-compatible";
     private static final String MIMO_TTS = "mimo-tts";
+    private static final String ANTIGRAVITY_IMAGE_ID = "antigravity-gemini-image";
+    private static final String ANTIGRAVITY_IMAGE_LABEL = "Antigravity Gemini Image";
+    private static final String ANTIGRAVITY_IMAGE_MODEL = "gemini-3-pro-image";
 
     private final AiConfigRepository repository;
     private final ObjectMapper objectMapper;
@@ -43,7 +48,10 @@ public class AiConfigService {
 
     // 方法：getProviders
     public AiConfigRequest getProviders() {
-        AiConfigRequest request = getConfig();
+        return redactProviders(getConfig());
+    }
+
+    private AiConfigRequest redactProviders(AiConfigRequest request) {
         request.getProviders().forEach(provider -> {
             String protocol = effectiveProviderProtocol(provider);
             provider.setType(protocol);
@@ -51,6 +59,51 @@ public class AiConfigService {
             provider.setApiKey(null);
         });
         return request;
+    }
+
+    @Transactional
+    public AiConfigRequest bootstrapAntigravityImageProvider(ImageProviderBootstrapRequest request) {
+        if (request == null || !StringUtils.hasText(request.sourceProviderId())) {
+            throw new IllegalArgumentException("请选择凭据来源 Provider");
+        }
+        AiConfig config = repository.findByConfigKey(DEFAULT_KEY)
+                .orElseThrow(() -> new IllegalArgumentException("凭据来源 Provider 不存在"));
+        Map<String, AiProviderConfigItem> providers = fromJson(config.getProviders());
+        String sourceId = request.sourceProviderId().trim();
+        AiProviderConfigItem source = providers.get(sourceId);
+        if (source == null) {
+            throw new IllegalArgumentException("凭据来源 Provider 不存在");
+        }
+        if (providers.containsKey(ANTIGRAVITY_IMAGE_ID)) {
+            throw new IllegalArgumentException("Antigravity 图片模型配置已存在");
+        }
+        if (!source.isEnabled()
+                || !OPENAI_COMPATIBLE.equals(effectiveProviderProtocol(source))
+                || !StringUtils.hasText(source.getBaseUrl())
+                || !StringUtils.hasText(source.getApiKey())) {
+            throw new IllegalArgumentException("来源 Antigravity Provider 配置不可复用");
+        }
+
+        AiProviderConfigItem target = new AiProviderConfigItem();
+        target.setId(ANTIGRAVITY_IMAGE_ID);
+        target.setLabel(ANTIGRAVITY_IMAGE_LABEL);
+        target.setType(OPENAI_COMPATIBLE);
+        target.setBaseUrl(source.getBaseUrl().trim());
+        target.setApiKey(source.getApiKey());
+        target.setModel(ANTIGRAVITY_IMAGE_MODEL);
+        target.setMaxTokens(4096);
+        target.setCapabilities(List.of("IMAGE_GENERATION", "IMAGE_REFERENCE"));
+        target.setOptions(Map.of(
+                "responseFormat", "b64_json",
+                "quality", "hd",
+                "size", "1536x864"));
+        target.setEnabled(true);
+        ImageProviderPolicy.requireExecutable(target);
+
+        providers.put(target.getId(), target);
+        config.setProviders(toJson(providers));
+        repository.save(config);
+        return redactProviders(toRequest(config));
     }
 
     public AiProviderConfigItem getProviderForExecution(String providerId) {

@@ -4,6 +4,7 @@ import com.aitaskcenter.dto.AiActiveRequest;
 import com.aitaskcenter.dto.AiConfigRequest;
 import com.aitaskcenter.dto.AiProviderConfigItem;
 import com.aitaskcenter.dto.ApiResponse;
+import com.aitaskcenter.dto.ImageProviderBootstrapRequest;
 import com.aitaskcenter.dto.LocalCliConfigRequest;
 import com.aitaskcenter.service.AiConfigService;
 import java.util.List;
@@ -41,6 +42,12 @@ public class AiConfigController {
     public ApiResponse<List<AiProviderConfigItem>> saveActive(@RequestBody AiActiveRequest request) {
         service.saveActive(request.getActive());
         return ApiResponse.ok(service.getProviders().getProviders(), "保存成功");
+    }
+
+    @PostMapping("/config/image/bootstrap")
+    public ApiResponse<AiConfigRequest> bootstrapImageProvider(
+            @RequestBody(required = false) ImageProviderBootstrapRequest request) {
+        return ApiResponse.ok(service.bootstrapAntigravityImageProvider(request), "图片模型配置已创建");
     }
 
     @GetMapping("/providers")
