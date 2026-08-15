@@ -14,6 +14,7 @@ import type {
 interface ImageAgentFlowPageProps { providers: AIProviderConfigItem[]; onDirtyChange: (dirty: boolean) => void; }
 interface AgentDraft { systemPrompt: string; aiProviderId: string; temperature: number; enabled: boolean; updatedAt: string | null; }
 interface StyleDraft { id: number | null; name: string; positivePrompt: string; negativePrompt: string; description: string; enabled: boolean; updatedAt: string | null; }
+interface ModelDraft { providerId: string; updatedAt: string | null; }
 type TabKey = 'agents' | 'styles' | 'model';
 
 const upstreamByNode: Record<string, string[]> = {
@@ -33,6 +34,7 @@ const upstreamByNode: Record<string, string[]> = {
 
 const fromNode = (node: ImageAgentNode): AgentDraft => ({ systemPrompt: node.systemPrompt ?? '', aiProviderId: node.aiProviderId ?? '', temperature: node.temperature ?? 0.7, enabled: node.enabled !== false, updatedAt: node.updatedAt });
 const sameDraft = (a: AgentDraft, b: AgentDraft) => a.systemPrompt === b.systemPrompt && a.aiProviderId === b.aiProviderId && a.temperature === b.temperature && a.enabled === b.enabled && a.updatedAt === b.updatedAt;
+const sameModelDraft = (a: ModelDraft, b: ModelDraft) => a.providerId === b.providerId && a.updatedAt === b.updatedAt;
 const fromStyle = (preset?: ImageStylePreset): StyleDraft => preset ? ({ id: preset.id, name: preset.name, positivePrompt: preset.positivePrompt, negativePrompt: preset.negativePrompt, description: preset.description, enabled: preset.enabled, updatedAt: preset.updatedAt }) : ({ id: null, name: '', positivePrompt: '', negativePrompt: '', description: '', enabled: true, updatedAt: null });
 const sameStyle = (a: StyleDraft, b: StyleDraft) => JSON.stringify(a) === JSON.stringify(b);
 const hasCapability = (provider: AIProviderConfigItem, capability: string) => (provider.capabilities ?? []).some((item) => item.toUpperCase() === capability);
@@ -55,7 +57,8 @@ export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAg
   const [startOpen, setStartOpen] = useState(false);
   const [sources, setSources] = useState<ImageSourceStory[]>([]); const [sourcesLoading, setSourcesLoading] = useState(false); const [sourcesError, setSourcesError] = useState('');
   const [storyRunId, setStoryRunId] = useState(''); const [stylePresetId, setStylePresetId] = useState<number | null>(null); const [creating, setCreating] = useState(false); const [createdRunId, setCreatedRunId] = useState('');
-  const flowRef = useRef<ImageAgentFlow | null>(null); const selectedKeyRef = useRef(''); const draftRef = useRef<AgentDraft | null>(null);
+  const flowRef = useRef<ImageAgentFlow | null>(null); const selectedKeyRef = useRef(''); const draftRef = useRef<AgentDraft | null>(null); const agentCleanBaselineRef = useRef<AgentDraft | null>(null);
+  const modelDraftRef = useRef<ModelDraft>({ providerId: '', updatedAt: null }); const modelCleanBaselineRef = useRef<ModelDraft>({ providerId: '', updatedAt: null });
   const dirtyRef = useRef(false); const confirmOpenRef = useRef(false); const versionRequestRef = useRef(0); const sourceRequestRef = useRef(0); const loadRequestRef = useRef(0); const detailRef = useRef<HTMLElement | null>(null); const onDirtyRef = useRef(onDirtyChange);
   const agentDraftGenerationRef = useRef(0); const styleDraftGenerationRef = useRef(0); const modelDraftGenerationRef = useRef(0);
 
@@ -103,8 +106,9 @@ export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAg
       const loaded = await getImageAgentFlow(); if (request !== loadRequestRef.current) return; flowRef.current = loaded; setFlow(loaded);
       const initial = loaded.stages.flatMap((stage) => stage.nodes).find((item) => item.editable);
       agentDraftGenerationRef.current += 1; styleDraftGenerationRef.current += 1; modelDraftGenerationRef.current += 1;
-      setSelectedKey(initial?.key ?? ''); setDraft(initial ? fromNode(initial) : null); setDirty(false); setStyleDraft(null);
-      const providerId = loaded.config.imageProviderId ?? ''; setModelProviderId(providerId); setModelUpdatedAt(loaded.config.updatedAt);
+      const initialDraft = initial ? fromNode(initial) : null; agentCleanBaselineRef.current = initialDraft; draftRef.current = initialDraft;
+      setSelectedKey(initial?.key ?? ''); setDraft(initialDraft); setDirty(false); setStyleDraft(null);
+      const providerId = loaded.config.imageProviderId ?? ''; const modelDraft = { providerId, updatedAt: loaded.config.updatedAt }; modelDraftRef.current = modelDraft; modelCleanBaselineRef.current = modelDraft; setModelProviderId(providerId); setModelUpdatedAt(loaded.config.updatedAt);
     } catch (error) { if (request === loadRequestRef.current) setLoadError(errorText(error)); } finally { if (request === loadRequestRef.current) setLoading(false); }
   }, []);
   useEffect(() => { void loadFlow(); return () => { loadRequestRef.current += 1; versionRequestRef.current += 1; sourceRequestRef.current += 1; }; }, [loadFlow]);
@@ -116,13 +120,13 @@ export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAg
   };
   const replaceStyles = (styles: ImageStylePreset[]) => { const current = flowRef.current; if (!current) return; const next = { ...current, stylePresets: styles }; flowRef.current = next; setFlow(next); };
   const scrollDetail = () => { if (!window.matchMedia?.('(max-width: 1320px)').matches) return; window.requestAnimationFrame(() => detailRef.current?.scrollIntoView?.({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })); };
-  const selectNodeNow = (node: ImageAgentNode) => { agentDraftGenerationRef.current += 1; versionRequestRef.current += 1; setVersionsOpen(false); setSelectedKey(node.key); setDraft(node.editable ? fromNode(node) : null); setDirty(false); scrollDetail(); };
+  const selectNodeNow = (node: ImageAgentNode) => { const nextDraft = node.editable ? fromNode(node) : null; agentDraftGenerationRef.current += 1; agentCleanBaselineRef.current = nextDraft; draftRef.current = nextDraft; versionRequestRef.current += 1; setVersionsOpen(false); setSelectedKey(node.key); setDraft(nextDraft); setDirty(false); scrollDetail(); };
   const discardUnsaved = () => {
     agentDraftGenerationRef.current += 1; styleDraftGenerationRef.current += 1; modelDraftGenerationRef.current += 1;
     const persisted = flowRef.current;
     const persistedNode = persisted?.stages.flatMap((stage) => stage.nodes).find((item) => item.key === selectedKeyRef.current);
-    setDraft(persistedNode?.editable ? fromNode(persistedNode) : null); setDirty(false); setStyleDraft(null);
-    const providerId = persisted?.config.imageProviderId ?? ''; setModelProviderId(providerId); setModelUpdatedAt(persisted?.config.updatedAt ?? null);
+    const nextDraft = persistedNode?.editable ? fromNode(persistedNode) : null; agentCleanBaselineRef.current = nextDraft; draftRef.current = nextDraft; setDraft(nextDraft); setDirty(false); setStyleDraft(null);
+    const modelDraft = { providerId: persisted?.config.imageProviderId ?? '', updatedAt: persisted?.config.updatedAt ?? null }; modelDraftRef.current = modelDraft; modelCleanBaselineRef.current = modelDraft; setModelProviderId(modelDraft.providerId); setModelUpdatedAt(modelDraft.updatedAt);
   };
   const confirmDiscard = (action: () => void) => {
     if (!dirtyRef.current) { action(); return; } if (confirmOpenRef.current) return; confirmOpenRef.current = true;
@@ -139,9 +143,13 @@ export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAg
     try {
       const saved = await updateImageAgent(key, { systemPrompt: prompt, aiProviderId: draft.aiProviderId, temperature: draft.temperature, enabled: draft.enabled, updatedAt: draft.updatedAt }); mergeNode(saved);
       const current = draftRef.current;
-      if (generation !== agentDraftGenerationRef.current) { if (selectedKeyRef.current === key) { const next = fromNode(saved); draftRef.current = next; setDraft(next); setDirty(false); } }
-      else if (selectedKeyRef.current === key && current && sameDraft(current, submitted)) { const next = fromNode(saved); draftRef.current = next; setDraft(next); setDirty(false); }
-      else if (selectedKeyRef.current === key && current) { const next = { ...current, updatedAt: saved.updatedAt }; draftRef.current = next; setDraft(next); setDirty(true); }
+      if (selectedKeyRef.current === key && current) {
+        const cleanBaseline = agentCleanBaselineRef.current; const savedDraft = fromNode(saved);
+        const canSynchronize = generation === agentDraftGenerationRef.current ? sameDraft(current, submitted) : !!cleanBaseline && sameDraft(current, cleanBaseline);
+        agentCleanBaselineRef.current = savedDraft;
+        if (canSynchronize) { draftRef.current = savedDraft; setDraft(savedDraft); setDirty(false); }
+        else { const next = { ...current, updatedAt: saved.updatedAt }; draftRef.current = next; setDraft(next); setDirty(true); }
+      }
       message.success('Agent 配置已保存');
     } catch (error) { message.error(errorText(error)); } finally { setSaving(false); }
   };
@@ -158,7 +166,7 @@ export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAg
     const key = selectedKey; if (!key || restoring !== null) return;
     modal.confirm({ title: `恢复 Prompt v${version.version}？`, content: '恢复会追加一个新的最新版本，不会删除历史记录。', okText: '确定', cancelText: '取消', onOk: async () => {
       setRestoring(version.version);
-      try { const latest = flowRef.current?.stages.flatMap((stage) => stage.nodes).find((item) => item.key === key); const restored = await restoreImageAgentVersion(key, version.version, { updatedAt: latest?.updatedAt ?? null }); mergeNode(restored); if (selectedKeyRef.current === key) { const next = fromNode(restored); setDraft(next); draftRef.current = next; setDirty(false); } closeVersions(); message.success('版本已恢复'); }
+      try { const latest = flowRef.current?.stages.flatMap((stage) => stage.nodes).find((item) => item.key === key); const restored = await restoreImageAgentVersion(key, version.version, { updatedAt: latest?.updatedAt ?? null }); mergeNode(restored); if (selectedKeyRef.current === key) { const next = fromNode(restored); agentCleanBaselineRef.current = next; setDraft(next); draftRef.current = next; setDirty(false); } closeVersions(); message.success('版本已恢复'); }
       catch (error) { message.error(errorText(error)); throw error; } finally { setRestoring(null); }
     } });
   };
@@ -184,8 +192,16 @@ export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAg
   };
 
   const saveModel = async () => {
-    if (!currentImageProviderValid || modelSaving) return void message.error('请选择同时支持图片生成和多参考图的 Provider'); const submittedProvider = modelProviderId; const submittedTimestamp = modelUpdatedAt; const generation = modelDraftGenerationRef.current; setModelSaving(true);
-    try { const saved = await updateImageFlowConfig({ imageProviderId: submittedProvider, width: 1536, height: 864, maxShotsPerScene: 5, maxShotsPerStory: 20, updatedAt: submittedTimestamp }); const current = flowRef.current; if (current) { const next = { ...current, config: saved }; flowRef.current = next; setFlow(next); } setModelUpdatedAt(saved.updatedAt); if (generation !== modelDraftGenerationRef.current) setModelProviderId(saved.imageProviderId ?? ''); message.success('图片模型已保存'); }
+    if (!currentImageProviderValid || modelSaving) return void message.error('请选择同时支持图片生成和多参考图的 Provider'); const submitted = { providerId: modelProviderId, updatedAt: modelUpdatedAt }; const generation = modelDraftGenerationRef.current; setModelSaving(true);
+    try {
+      const saved = await updateImageFlowConfig({ imageProviderId: submitted.providerId, width: 1536, height: 864, maxShotsPerScene: 5, maxShotsPerStory: 20, updatedAt: submitted.updatedAt }); const currentFlow = flowRef.current; if (currentFlow) { const next = { ...currentFlow, config: saved }; flowRef.current = next; setFlow(next); }
+      const currentDraft = modelDraftRef.current; const cleanBaseline = modelCleanBaselineRef.current; const savedDraft = { providerId: saved.imageProviderId ?? '', updatedAt: saved.updatedAt };
+      const canSynchronize = generation === modelDraftGenerationRef.current ? sameModelDraft(currentDraft, submitted) : sameModelDraft(currentDraft, cleanBaseline);
+      modelCleanBaselineRef.current = savedDraft;
+      if (canSynchronize) { modelDraftRef.current = savedDraft; setModelProviderId(savedDraft.providerId); setModelUpdatedAt(savedDraft.updatedAt); }
+      else { const nextDraft = { ...currentDraft, updatedAt: saved.updatedAt }; modelDraftRef.current = nextDraft; setModelUpdatedAt(saved.updatedAt); }
+      message.success('图片模型已保存');
+    }
     catch (error) { message.error(errorText(error)); } finally { setModelSaving(false); }
   };
 
@@ -247,7 +263,7 @@ export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAg
     <h3>图片模型</h3><p>只显示已启用、同时支持图片生成和多参考图的 Provider。</p>
     {!currentImageProviderValid && modelProviderId && <Alert type="warning" showIcon message="当前图片 Provider 已不可用" />}
     {imageProviders.length === 0 && <Alert type="warning" showIcon message="没有同时支持图片生成和多参考图的 Provider" />}
-    <Form layout="vertical"><Form.Item label="图片 Provider" validateStatus={currentImageProviderValid ? undefined : 'error'}><Select aria-label="图片 Provider" value={modelProviderId || undefined} placeholder="选择图片 Provider" onChange={setModelProviderId} options={[...(!currentImageProviderValid && modelProviderId ? [{ value: modelProviderId, label: `${modelProviderId}（不可用）`, disabled: true }] : []), ...imageProviders.map((item) => ({ value: item.id, label: providerLabel(item) }))]} /></Form.Item><div className="image-story-fixed-spec"><strong>1536 × 864</strong><span>16:9 横版</span><strong>每 Scene 最多 5 张</strong><strong>全篇最多 20 张</strong></div><Button type="primary" loading={modelSaving} disabled={!currentImageProviderValid} onClick={() => void saveModel()}>保存图片模型</Button></Form>
+    <Form layout="vertical"><Form.Item label="图片 Provider" validateStatus={currentImageProviderValid ? undefined : 'error'}><Select aria-label="图片 Provider" value={modelProviderId || undefined} placeholder="选择图片 Provider" onChange={(providerId) => { modelDraftRef.current = { ...modelDraftRef.current, providerId }; setModelProviderId(providerId); }} options={[...(!currentImageProviderValid && modelProviderId ? [{ value: modelProviderId, label: `${modelProviderId}（不可用）`, disabled: true }] : []), ...imageProviders.map((item) => ({ value: item.id, label: providerLabel(item) }))]} /></Form.Item><div className="image-story-fixed-spec"><strong>1536 × 864</strong><span>16:9 横版</span><strong>每 Scene 最多 5 张</strong><strong>全篇最多 20 张</strong></div><Button type="primary" loading={modelSaving} disabled={!currentImageProviderValid} onClick={() => void saveModel()}>保存图片模型</Button></Form>
   </section>;
 
   const renderStartContent = () => <div className="image-story-start">

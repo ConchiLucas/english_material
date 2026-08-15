@@ -48,6 +48,7 @@ const providers: AIProviderConfigItem[] = [
   { id: 'text-off', label: 'Text Off', type: 'openai-compatible', base_url: '', api_key: '', model: 'off', max_tokens: 4096, capabilities: ['TEXT_GENERATION'], enabled: false },
   { id: 'image-ok', label: 'Image', type: 'openai-compatible', base_url: '', api_key: '', model: 'image-model', max_tokens: 4096, capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'], enabled: true },
   { id: 'image-two', label: 'Image Two', type: 'openai-compatible', base_url: '', api_key: '', model: 'image-two-model', max_tokens: 4096, capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'], enabled: true },
+  { id: 'image-three', label: 'Image Three', type: 'openai-compatible', base_url: '', api_key: '', model: 'image-three-model', max_tokens: 4096, capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'], enabled: true },
   { id: 'image-no-ref', label: 'No refs', type: 'openai-compatible', base_url: '', api_key: '', model: 'bad', max_tokens: 4096, capabilities: ['IMAGE_GENERATION'], enabled: true },
 ];
 const renderPage = (flow = makeFlow(), onDirtyChange = vi.fn()) => { apiMocks.getImageAgentFlow.mockResolvedValue(flow); apiMocks.getImageStylePresets.mockResolvedValue(flow.stylePresets); return render(<AntApp><ImageAgentFlowPage providers={providers} onDirtyChange={onDirtyChange} /></AntApp>); };
@@ -143,6 +144,16 @@ describe('ImageAgentFlowPage', () => {
     expect(await screen.findByRole('heading', { name: '图片模型' })).toBeInTheDocument();
   });
 
+  it('preserves a reincarnated Agent draft when an older save resolves', async () => {
+    const modal = installConfirmHarness(); const pending = deferred<ImageAgentNode>(); const dirty = vi.fn(); apiMocks.updateImageAgent.mockReturnValueOnce(pending.promise).mockResolvedValueOnce({ ...makeFlow().stages[0].nodes[0], systemPrompt: 'reincarnated', temperature: 1.4, updatedAt: '2026-08-15T03:00:00Z', promptVersion: 3 });
+    const user = userEvent.setup(); renderPage(makeFlow(), dirty); const prompt = await screen.findByLabelText('System Prompt'); await user.clear(prompt); await user.type(prompt, 'submitted'); await user.click(screen.getByRole('button', { name: '保存 Agent' }));
+    await user.click(screen.getByRole('tab', { name: '画风预设' })); act(() => { modal.confirms[0]?.onOk?.(); modal.confirms[0]?.afterClose?.(); }); await user.click(screen.getByRole('tab', { name: 'Agent 配置' }));
+    const reincarnated = await screen.findByLabelText('System Prompt'); await user.clear(reincarnated); await user.type(reincarnated, 'reincarnated'); fireEvent.change(screen.getByRole('spinbutton', { name: 'Temperature' }), { target: { value: '1.4' } });
+    await act(async () => { pending.resolve({ ...makeFlow().stages[0].nodes[0], systemPrompt: 'submitted', updatedAt: '2026-08-15T02:00:00Z', promptVersion: 2 }); await pending.promise; });
+    expect(reincarnated).toHaveValue('reincarnated'); expect(screen.getByRole('spinbutton', { name: 'Temperature' })).toHaveValue('1.4'); await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(true));
+    await user.click(screen.getByRole('button', { name: /保存 Agent/ })); await waitFor(() => expect(apiMocks.updateImageAgent).toHaveBeenCalledTimes(2)); expect(apiMocks.updateImageAgent.mock.calls[1]).toEqual(['image-story-analyst', expect.objectContaining({ systemPrompt: 'reincarnated', temperature: 1.4, updatedAt: '2026-08-15T02:00:00Z' })]);
+  });
+
   it('loads versions newest-first and restores using the latest timestamp', async () => {
     const versions: ImagePromptVersion[] = [{ version: 1, systemPrompt: 'old', aiProviderId: 'text-ok', temperature: 0.4, enabled: true, createdAt: '2026-08-14T01:00:00Z' }, { version: 2, systemPrompt: 'new', aiProviderId: 'text-ok', temperature: 0.5, enabled: true, createdAt: '2026-08-15T01:00:00Z' }];
     apiMocks.getImageAgentVersions.mockResolvedValue(versions); apiMocks.restoreImageAgentVersion.mockResolvedValue({ ...makeFlow().stages[0].nodes[0], systemPrompt: 'old', updatedAt: '2026-08-15T03:00:00Z', promptVersion: 3 });
@@ -218,6 +229,15 @@ describe('ImageAgentFlowPage', () => {
     await user.click(screen.getByRole('tab', { name: '画风预设' })); act(() => { modal.confirms[0]?.onOk?.(); modal.confirms[0]?.afterClose?.(); });
     await act(async () => { pending.resolve({ ...makeFlow().config, imageProviderId: 'image-two', updatedAt: '2026-08-15T02:00:00Z' }); await pending.promise; });
     await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(false)); await user.click(screen.getByRole('tab', { name: 'Agent 配置' })); expect(modal.confirm).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves a reincarnated image-model draft when an older save resolves', async () => {
+    const modal = installConfirmHarness(); const pending = deferred<ImageAgentFlow['config']>(); const dirty = vi.fn(); apiMocks.updateImageFlowConfig.mockReturnValueOnce(pending.promise).mockResolvedValueOnce({ ...makeFlow().config, imageProviderId: 'image-three', updatedAt: '2026-08-15T03:00:00Z' });
+    const user = userEvent.setup(); renderPage(makeFlow(), dirty); await user.click(await screen.findByRole('tab', { name: '图片模型' })); await user.click(screen.getByRole('combobox', { name: '图片 Provider' })); await user.click(await screen.findByText('Image Two · image-two-model')); await user.click(screen.getByRole('button', { name: '保存图片模型' }));
+    await user.click(screen.getByRole('tab', { name: '画风预设' })); act(() => { modal.confirms[0]?.onOk?.(); modal.confirms[0]?.afterClose?.(); }); await user.click(screen.getByRole('tab', { name: '图片模型' })); await user.click(screen.getByRole('combobox', { name: '图片 Provider' })); await user.click(await screen.findByText('Image Three · image-three-model'));
+    await act(async () => { pending.resolve({ ...makeFlow().config, imageProviderId: 'image-two', updatedAt: '2026-08-15T02:00:00Z' }); await pending.promise; });
+    expect(screen.getByRole('combobox', { name: '图片 Provider' }).closest('.ant-select')).toHaveTextContent('Image Three'); await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(true));
+    await user.click(screen.getByRole('button', { name: /保存图片模型/ })); await waitFor(() => expect(apiMocks.updateImageFlowConfig).toHaveBeenCalledTimes(2)); expect(apiMocks.updateImageFlowConfig.mock.calls[1][0]).toEqual(expect.objectContaining({ imageProviderId: 'image-three', updatedAt: '2026-08-15T02:00:00Z' }));
   });
 
   it('keeps a newer image-model draft dirty and advances its timestamp after a late save', async () => {
