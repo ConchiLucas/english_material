@@ -40,21 +40,36 @@ public class ImageTextCompositor {
         Graphics2D graphics = canvas.createGraphics();
         try {
             graphics.drawImage(source, 0, 0, null);
-            graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            graphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-            List<TextOverlay> narration = safeOverlays.stream()
-                    .filter(value -> value != null && value.type() == OverlayType.NARRATION).toList();
-            int dialogueBottom = narration.isEmpty() ? HEIGHT - SAFE_MARGIN : HEIGHT - NARRATION_HEIGHT - 20;
-            for (TextOverlay overlay : safeOverlays) {
-                if (overlay == null) throw new IllegalArgumentException("文字图层不能为空");
-                validate(overlay);
-                if (overlay.type() == OverlayType.DIALOGUE) drawDialogue(graphics, overlay, dialogueBottom);
-            }
-            if (!narration.isEmpty()) drawNarration(graphics, narration);
+            renderOverlays(graphics, safeOverlays);
         } finally {
             graphics.dispose();
         }
         return encode(canvas);
+    }
+
+    public void validateLayout(List<TextOverlay> overlays) {
+        List<TextOverlay> safeOverlays = overlays == null ? List.of() : List.copyOf(overlays);
+        BufferedImage canvas = new BufferedImage(WIDTH, HEIGHT, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = canvas.createGraphics();
+        try {
+            renderOverlays(graphics, safeOverlays);
+        } finally {
+            graphics.dispose();
+        }
+    }
+
+    private void renderOverlays(Graphics2D graphics, List<TextOverlay> overlays) {
+        graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        graphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        List<TextOverlay> narration = overlays.stream()
+                .filter(value -> value != null && value.type() == OverlayType.NARRATION).toList();
+        int dialogueBottom = narration.isEmpty() ? HEIGHT - SAFE_MARGIN : HEIGHT - NARRATION_HEIGHT - 20;
+        for (TextOverlay overlay : overlays) {
+            if (overlay == null) throw new IllegalArgumentException("文字图层不能为空");
+            validate(overlay);
+            if (overlay.type() == OverlayType.DIALOGUE) drawDialogue(graphics, overlay, dialogueBottom);
+        }
+        if (!narration.isEmpty()) drawNarration(graphics, narration);
     }
 
     private void drawDialogue(Graphics2D graphics, TextOverlay overlay, int bottomLimit) {

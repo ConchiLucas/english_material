@@ -22,6 +22,10 @@ import java.util.regex.Pattern;
 public final class ImageStructuredOutputParser {
     private static final int MAX_SHOTS_PER_SCENE = 5;
     private static final int MAX_SHOTS_PER_STORY = 20;
+    private static final int MAX_REFERENCE_ASSETS = 20;
+    private static final int MAX_REFERENCES_PER_SHOT = 8;
+    private static final int MAX_ASSET_KEY_LENGTH = 100;
+    private static final int MAX_SHOT_KEY_LENGTH = 80;
     private static final int MAX_RAW_CHARS = 512_000;
     private static final int MAX_STRING_CHARS = 20_000;
     private static final int MAX_GENERAL_ARRAY_ITEMS = 200;
@@ -46,6 +50,7 @@ public final class ImageStructuredOutputParser {
             "(?i)\\b(?<firstSubject>[a-z](?:[a-z ]{0,58}[a-z])?)\\s+(?:is|are)\\s+(?<firstState>asleep|running|open|closed|sitting|standing)"
                     + "\\s+(?:and|while)(?:\\s+(?:simultaneously|at\\s+(?:the\\s+)?same\\s+time))?\\s+"
                     + "(?<secondSubject>[a-z](?:[a-z ]{0,58}[a-z])?)\\s+(?:is|are)\\s+(?<secondState>asleep|running|open|closed|sitting|standing)\\b");
+    private static final Pattern STORAGE_KEY = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]*");
 
     private final ObjectMapper mapper;
 
@@ -148,11 +153,13 @@ public final class ImageStructuredOutputParser {
 
     public ReferencePlan referencePlan(String raw) {
         JsonNode root = root(raw, "REFERENCE_PLAN", fields("referenceAssets"));
-        List<ReferenceAsset> assets = objects(root, "referenceAssets", "REFERENCE_PLAN", 100, "assetKey", "type", "target", "prompt", "negativePrompt").stream()
+        List<ReferenceAsset> assets = objects(root, "referenceAssets", "REFERENCE_PLAN", MAX_REFERENCE_ASSETS, "assetKey", "type", "target", "prompt", "negativePrompt").stream()
                 .map(node -> new ReferenceAsset(text(node, "assetKey", "REFERENCE_PLAN.referenceAssets"), referenceType(text(node, "type", "REFERENCE_PLAN.referenceAssets")), text(node, "target", "REFERENCE_PLAN.referenceAssets"), text(node, "prompt", "REFERENCE_PLAN.referenceAssets"), text(node, "negativePrompt", "REFERENCE_PLAN.referenceAssets")))
                 .toList();
         ReferencePlan plan = new ReferencePlan(assets);
         uniqueKeys("ReferencePlan assetKey", plan.referenceAssets(), ReferenceAsset::assetKey);
+        for (ReferenceAsset asset : plan.referenceAssets()) storageKey("ReferencePlan assetKey", asset.assetKey(), MAX_ASSET_KEY_LENGTH);
+        uniqueReferenceTargets("ReferencePlan", plan.referenceAssets());
         for (ReferenceAsset asset : plan.referenceAssets()) positivePrompt("ReferencePlan prompt", asset.prompt());
         return plan;
     }
@@ -166,15 +173,17 @@ public final class ImageStructuredOutputParser {
         ShotPromptPlan plan = new ShotPromptPlan(shots);
         uniqueKeys("ShotPromptPlan shotKey", plan.shots(), ShotPrompt::shotKey);
         for (ShotPrompt shot : plan.shots()) {
+            storageKey("ShotPromptPlan shotKey", shot.shotKey(), MAX_SHOT_KEY_LENGTH);
             positivePrompt("ShotPromptPlan prompt", shot.prompt());
             uniqueStrings("ShotPromptPlan referenceAssetKeys", shot.referenceAssetKeys());
+            referenceKeys("ShotPromptPlan", shot.referenceAssetKeys());
         }
         return plan;
     }
 
     public PreflightPlan preflight(String raw) {
         JsonNode root = root(raw, "PREFLIGHT_PLAN", fields("referenceAssets", "shots", "auditSummary"));
-        List<ReferenceAsset> assets = objects(root, "referenceAssets", "PREFLIGHT_PLAN", 100, "assetKey", "type", "target", "prompt", "negativePrompt").stream()
+        List<ReferenceAsset> assets = objects(root, "referenceAssets", "PREFLIGHT_PLAN", MAX_REFERENCE_ASSETS, "assetKey", "type", "target", "prompt", "negativePrompt").stream()
                 .map(node -> new ReferenceAsset(text(node, "assetKey", "PREFLIGHT_PLAN.referenceAssets"), referenceType(text(node, "type", "PREFLIGHT_PLAN.referenceAssets")), text(node, "target", "PREFLIGHT_PLAN.referenceAssets"), text(node, "prompt", "PREFLIGHT_PLAN.referenceAssets"), text(node, "negativePrompt", "PREFLIGHT_PLAN.referenceAssets")))
                 .toList();
         List<PreflightShot> shots = objects(root, "shots", "PREFLIGHT_PLAN", 20, "shotKey", "sceneIndex", "shotIndex", "prompt", "negativePrompt", "referenceAssetKeys", "speaker", "dialogue", "narration", "textAnchor").stream()
@@ -468,6 +477,7 @@ public final class ImageStructuredOutputParser {
         uniqueKeys(label + " shotKey", shots, FinalShot::shotKey);
         validateOrderedShots(label, shots.stream().map(shot -> new OrderedShot(shot.sceneIndex(), shot.shotIndex())).toList());
         for (FinalShot shot : shots) {
+            storageKey(label + " shotKey", shot.shotKey(), MAX_SHOT_KEY_LENGTH);
             captionLength(label + " narration", shot.narration());
             if (hasText(shot.dialogue()) && !hasText(shot.speaker())) throw error(label + " dialogue 非空时 speaker 不能为空");
             if (hasText(shot.dialogue()) && shot.textAnchor() == null) throw error(label + " dialogue 非空时 textAnchor 不能为空");
@@ -476,13 +486,19 @@ public final class ImageStructuredOutputParser {
 
     private static void validatePreflightShape(PreflightPlan plan) {
         uniqueKeys("PreflightPlan assetKey", plan.referenceAssets(), ReferenceAsset::assetKey);
+        for (ReferenceAsset asset : plan.referenceAssets()) {
+            storageKey("PreflightPlan assetKey", asset.assetKey(), MAX_ASSET_KEY_LENGTH);
+        }
+        uniqueReferenceTargets("PreflightPlan", plan.referenceAssets());
         uniqueKeys("PreflightPlan shotKey", plan.shots(), PreflightShot::shotKey);
         if (plan.shots().size() > MAX_SHOTS_PER_STORY) throw error("PreflightPlan 全篇最多 20 个镜头");
         validateOrderedShots("PreflightPlan", plan.shots().stream().map(shot -> new OrderedShot(shot.sceneIndex(), shot.shotIndex())).toList());
         for (ReferenceAsset asset : plan.referenceAssets()) positivePrompt("PreflightPlan referenceAssets prompt", asset.prompt());
         for (PreflightShot shot : plan.shots()) {
+            storageKey("PreflightPlan shotKey", shot.shotKey(), MAX_SHOT_KEY_LENGTH);
             positivePrompt("PreflightPlan prompt", shot.prompt());
             uniqueStrings("PreflightPlan referenceAssetKeys", shot.referenceAssetKeys());
+            referenceKeys("PreflightPlan", shot.referenceAssetKeys());
             captionLength("PreflightPlan narration", shot.narration());
             if (hasText(shot.dialogue()) && !hasText(shot.speaker())) throw error("PreflightPlan dialogue 非空时 speaker 不能为空");
             if (hasText(shot.dialogue()) && shot.textAnchor() == null) throw error("PreflightPlan dialogue 非空时 textAnchor 不能为空");
@@ -570,6 +586,30 @@ public final class ImageStructuredOutputParser {
         }
     }
 
+    private static void referenceKeys(String label, List<String> values) {
+        if (values.size() > MAX_REFERENCES_PER_SHOT) {
+            throw error(label + " referenceAssetKeys 数量不能超过 8");
+        }
+        for (String value : values) {
+            storageKey(label + " referenceAssetKeys", value, MAX_ASSET_KEY_LENGTH);
+        }
+    }
+
+    private static void uniqueReferenceTargets(String label, List<ReferenceAsset> assets) {
+        Set<String> found = new HashSet<>();
+        for (ReferenceAsset asset : assets) {
+            String key = referenceType(asset.type()) + "|" + trimmed(asset.target()).toLowerCase(Locale.ROOT);
+            if (!found.add(key)) throw error(label + " type + target 存在重复值");
+        }
+    }
+
+    private static void storageKey(String label, String value, int maximumLength) {
+        String key = requiredKey(label, value);
+        if (key.length() > maximumLength || key.contains("..") || !STORAGE_KEY.matcher(key).matches()) {
+            throw error(label + " 必须使用安全存储字符且长度不能超过 " + maximumLength);
+        }
+    }
+
     private static <T> void uniqueKeys(String label, Collection<T> values, Key<T> keyExtractor) {
         Set<String> found = new HashSet<>();
         for (T value : values) {
@@ -592,6 +632,12 @@ public final class ImageStructuredOutputParser {
     private static String arrayLimitMessage(String schema, String name, int maxItems) {
         if ("FINAL_STORYBOARD".equals(schema) && "shots".equals(name)) return "FinalStoryboard 全篇最多 20 个镜头";
         if ("PREFLIGHT_PLAN".equals(schema) && "shots".equals(name)) return "PreflightPlan 全篇最多 20 个镜头";
+        if ("PREFLIGHT_PLAN".equals(schema) && "referenceAssets".equals(name)) {
+            return "PreflightPlan referenceAssets 数量不能超过 20";
+        }
+        if ("REFERENCE_PLAN".equals(schema) && "referenceAssets".equals(name)) {
+            return "ReferencePlan referenceAssets 数量不能超过 20";
+        }
         return schema + "." + name + " 数量不能超过 " + maxItems;
     }
 

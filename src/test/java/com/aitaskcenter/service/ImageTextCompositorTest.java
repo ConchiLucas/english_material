@@ -1,5 +1,6 @@
 package com.aitaskcenter.service;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -54,6 +55,20 @@ class ImageTextCompositorTest {
         BufferedImage image = ImageIO.read(new ByteArrayInputStream(result));
         assertEquals(1536, image.getWidth());
         assertEquals(864, image.getHeight());
+    }
+
+    @Test
+    void validatesTheExactDialogueAnchorAndNarrationLayoutWithoutABaseImage() {
+        assertDoesNotThrow(() -> compositor.validateLayout(List.of(
+                ImageTextCompositor.TextOverlay.dialogue("Amy", "Please bring the basket.", .15, .28),
+                ImageTextCompositor.TextOverlay.narration("Amy follows the winding path."))));
+
+        String oversized = "Amy explains every tiny detail without stopping. ".repeat(200);
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> compositor.validateLayout(List.of(
+                        ImageTextCompositor.TextOverlay.dialogue("Amy", oversized, .15, .28),
+                        ImageTextCompositor.TextOverlay.narration("Amy follows the winding path."))));
+        assertTrue(error.getMessage().contains("无法排入") || error.getMessage().contains("溢出"));
     }
 
     @Test

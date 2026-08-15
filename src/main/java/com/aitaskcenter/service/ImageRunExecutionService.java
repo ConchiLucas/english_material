@@ -316,6 +316,7 @@ public class ImageRunExecutionService {
                         return value;
                     });
             PreflightPlan finalPlan = preflight.parsed(PreflightPlan.class);
+            validateImageLayouts(finalPlan);
             run.setExpectedImageCount(finalPlan.referenceAssets().size() + finalPlan.shots().size());
             run.setTotalTextTokens(state.totalTokens());
             run = runRepository.saveAndFlush(run);
@@ -436,6 +437,12 @@ public class ImageRunExecutionService {
         run = runRepository.saveAndFlush(run);
     }
 
+    private void validateImageLayouts(PreflightPlan plan) {
+        for (PreflightShot shot : plan.shots()) {
+            compositor.validateLayout(textOverlays(shot));
+        }
+    }
+
     private ImageRunStep startProgram(String runId, int sequence, String nodeKey,
                                       Map<String, Object> input, ProviderExecution provider) {
         NodeDefinition definition = ImageAgentCatalog.require(nodeKey);
@@ -520,7 +527,7 @@ public class ImageRunExecutionService {
             asset.setSha256(stored.sha256());
             asset.setProviderId(provider == null ? null : provider.id());
             asset.setProviderModel(provider == null ? null : provider.model());
-            asset.setProviderRequestId(clean(generated.providerRequestId()));
+            asset.setProviderRequestId(boundedMetadata(generated.providerRequestId(), 180));
             asset.setPrompt(prompt);
             asset.setNegativePrompt(negativePrompt);
             Map<String, Object> safeMetadata = new LinkedHashMap<>();
@@ -904,6 +911,11 @@ public class ImageRunExecutionService {
 
     private static String clean(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private static String boundedMetadata(String value, int limit) {
+        String normalized = clean(value).replaceAll("[\\r\\n\\t]+", " ").replaceAll(" +", " ");
+        return normalized.length() <= limit ? normalized : normalized.substring(0, limit);
     }
 
     private static String bounded(String value) {

@@ -219,6 +219,68 @@ class ImageStructuredOutputParserTest {
     }
 
     @Test
+    void boundsReferenceGenerationCostAndPerShotAdapterInputs() {
+        String twentyOneReferences = "{\"referenceAssets\":" + referenceAssetsJson(21)
+                + ",\"shots\":[],\"auditSummary\":\"checked\"}";
+        assertMessage("PreflightPlan referenceAssets 数量不能超过 20", () ->
+                parser.preflight(wrap("PREFLIGHT_PLAN", twentyOneReferences)));
+
+        String nineKeys = referenceKeysJson(9);
+        String nineReferencePreflight = "{\"referenceAssets\":" + referenceAssetsJson(9)
+                + ",\"shots\":[" + preflightShot("shot-1", 1, 1)
+                        .replace("[\"asset-amy\"]", nineKeys)
+                + "],\"auditSummary\":\"checked\"}";
+        assertMessage("PreflightPlan referenceAssetKeys 数量不能超过 8", () ->
+                parser.preflight(wrap("PREFLIGHT_PLAN", nineReferencePreflight)));
+
+        String nineReferencePromptPlan = shotPromptPlanJson()
+                .replace("[\"asset-amy\"]", nineKeys);
+        assertMessage("ShotPromptPlan referenceAssetKeys 数量不能超过 8", () ->
+                parser.shotPromptPlan(wrap("SHOT_PROMPT_PLAN", nineReferencePromptPlan)));
+    }
+
+    @Test
+    void rejectsDuplicateNormalizedReferenceTargets() {
+        String duplicateTarget = "{\"referenceAssets\":["
+                + "{\"assetKey\":\"asset-amy-1\",\"type\":\"character\",\"target\":\"Amy\",\"prompt\":\"Amy portrait, no text\",\"negativePrompt\":\"text\"},"
+                + "{\"assetKey\":\"asset-amy-2\",\"type\":\" CHARACTER \",\"target\":\" amy \",\"prompt\":\"Amy portrait, no text\",\"negativePrompt\":\"text\"}],"
+                + "\"shots\":[],\"auditSummary\":\"checked\"}";
+
+        assertMessage("PreflightPlan type + target 存在重复值", () ->
+                parser.preflight(wrap("PREFLIGHT_PLAN", duplicateTarget)));
+    }
+
+    @Test
+    void enforcesCanonicalStorageSafeAssetAndShotKeysAcrossFinalPlans() {
+        assertMessage("ReferencePlan assetKey 必须使用安全存储字符且长度不能超过 100", () ->
+                parser.referencePlan(wrap("REFERENCE_PLAN", referencePlanJson()
+                        .replace("asset-amy", "asset/amy"))));
+        assertMessage("ReferencePlan assetKey 必须使用安全存储字符且长度不能超过 100", () ->
+                parser.referencePlan(wrap("REFERENCE_PLAN", referencePlanJson()
+                        .replace("asset-amy", "a".repeat(101)))));
+        assertMessage("FinalStoryboard shotKey 必须使用安全存储字符且长度不能超过 80", () ->
+                parser.finalStoryboard(wrap("FINAL_STORYBOARD", finalStoryboardJson()
+                        .replace("shot-1", "shot/1"))));
+        assertMessage("FinalStoryboard shotKey 必须使用安全存储字符且长度不能超过 80", () ->
+                parser.finalStoryboard(wrap("FINAL_STORYBOARD", finalStoryboardJson()
+                        .replace("shot-1", "s".repeat(81)))));
+        assertMessage("ShotPromptPlan referenceAssetKeys 必须使用安全存储字符且长度不能超过 100", () ->
+                parser.shotPromptPlan(wrap("SHOT_PROMPT_PLAN", shotPromptPlanJson()
+                        .replace("[\"asset-amy\"]", "[\"asset/amy\"]"))));
+    }
+
+    @Test
+    void trimsStorageKeysBeforeValidationAndCrossReferenceComparison() {
+        PreflightPlan plan = parser.preflight(wrap("PREFLIGHT_PLAN", preflightJson()
+                .replace("\"asset-amy\"", "\"  asset-amy  \"")
+                .replace("\"shot-1\"", "\"  shot-1  \"")));
+
+        assertEquals("asset-amy", plan.referenceAssets().get(0).assetKey());
+        assertEquals("asset-amy", plan.shots().get(0).referenceAssetKeys().get(0));
+        assertEquals("shot-1", plan.shots().get(0).shotKey());
+    }
+
+    @Test
     void validatesAnalysisSceneReferencesContinuousBeatOrderAndProposalSceneBeatConsistency() {
         assertMessage("StoryAnalysis scenes 不能为空", () -> parser.storyAnalysis(wrap(
                 "STORY_ANALYSIS", storyAnalysisJson().replace("[{\"sceneIndex\":1,\"title\":\"Park visit\",\"sourceExcerpt\":\"Amy walks\",\"summary\":\"Amy visits the park\"}]", "[]"))));
@@ -422,6 +484,26 @@ class ImageStructuredOutputParserTest {
     private static String preflightShot(String shotKey, int sceneIndex, int shotIndex) {
         return "{\"shotKey\":\"" + shotKey + "\",\"sceneIndex\":" + sceneIndex + ",\"shotIndex\":" + shotIndex
                 + ",\"prompt\":\"Amy walks, no text\",\"negativePrompt\":\"text\",\"referenceAssetKeys\":[\"asset-amy\"],\"speaker\":\"amy\",\"dialogue\":\"Hello!\",\"narration\":\"a short narration\",\"textAnchor\":{\"x\":0.2,\"y\":0.3}}";
+    }
+
+    private static String referenceAssetsJson(int count) {
+        StringBuilder json = new StringBuilder("[");
+        for (int index = 1; index <= count; index++) {
+            if (index > 1) json.append(',');
+            json.append("{\"assetKey\":\"asset-").append(index)
+                    .append("\",\"type\":\"CHARACTER\",\"target\":\"character-").append(index)
+                    .append("\",\"prompt\":\"Character portrait, no text\",\"negativePrompt\":\"text\"}");
+        }
+        return json.append(']').toString();
+    }
+
+    private static String referenceKeysJson(int count) {
+        StringBuilder json = new StringBuilder("[");
+        for (int index = 1; index <= count; index++) {
+            if (index > 1) json.append(',');
+            json.append("\"asset-").append(index).append("\"");
+        }
+        return json.append(']').toString();
     }
 
     @FunctionalInterface

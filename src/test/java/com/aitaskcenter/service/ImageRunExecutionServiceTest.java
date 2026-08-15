@@ -462,6 +462,66 @@ class ImageRunExecutionServiceTest {
     }
 
     @Test
+    void rejectsTwentyOneReferencesBeforeAnyImageOrProgramStep() {
+        assertPreflightFailsBeforeImages(preflightWithReferences(21, 0));
+    }
+
+    @Test
+    void rejectsNineReferencesOnOneShotBeforeAnyImageOrProgramStep() {
+        assertPreflightFailsBeforeImages(preflightWithReferences(9, 9));
+    }
+
+    @Test
+    void rejectsDuplicateNormalizedReferenceTargetsBeforeAnyImageOrProgramStep() {
+        String duplicate = "{\"referenceAssets\":["
+                + "{\"assetKey\":\"asset-amy-1\",\"type\":\"CHARACTER\",\"target\":\"Amy\",\"prompt\":\"Amy portrait, no text\",\"negativePrompt\":\"text\"},"
+                + "{\"assetKey\":\"asset-amy-2\",\"type\":\"character\",\"target\":\" amy \",\"prompt\":\"Amy portrait, no text\",\"negativePrompt\":\"text\"}],"
+                + "\"shots\":[],\"auditSummary\":\"checked\"}";
+        assertPreflightFailsBeforeImages(duplicate);
+    }
+
+    @Test
+    void rejectsUnsafeOrOverlongStorageKeysBeforeAnyImageOrProgramStep() {
+        assertPreflightFailsBeforeImages(preflightJson().replace("asset-amy", "asset/amy"));
+
+        resetExecutionObservations();
+        assertPreflightFailsBeforeImages(preflightJson().replace("asset-amy", "a".repeat(101)));
+
+        resetExecutionObservations();
+        assertPreflightFailsBeforeImages(preflightJson().replace("shot-1", "shot/1"));
+
+        resetExecutionObservations();
+        assertPreflightFailsBeforeImages(preflightJson().replace("shot-1", "s".repeat(81)));
+    }
+
+    @Test
+    void rejectsTextThatCannotBeComposedBeforeAnyImageOrProgramStep() {
+        String oversizedDialogue = "Amy explains every tiny detail without stopping. ".repeat(200);
+        assertPreflightFailsBeforeImages(preflightJson().replace("Hello!", oversizedDialogue));
+    }
+
+    @Test
+    void sanitizesAndBoundsProviderRequestIdsBeforeAssetPersistence() {
+        try {
+            byte[] image = png(1536, 864);
+            when(imageGeneration.generate(any(), anyString(), anyString(), anyInt(), anyInt(), any()))
+                    .thenReturn(new ImageResult(image, "image/png", 1536, 864,
+                            "request\r\n" + "x".repeat(220), Map.of()));
+        } catch (Exception exception) {
+            throw new AssertionError(exception);
+        }
+
+        service(new SyncTaskExecutor(), new SyncTaskExecutor())
+                .createRun(new StartImageRunRequest("story-run-1", 7L));
+
+        assertTrue(savedAssets.stream().filter(asset -> "REFERENCE".equals(asset.getAssetType()))
+                .allMatch(asset -> asset.getProviderRequestId().length() <= 180
+                        && !asset.getProviderRequestId().contains("\r")
+                        && !asset.getProviderRequestId().contains("\n")));
+        assertEquals("COMPLETED", currentRun.get().getStatus());
+    }
+
+    @Test
     void keepsCompletedReferencesAndNeverRetriesWhenShotGenerationFails() {
         try {
             byte[] image = png(1536, 864);
@@ -662,6 +722,26 @@ class ImageRunExecutionServiceTest {
         return result;
     }
 
+    private void assertPreflightFailsBeforeImages(String preflightJson) {
+        generationOutputs.put("image-prompt-preflight", wrap("PREFLIGHT_PLAN", preflightJson));
+
+        service(new SyncTaskExecutor(), new SyncTaskExecutor())
+                .createRun(new StartImageRunRequest("story-run-1", 7L));
+
+        verifyNoInteractions(imageGeneration);
+        assertFalse(savedSteps.stream().anyMatch(step -> "PROGRAM".equals(step.getNodeKind())));
+        assertEquals("FAILED", currentRun.get().getStatus());
+    }
+
+    private void resetExecutionObservations() {
+        org.mockito.Mockito.clearInvocations(imageGeneration);
+        savedSteps.clear();
+        savedShots.clear();
+        savedAssets.clear();
+        savedRunStatuses.clear();
+        startedSteps.clear();
+    }
+
     private RunMergeTracker simulateMergedPlanningEntity() {
         RunMergeTracker tracker = new RunMergeTracker(new AtomicReference<>(), new AtomicReference<>(),
                 new AtomicReference<>(), new AtomicReference<>());
@@ -850,6 +930,27 @@ class ImageRunExecutionServiceTest {
         return "{\"referenceAssets\":[{\"assetKey\":\"asset-park\",\"type\":\"LOCATION\",\"target\":\"park\",\"prompt\":\"Green park, no text\",\"negativePrompt\":\"text\"},"
                 + "{\"assetKey\":\"asset-amy\",\"type\":\"CHARACTER\",\"target\":\"amy\",\"prompt\":\"Amy portrait, no text\",\"negativePrompt\":\"text\"}],"
                 + "\"shots\":[{\"shotKey\":\"shot-1\",\"sceneIndex\":1,\"shotIndex\":1,\"prompt\":\"Amy walks, no text\",\"negativePrompt\":\"text\",\"referenceAssetKeys\":[\"asset-amy\",\"asset-park\"],\"speaker\":\"amy\",\"dialogue\":\"Hello!\",\"narration\":\"a short narration\",\"textAnchor\":{\"x\":0.2,\"y\":0.3}}],\"auditSummary\":\"checked\"}";
+    }
+
+    private static String preflightWithReferences(int referenceCount, int keysOnShot) {
+        StringBuilder assets = new StringBuilder("[");
+        StringBuilder keys = new StringBuilder("[");
+        for (int index = 1; index <= referenceCount; index++) {
+            if (index > 1) assets.append(',');
+            assets.append("{\"assetKey\":\"asset-").append(index)
+                    .append("\",\"type\":\"CHARACTER\",\"target\":\"character-").append(index)
+                    .append("\",\"prompt\":\"Character portrait, no text\",\"negativePrompt\":\"text\"}");
+        }
+        for (int index = 1; index <= keysOnShot; index++) {
+            if (index > 1) keys.append(',');
+            keys.append("\"asset-").append(index).append("\"");
+        }
+        assets.append(']');
+        keys.append(']');
+        String shots = keysOnShot == 0 ? "[]" : "[{\"shotKey\":\"shot-1\",\"sceneIndex\":1,\"shotIndex\":1,"
+                + "\"prompt\":\"Amy walks, no text\",\"negativePrompt\":\"text\",\"referenceAssetKeys\":" + keys
+                + ",\"speaker\":\"amy\",\"dialogue\":\"Hello!\",\"narration\":\"a short narration\",\"textAnchor\":{\"x\":0.2,\"y\":0.3}}]";
+        return "{\"referenceAssets\":" + assets + ",\"shots\":" + shots + ",\"auditSummary\":\"checked\"}";
     }
 
     private static byte[] png(int width, int height) throws Exception {
