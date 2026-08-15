@@ -12,6 +12,53 @@ public final class ImageAgentCatalog {
     public static final int DEFAULT_MAX_SHOTS_PER_SCENE = 5;
     public static final int DEFAULT_MAX_SHOTS_PER_STORY = 20;
 
+    private static final SchemaContract STORY_ANALYSIS_CONTRACT = new SchemaContract(
+            "StoryAnalysis",
+            List.of("scenes[]", "beats[]", "characters[]", "locations[]", "props[]", "dialogues[]", "narration[]"),
+            null,
+            List.of());
+    private static final SchemaContract CONTINUITY_BIBLE_CONTRACT = new SchemaContract(
+            "ContinuityBible",
+            List.of("characters[]", "props[]", "invariants[]", "forbiddenChanges[]"),
+            null,
+            List.of());
+    private static final SchemaContract STYLE_BIBLE_CONTRACT = new SchemaContract(
+            "StyleBible",
+            List.of("palette", "renderingStyle", "lighting", "cameraRules", "environmentRules", "negativeRules[]"),
+            null,
+            List.of());
+    private static final SchemaContract STORYBOARD_PROPOSAL_CONTRACT = new SchemaContract(
+            "StoryboardProposal",
+            List.of("shots[]"),
+            "shots[]",
+            List.of("sceneIndex", "beat", "action", "characters", "location", "dialogue", "narration", "splitReason"));
+    private static final SchemaContract FINAL_STORYBOARD_CONTRACT = new SchemaContract(
+            "FinalStoryboard",
+            List.of("shots[]"),
+            "shots[]",
+            List.of(
+                    "shotKey",
+                    "sceneIndex",
+                    "shotIndex",
+                    "sourceExcerpt",
+                    "visualGoal",
+                    "dialogue",
+                    "narration",
+                    "speaker",
+                    "textAnchor"));
+    private static final SchemaContract REFERENCE_PLAN_CONTRACT = new SchemaContract(
+            "ReferencePlan",
+            List.of("referenceAssets[]"),
+            "referenceAssets[]",
+            List.of("assetKey", "type", "target", "prompt", "negativePrompt"));
+    private static final SchemaContract SHOT_PROMPT_PLAN_CONTRACT = new SchemaContract(
+            "ShotPromptPlan",
+            List.of("shots[]"),
+            "shots[]",
+            List.of("shotKey", "prompt", "negativePrompt", "referenceAssetKeys[]"));
+    private static final SchemaContract PREFLIGHT_PLAN_CONTRACT = new SchemaContract(
+            "PreflightPlan", List.of("referenceAssets[]", "shots[]", "auditSummary"), null, List.of());
+
     private static final List<StageDefinition> STAGES = List.of(
             new StageDefinition(
                     "understanding",
@@ -27,7 +74,7 @@ public final class ImageAgentCatalog {
                                     "image-foundation",
                                     "分析故事场景、节拍、动作、角色、地点、道具、对白和旁白。",
                                     List.of("storySnapshot", "targetGrade", "targetWords", "imageSettings"),
-                                    "StoryAnalysis",
+                                    STORY_ANALYSIS_CONTRACT,
                                     "从故事中拆出可追踪的场景、节拍和原始文本，不增写剧情。"),
                             agent(
                                     "image-continuity-designer",
@@ -37,7 +84,7 @@ public final class ImageAgentCatalog {
                                     "image-foundation",
                                     "建立角色和关键道具的不可变视觉说明书。",
                                     List.of("storySnapshot", "targetGrade", "targetWords", "imageSettings"),
-                                    "ContinuityBible",
+                                    CONTINUITY_BIBLE_CONTRACT,
                                     "为角色和道具定义稳定外貌、比例、服装、颜色与表情边界。"),
                             agent(
                                     "image-art-director",
@@ -47,7 +94,7 @@ public final class ImageAgentCatalog {
                                     "image-foundation",
                                     "将选定画风预设扩展为可执行的美术规则。",
                                     List.of("storySnapshot", "targetGrade", "stylePreset", "imageSettings"),
-                                    "StyleBible",
+                                    STYLE_BIBLE_CONTRACT,
                                     "定义色板、线条、材质、光线、镜头语言、环境与禁止元素。"))),
             new StageDefinition(
                     "storyboarding",
@@ -63,7 +110,7 @@ public final class ImageAgentCatalog {
                                     "image-storyboards",
                                     "按动作、视点和时间推进提出互不冲突的画面。",
                                     List.of("storySnapshot", "storyAnalysis", "continuityBible", "styleBible", "imageSettings"),
-                                    "StoryboardProposal",
+                                    STORYBOARD_PROPOSAL_CONTRACT,
                                     "按动作变化、视点变化和时间推进拆镜，禁止单镜包含互斥时间点。"),
                             agent(
                                     "image-learning-storyboarder",
@@ -73,7 +120,7 @@ public final class ImageAgentCatalog {
                                     "image-storyboards",
                                     "按三年级儿童理解顺序提出带短文本的画面。",
                                     List.of("storySnapshot", "storyAnalysis", "continuityBible", "styleBible", "imageSettings"),
-                                    "StoryboardProposal",
+                                    STORYBOARD_PROPOSAL_CONTRACT,
                                     "按儿童可理解的因果顺序拆镜，并分配短对白或一到两句旁白。"),
                             agent(
                                     "image-storyboard-director",
@@ -90,7 +137,7 @@ public final class ImageAgentCatalog {
                                             "actionStoryboardProposal",
                                             "learningStoryboardProposal",
                                             "imageSettings"),
-                                    "FinalStoryboard",
+                                    FINAL_STORYBOARD_CONTRACT,
                                     "确保每个 Scene 一到五镜、全篇最多二十镜、节拍完整覆盖，并为每镜给稳定 shotKey。"))),
             new StageDefinition(
                     "prompting",
@@ -106,7 +153,7 @@ public final class ImageAgentCatalog {
                                     null,
                                     "规划角色设定图与主要场景设定图的参考资产。",
                                     List.of("continuityBible", "styleBible", "finalStoryboard", "imageSettings"),
-                                    "ReferencePlan",
+                                    REFERENCE_PLAN_CONTRACT,
                                     "定义稳定 assetKey、资产类型、目标、无字提示词与负向约束。"),
                             agent(
                                     "image-shot-prompt-engineer",
@@ -122,7 +169,7 @@ public final class ImageAgentCatalog {
                                             "finalStoryboard",
                                             "referencePlan",
                                             "imageSettings"),
-                                    "ShotPromptPlan",
+                                    SHOT_PROMPT_PLAN_CONTRACT,
                                     "为每个 shotKey 写入角色描述、构图、动作、镜头、光线、负向约束和引用资产。"),
                             agent(
                                     "image-prompt-preflight",
@@ -140,7 +187,7 @@ public final class ImageAgentCatalog {
                                             "referencePlan",
                                             "shotPromptPlan",
                                             "imageSettings"),
-                                    "PreflightPlan",
+                                    PREFLIGHT_PLAN_CONTRACT,
                                     "检查故事覆盖、连续性、16:9 构图、参考绑定、无字限制、动作可视化和提示词冲突。"))),
             new StageDefinition(
                     "generation",
@@ -209,7 +256,7 @@ public final class ImageAgentCatalog {
             String parallelGroup,
             String description,
             List<String> variables,
-            String schemaName,
+            SchemaContract schemaContract,
             String responsibility) {
         return new NodeDefinition(
                 key,
@@ -220,7 +267,7 @@ public final class ImageAgentCatalog {
                 parallelGroup,
                 description,
                 variables,
-                structuredPrompt(name, variables, schemaName, responsibility),
+                structuredPrompt(name, variables, schemaContract, responsibility),
                 "Pro",
                 0.2,
                 true);
@@ -243,10 +290,14 @@ public final class ImageAgentCatalog {
     }
 
     private static String structuredPrompt(
-            String agentName, List<String> variables, String schemaName, String responsibility) {
+            String agentName, List<String> variables, SchemaContract schemaContract, String responsibility) {
         String inputVariables = variables.stream()
                 .map(variable -> "{{" + variable + "}}")
                 .collect(Collectors.joining("、"));
+        String itemContract = schemaContract.itemCollectionName() == null
+                ? ""
+                : schemaContract.itemCollectionName() + " 中每项必须且只能包含 "
+                        + String.join("、", schemaContract.itemFields()) + "。\n";
         return ("""
                 你是%s。%s
 
@@ -257,7 +308,15 @@ public final class ImageAgentCatalog {
 
                 严格 JSON 块协议：只能输出一个以 ```json 开始并以 ``` 结束的 JSON 代码块；代码块外不得有任何文字、Markdown 或分析。JSON 必须有效、字段完整、key 稳定且不重复。
                 输出 schema：%s。
-                """).formatted(agentName, responsibility, inputVariables, schemaName).strip();
+                顶层字段必须且只能包含 %s。
+                %s所有字段均为必填；数组可为空但不得省略。禁止添加未声明的顶层字段。
+                """).formatted(
+                agentName,
+                responsibility,
+                inputVariables,
+                schemaContract.schemaName(),
+                String.join("、", schemaContract.topLevelFields()),
+                itemContract).strip();
     }
 
     public record StageDefinition(String key, String name, String note, int order, List<NodeDefinition> nodes) {
@@ -291,6 +350,18 @@ public final class ImageAgentCatalog {
             variables = List.copyOf(variables);
             Objects.requireNonNull(defaultPrompt, "defaultPrompt");
             Objects.requireNonNull(modelPreference, "modelPreference");
+        }
+    }
+
+    private record SchemaContract(
+            String schemaName,
+            List<String> topLevelFields,
+            String itemCollectionName,
+            List<String> itemFields) {
+        private SchemaContract {
+            Objects.requireNonNull(schemaName, "schemaName");
+            topLevelFields = List.copyOf(topLevelFields);
+            itemFields = List.copyOf(itemFields);
         }
     }
 }
