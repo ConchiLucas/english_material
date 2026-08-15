@@ -12,6 +12,7 @@ class ImageDeploymentConfigTest {
         for (String mode : new String[] {"fast", "full"}) {
             String compose = Files.readString(Path.of("deploy/context-router", mode, "compose.yml"));
             assertTrue(compose.contains("IMAGE_STORY_STORAGE_ROOT: /app/runtime/image-story"));
+            assertTrue(!compose.contains("IMAGE_STORY_ALLOW_PORTABLE_STORAGE: true"));
             assertTrue(compose.contains("english-material-image-story:/app/runtime/image-story"));
             assertTrue(compose.contains("english-material-image-story:"));
             assertTrue(compose.contains("image-story-volume-init:"));
@@ -38,5 +39,10 @@ class ImageDeploymentConfigTest {
         String start = Files.readString(Path.of("scripts/start-dev.sh"));
         assertTrue(start.contains("IMAGE_STORY_STORAGE_ROOT"));
         assertTrue(start.contains("IMAGE_STORY_STORAGE_ROOT=\"$IMAGE_STORY_STORAGE_ROOT\""));
+        assertTrue(start.contains("IMAGE_STORY_ALLOW_PORTABLE_STORAGE=true"));
+        String application = Files.readString(Path.of("src/main/resources/application.yml"));
+        assertTrue(application.contains("allow-portable-storage: ${IMAGE_STORY_ALLOW_PORTABLE_STORAGE:false}"));
+        String environmentTemplate = Files.readString(Path.of(".env.local.example"));
+        assertTrue(environmentTemplate.contains("IMAGE_STORY_ALLOW_PORTABLE_STORAGE=false"));
     }
 }

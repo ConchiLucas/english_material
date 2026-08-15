@@ -604,7 +604,7 @@ class ImageRunExecutionServiceTest {
     @Test
     void removesJustWrittenFileAndPreservesOriginalErrorWhenAssetDatabaseSaveFails() throws Exception {
         Path storageRoot = Files.createDirectory(tempDir.toRealPath().resolve("image-assets"));
-        assetStore = new ImageAssetStore(storageRoot.toString());
+        assetStore = new ImageAssetStore(storageRoot.toString(), true);
         when(assets.saveAndFlush(any(ImageAsset.class)))
                 .thenThrow(new IllegalStateException("db-write-original"));
 

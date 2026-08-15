@@ -13,6 +13,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.SecureDirectoryStream;
 import java.security.MessageDigest;
 import java.util.List;
 import java.util.concurrent.Callable;
@@ -35,18 +36,32 @@ class ImageAssetStoreTest {
         try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
             Path storageRoot = Files.createDirectory(testRoot().resolve("spring-storage"));
             TestPropertySourceUtils.addInlinedPropertiesToEnvironment(
-                    context, "image-story.storage-root=" + storageRoot);
+                    context,
+                    "image-story.storage-root=" + storageRoot,
+                    "image-story.allow-portable-storage=true");
             context.register(ImageAssetStore.class);
             context.refresh();
 
-            assertNotNull(context.getBean(ImageAssetStore.class));
+            ImageAssetStore store = context.getBean(ImageAssetStore.class);
+            assertNotNull(store);
+            store.assertWritable();
         }
     }
 
     @Test
-    void verifiesWritableStorageThroughSecureProbeAndLeavesNoFile() throws Exception {
+    void strictModeRejectsFilesystemsWithoutSecureDirectoryStreams() throws Exception {
+        assumeTrue(!supportsSecureDirectoryStreams(), "当前文件系统支持 SecureDirectoryStream");
+        ImageAssetStore store = new ImageAssetStore(storageRoot().toString(), false);
+
+        IllegalStateException error = assertThrows(IllegalStateException.class, store::assertWritable);
+
+        assertTrue(error.getCause().getMessage().contains("不支持安全图片目录操作"));
+    }
+
+    @Test
+    void verifiesWritableStorageAndLeavesNoProbeFile() throws Exception {
         Path storageRoot = storageRoot();
-        ImageAssetStore store = new ImageAssetStore(storageRoot.toString());
+        ImageAssetStore store = portableStore(storageRoot);
 
         store.assertWritable();
         store.assertWritable();
@@ -59,7 +74,7 @@ class ImageAssetStoreTest {
     @Test
     void storesAndReadsPngAtDeterministicRelativePathWithVerifiedMetadata() throws Exception {
         byte[] png = png(16, 9);
-        ImageAssetStore store = new ImageAssetStore(storageRoot().toString());
+        ImageAssetStore store = portableStore(storageRoot());
 
         ImageAssetStore.StoredAsset stored = store.store("run-123", "shot-001", "image/png", png);
 
@@ -73,7 +88,7 @@ class ImageAssetStoreTest {
 
     @Test
     void rejectsUnsafeSegmentsAndDatabasePathsOutsideStorageRoot() throws Exception {
-        ImageAssetStore store = new ImageAssetStore(storageRoot().toString());
+        ImageAssetStore store = portableStore(storageRoot());
         byte[] png = png(2, 2);
 
         assertThrows(IllegalArgumentException.class, () -> store.store("../run", "asset", "image/png", png));
@@ -85,7 +100,7 @@ class ImageAssetStoreTest {
 
     @Test
     void rejectsDeclaredMimeThatDoesNotMatchDecodedImage() throws Exception {
-        ImageAssetStore store = new ImageAssetStore(storageRoot().toString());
+        ImageAssetStore store = portableStore(storageRoot());
 
         assertThrows(IllegalArgumentException.class,
                 () -> store.store("run-123", "shot-001", "image/jpeg", png(3, 2)));
@@ -95,7 +110,7 @@ class ImageAssetStoreTest {
 
     @Test
     void rejectsRunIdsLongerThanThePersistedColumn() throws Exception {
-        ImageAssetStore store = new ImageAssetStore(storageRoot().toString());
+        ImageAssetStore store = portableStore(storageRoot());
 
         assertThrows(IllegalArgumentException.class,
                 () -> store.store("r".repeat(65), "shot-001", "image/png", png(3, 2)));
@@ -104,7 +119,7 @@ class ImageAssetStoreTest {
     @Test
     void neverOverwritesAnExistingAuditAssetAndCleansTemporaryFiles() throws Exception {
         Path storageRoot = storageRoot();
-        ImageAssetStore store = new ImageAssetStore(storageRoot.toString());
+        ImageAssetStore store = portableStore(storageRoot);
         byte[] original = png(4, 3);
         ImageAssetStore.StoredAsset stored = store.store("run-123", "shot-001", "image/png", original);
 
@@ -119,7 +134,7 @@ class ImageAssetStoreTest {
 
     @Test
     void deletesOnlyTheExactStoredAssetWhenPathAndHashBothMatch() throws Exception {
-        ImageAssetStore store = new ImageAssetStore(storageRoot().toString());
+        ImageAssetStore store = portableStore(storageRoot());
         byte[] original = png(4, 3);
         ImageAssetStore.StoredAsset stored = store.store("run-123", "shot-001", "image/png", original);
 
@@ -137,13 +152,13 @@ class ImageAssetStoreTest {
     void publishesOnlyOneCompleteAssetWhenConcurrentWritersUseTheSameKey() throws Exception {
         byte[] first = png(4, 3);
         byte[] second = png(5, 3);
-        CyclicBarrier beforePublish = new CyclicBarrier(2);
+        CyclicBarrier startTogether = new CyclicBarrier(2);
         Path storageRoot = storageRoot();
-        ImageAssetStore store = new BarrierStore(storageRoot.toString(), beforePublish);
+        ImageAssetStore store = portableStore(storageRoot);
         ExecutorService workers = Executors.newFixedThreadPool(2);
         try {
             List<Future<StoreAttempt>> attempts = workers.invokeAll(List.of(
-                    concurrentStore(store, first), concurrentStore(store, second)));
+                    concurrentStore(store, first, startTogether), concurrentStore(store, second, startTogether)));
             List<StoreAttempt> results = attempts.stream().map(this::await).toList();
 
             assertEquals(1, results.stream().filter(StoreAttempt::succeeded).count());
@@ -172,10 +187,30 @@ class ImageAssetStoreTest {
         } catch (UnsupportedOperationException | IOException | SecurityException ex) {
             assumeTrue(false, "symbolic links are unavailable on this platform");
         }
-        ImageAssetStore store = new ImageAssetStore(root.toString());
+        ImageAssetStore store = portableStore(root);
 
         assertThrows(IllegalArgumentException.class,
                 () -> store.store("run-123", "shot-001", "image/png", png(4, 3)));
+    }
+
+    @Test
+    void rejectsSymlinkAssetsWithoutReadingOrDeletingTheirTargets() throws Exception {
+        Path root = storageRoot();
+        Path run = Files.createDirectory(root.resolve("run-123"));
+        Path outside = testRoot().resolve("outside.png");
+        byte[] content = png(4, 3);
+        Files.write(outside, content);
+        Path link = run.resolve("shot-001.png");
+        try {
+            Files.createSymbolicLink(link, outside);
+        } catch (UnsupportedOperationException | IOException | SecurityException ex) {
+            assumeTrue(false, "symbolic links are unavailable on this platform");
+        }
+        ImageAssetStore store = portableStore(root);
+
+        assertThrows(IllegalArgumentException.class, () -> store.read("run-123/shot-001.png", sha256(content)));
+        assertThrows(IllegalArgumentException.class, () -> store.delete("run-123/shot-001.png", sha256(content)));
+        assertArrayEquals(content, Files.readAllBytes(outside));
     }
 
     @Test
@@ -187,7 +222,7 @@ class ImageAssetStoreTest {
         } catch (UnsupportedOperationException | IOException | SecurityException ex) {
             assumeTrue(false, "symbolic links are unavailable on this platform");
         }
-        ImageAssetStore store = new ImageAssetStore(link.toString());
+        ImageAssetStore store = portableStore(link);
 
         assertThrows(IllegalArgumentException.class,
                 () -> store.store("run-123", "shot-001", "image/png", png(4, 3)));
@@ -204,7 +239,7 @@ class ImageAssetStoreTest {
         } catch (UnsupportedOperationException | IOException | SecurityException ex) {
             assumeTrue(false, "symbolic links are unavailable on this platform");
         }
-        ImageAssetStore store = new ImageAssetStore(link.resolve("image-story").toString());
+        ImageAssetStore store = portableStore(link.resolve("image-story"));
 
         assertThrows(IllegalArgumentException.class,
                 () -> store.store("run-123", "shot-001", "image/png", png(4, 3)));
@@ -213,7 +248,7 @@ class ImageAssetStoreTest {
 
     @Test
     void rejectsAMissingConfiguredStorageRoot() throws Exception {
-        ImageAssetStore store = new ImageAssetStore(testRoot().resolve("missing-storage").toString());
+        ImageAssetStore store = portableStore(testRoot().resolve("missing-storage"));
 
         IllegalStateException error = assertThrows(IllegalStateException.class,
                 () -> store.store("run-123", "shot-001", "image/png", png(4, 3)));
@@ -224,7 +259,7 @@ class ImageAssetStoreTest {
     @Test
     void rejectsTamperedBytesAndOversizedFilesAgainstThePersistedHash() throws Exception {
         Path storageRoot = storageRoot();
-        ImageAssetStore store = new ImageAssetStore(storageRoot.toString());
+        ImageAssetStore store = portableStore(storageRoot);
         ImageAssetStore.StoredAsset stored = store.store("run-123", "shot-001", "image/png", png(4, 3));
 
         Files.write(storageRoot.resolve(stored.relativePath()), png(5, 3));
@@ -250,9 +285,21 @@ class ImageAssetStoreTest {
         return tempDir.toRealPath();
     }
 
-    private static Callable<StoreAttempt> concurrentStore(ImageAssetStore store, byte[] bytes) {
+    private static ImageAssetStore portableStore(Path storageRoot) {
+        return new ImageAssetStore(storageRoot.toString(), true);
+    }
+
+    private static boolean supportsSecureDirectoryStreams() throws IOException {
+        try (var stream = Files.newDirectoryStream(Path.of("/"))) {
+            return stream instanceof SecureDirectoryStream<?>;
+        }
+    }
+
+    private static Callable<StoreAttempt> concurrentStore(
+            ImageAssetStore store, byte[] bytes, CyclicBarrier startTogether) {
         return () -> {
             try {
+                awaitBarrier(startTogether);
                 return new StoreAttempt(store.store("run-123", "shot-001", "image/png", bytes), null);
             } catch (Exception ex) {
                 return new StoreAttempt(null, ex);
@@ -288,20 +335,6 @@ class ImageAssetStoreTest {
     private record StoreAttempt(ImageAssetStore.StoredAsset stored, Exception error) {
         boolean succeeded() {
             return stored != null;
-        }
-    }
-
-    private static final class BarrierStore extends ImageAssetStore {
-        private final CyclicBarrier beforePublish;
-
-        private BarrierStore(String storageRoot, CyclicBarrier beforePublish) {
-            super(storageRoot);
-            this.beforePublish = beforePublish;
-        }
-
-        @Override
-        void beforePublish() {
-            awaitBarrier(beforePublish);
         }
     }
 }

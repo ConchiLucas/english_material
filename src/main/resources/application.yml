@@ -25,3 +25,4 @@ logging:
 
 image-story:
   storage-root: ${IMAGE_STORY_STORAGE_ROOT:./runtime/image-story}
+  allow-portable-storage: ${IMAGE_STORY_ALLOW_PORTABLE_STORAGE:false}

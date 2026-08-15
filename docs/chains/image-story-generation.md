@@ -49,7 +49,9 @@ React 一级导航中的“图片工作台”紧邻“Agent 工作台”。它�
 
 图片模型只接收无字画面提示词。`ImageTextCompositor` 读取分镜底图，在 Java2D 中将带说话人和锚点的对白排成气泡，将叙事排成底部安全区字幕，并输出最终 PNG。
 
-`ImageAssetStore` 将文件保存到 `IMAGE_STORY_STORAGE_ROOT/<runId>/`。`tb_image_asset` 只记录受控相对路径、MIME、宽高、SHA-256、Provider/模型/请求 ID、提示词和经过投影的元数据。`GET /api/image-assets/{assetId}/content` 通过资产 ID 查元数据，重新校验两段式路径、普通文件、大小和 SHA-256，只返回 PNG/JPEG，并使用 ETag 与长期不可变缓存；客户端不能提交任意文件路径。
+`ImageAssetStore` 将文件保存到 `IMAGE_STORY_STORAGE_ROOT/<runId>/`。默认严格路径使用 `SecureDirectoryStream`，文件系统不支持时 fail-closed。受信任的单用户 native 开发可显式开启 portable 路径：所有操作在每个规范根目录的进程级锁内执行，逐级以 `NOFOLLOW_LINKS` 拒绝符号链接，临时文件以 `CREATE_NEW` 写入并同步，再以同目录无覆盖硬链接发布；读取和删除均重新校验普通文件、大小和哈希。portable 模式不能防御同 UID 恶意进程在检查间隙替换路径，因此禁止在生产或 Context Router 容器开启。
+
+`tb_image_asset` 只记录受控相对路径、MIME、宽高、SHA-256、Provider/模型/请求 ID、提示词和经过投影的元数据。`GET /api/image-assets/{assetId}/content` 通过资产 ID 查元数据，重新校验两段式路径、普通文件、大小和 SHA-256，只返回 PNG/JPEG，并使用 ETag 与长期不可变缓存；客户端不能提交任意文件路径。
 
 ## 状态、审计与失败
 
@@ -100,6 +102,6 @@ QUEUED
 
 ## 本地与 Context Router 运行
 
-本地开发入口 `./scripts/start-dev.sh` 会创建并注入 `IMAGE_STORY_STORAGE_ROOT`，默认位于 `.runtime/image-story`。Context Router 的 Fast/Full 后端部署共用 `english-material-image-story` 命名卷，并固定挂载到 `/app/runtime/image-story`；初始化容器先按后端 UID 设置所有者与 `0750` 权限。
+本地开发入口 `./scripts/start-dev.sh` 会创建并注入 `IMAGE_STORY_STORAGE_ROOT`，默认位于 `.runtime/image-story`，并仅为该 native 开发进程开启 portable 模式。Context Router 的 Fast/Full 后端部署共用 `english-material-image-story` 命名卷，并固定挂载到 `/app/runtime/image-story`；初始化容器先按后端 UID 设置所有者与 `0750` 权限，portable 配置保持默认关闭。
 
 工作空间启动和代码更新仍遵循根 `AGENTS.md`：先准备 Context Router `task_id`，启动使用 `start_workspace`，变更使用一次 `apply_workspace_changes` 并轮询 Workspace operation 到终态。`.env.local`、Provider API Key 和其他本机凭据不得提交、写入文档、发送给 Context Router 或出现在日志中。

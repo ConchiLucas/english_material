@@ -83,7 +83,7 @@ summary: 维护数据库、AI、故事与图片 Agent 配置及有界执行，�
 - 运行步骤只保存 Provider ID、模型名、Prompt 版本、完整输入/输出与用量，不复制 API Key、数据库密码或完整连接信息。
 - 图片 Agent 只引用现有 `tb_ai_config` Provider ID；图片业务表、运行快照、步骤、资产元数据、错误信息和日志都不复制 API Key。执行所需密钥只从既有 Provider 配置装入当前进程内存，并对可见错误做脱敏。
 - 图片批次创建边界会复制已校验的 `finalStory`、输入单词、目标年级、画风、固定流程和 9 个 Agent/Provider 的安全快照；之后修改原故事、Prompt、画风或 Provider 不改变历史批次含义。Provider 快照不含 API Key 或 Base URL。
-- `ImageAssetStore` 将 PNG/JPEG 写入 `IMAGE_STORY_STORAGE_ROOT` 下的单批次目录，数据库只保存两段式相对路径、MIME、尺寸和 SHA-256。读取时重新校验文件类型、大小、路径和哈希，禁止客户端提交文件路径。
+- `ImageAssetStore` 将 PNG/JPEG 写入 `IMAGE_STORY_STORAGE_ROOT` 下的单批次目录，数据库只保存两段式相对路径、MIME、尺寸和 SHA-256。读取时重新校验文件类型、大小、路径和哈希，禁止客户端提交文件路径。默认严格模式要求文件系统支持 `SecureDirectoryStream`，否则拒绝运行；`image-story.allow-portable-storage` 默认 `false`，只允许受信任的单用户 native 开发显式开启。
 - 图片状态按 `QUEUED → PLANNING → GENERATING_REFERENCES → GENERATING_SHOTS → COMPOSITING → COMPLETED` 前进；任一步骤失败进入 `FAILED` 并保留已完成审计/文件。应用启动时会把残留活动批次标为 `FAILED`，不会续跑。
 - 纯故事协议不新增模型调用、数据库表或 HTTP 接口；现有数据库中的用户 Prompt 不被初始化覆盖，运行时协议独立保证交付格式。
 - 故事配置与运行记录写入只发生在本地配置库；不得把外部连接的写入、DDL 或迁移能力加入材料链路。
@@ -91,6 +91,7 @@ summary: 维护数据库、AI、故事与图片 Agent 配置及有界执行，�
 ## 部署
 
 - 本地开发：`./scripts/start-dev.sh`。
+- 宿主机开发脚本显式设置 `IMAGE_STORY_ALLOW_PORTABLE_STORAGE=true`，以兼容不提供 `SecureDirectoryStream` 的 macOS GraalVM；该 portable 模式使用进程级目录锁、逐级 `NOFOLLOW_LINKS` 校验、同目录临时文件和无覆盖硬链接发布，但不声称能防御同 UID 恶意进程并发替换文件。
 - Context Router fast：`deploy/context-router/fast/deploy.sh`。
 - Context Router full：`deploy/context-router/full/deploy.sh`。
 - full 建立 Java 17、Codex CLI、稳定依赖和 Spring Boot Loader 分层基线；fast 校验并复用该基线，只更新 SNAPSHOT 与 application 层。
