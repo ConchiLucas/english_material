@@ -28,7 +28,8 @@ public final class ImageStructuredOutputParser {
     private static final int MAX_CAPTION_LENGTH = 180;
     private static final Pattern DUPLICATE_FIELD = Pattern.compile("Duplicate field '([^']+)'");
     private static final Pattern NO_RENDERED_TEXT = Pattern.compile(
-            "(?i)\\b(?:(?:no|without|avoid|exclude)\\s+(?:(?:visible|written|any)\\s+)?(?:text|words?|letters?|captions?|subtitles?|signs?|logos?|watermarks?)|do\\s+not\\s+(?:render|add|show|display|draw|include)\\s+(?:text|words?|letters?|captions?|subtitles?|signs?|logos?|watermarks?))\\b");
+            "(?i)\\b(?:(?:no|without|avoid|exclude)\\s+(?:(?:visible|written|any)\\s+)?(?:text|words?|letters?|captions?|subtitles?|signs?|logos?|watermarks?)"
+                    + "|do\\s+not\\s+(?:render|add|show|display|draw|include|put|write|spell|print|type|inscribe)\\s+(?:(?:visible|written|any)\\s+)?(?:text|words?|letters?|captions?|subtitles?|signs?|logos?|watermarks?))\\b");
     private static final Pattern LITERAL_TEXT_INSTRUCTION = Pattern.compile(
             "(?i)\\b(?:write|spell|print|type|inscribe)\\b\\s+(?:(?:the\\s+)?(?:text|words?|letters?|caption|subtitle)|[\\\"'“][^\\\"'”]{1,80}[\\\"'”]|[A-Z][A-Z0-9]{1,})");
     private static final Pattern MEDIA_TEXT_INSTRUCTION = Pattern.compile(
@@ -37,6 +38,10 @@ public final class ImageStructuredOutputParser {
             "(?i)\\b(?:display|put)\\b\\s+(?:a\\s+|the\\s+)?(?:placard|sign|chalkboard)\\s+(?:that\\s+says|with)\\s+(?:[\\\"'“][^\\\"'”]{1,80}[\\\"'”]|[A-Z][A-Z0-9]{1,})\\b");
     private static final Pattern WORD_ON_MEDIUM = Pattern.compile(
             "(?i)\\bput\\b\\s+(?:the\\s+)?word\\s+(?:[\\\"'“][^\\\"'”]{1,80}[\\\"'”]|[A-Z][A-Z0-9]{1,})\\s+on\\s+(?:a\\s+|the\\s+)?(?:placard|sign|chalkboard)\\b");
+    private static final Pattern DIRECT_CONFLICTING_ACTION = Pattern.compile(
+            "(?i)\\b(?:asleep\\s+(?:and|while)\\s+(?:is\\s+)?running|running\\s+(?:and|while)\\s+(?:is\\s+)?asleep"
+                    + "|open\\s+and\\s+(?:is\\s+)?closed|closed\\s+and\\s+(?:is\\s+)?open"
+                    + "|sitting\\s+and\\s+(?:is\\s+)?standing|standing\\s+and\\s+(?:is\\s+)?sitting)\\b");
 
     private final ObjectMapper mapper;
 
@@ -514,19 +519,9 @@ public final class ImageStructuredOutputParser {
                 || (normalized.contains("then") && normalized.contains("later"))) {
             throw error(label + " 同一镜头包含互斥时间点");
         }
-        Set<String> tokens = new HashSet<>(List.of(normalized.split("[^a-z]+")));
-        boolean simultaneous = tokens.contains("simultaneously")
-                || tokens.contains("and")
-                || (tokens.contains("at") && tokens.contains("same") && tokens.contains("time"));
-        if (simultaneous && (containsPair(tokens, "asleep", "running")
-                || containsPair(tokens, "open", "closed")
-                || containsPair(tokens, "sitting", "standing"))) {
+        if (DIRECT_CONFLICTING_ACTION.matcher(normalized).find()) {
             throw error(label + " 同一镜头包含互斥时间点");
         }
-    }
-
-    private static boolean containsPair(Set<String> tokens, String first, String second) {
-        return tokens.contains(first) && tokens.contains(second);
     }
 
     private static void captionLength(String label, String text) {

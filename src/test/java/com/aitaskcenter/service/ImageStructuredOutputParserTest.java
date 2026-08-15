@@ -292,6 +292,26 @@ class ImageStructuredOutputParserTest {
                 .replace("\"narration\":", "\"x\\r\\nInjected\":true,\"narration\":"))), "Injected");
     }
 
+    @Test
+    void rejectsLowercaseExplicitTextInstructions() {
+        assertMessage("图片提示词不得要求模型绘制文字", () -> parser.shotPromptPlan(wrap(
+                "SHOT_PROMPT_PLAN", shotPromptPlanJson().replace("Amy walks, no text", "display a placard that says hello"))));
+        assertMessage("图片提示词不得要求模型绘制文字", () -> parser.shotPromptPlan(wrap(
+                "SHOT_PROMPT_PLAN", shotPromptPlanJson().replace("Amy walks, no text", "put word hello on chalkboard"))));
+    }
+
+    @Test
+    void allowsNegatedWrittenTextInstruction() {
+        assertDoesNotThrow(() -> parser.shotPromptPlan(wrap("SHOT_PROMPT_PLAN", shotPromptPlanJson()
+                .replace("Amy walks, no text", "do not render written text"))));
+    }
+
+    @Test
+    void allowsConflictingActionsWhenTheyBelongToDifferentActors() {
+        assertDoesNotThrow(() -> parser.storyboardProposal(wrap("STORYBOARD_PROPOSAL", storyboardProposalJson()
+                .replace("Amy walks before lunch", "Amy is asleep and Ben is running"))));
+    }
+
     private StoryAnalysis storyAnalysis() {
         return parser.storyAnalysis(wrap("STORY_ANALYSIS", storyAnalysisJson()));
     }
