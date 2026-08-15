@@ -51,9 +51,11 @@ public final class ImageAgentCatalog {
             "StoryboardProposal",
             "STORYBOARD_PROPOSAL",
             List.of(arrayField("shots")),
-            Map.of(
-                    "shots",
-                    objectArray("sceneIndex", "beat", "action", "characters", "location", "dialogue", "narration", "splitReason")));
+            Map.ofEntries(
+                    Map.entry(
+                            "shots",
+                            objectArray("sceneIndex", "beat", "action", "characters", "location", "dialogue", "narration", "splitReason")),
+                    Map.entry("shots.characters", stringArray())));
     private static final SchemaContract FINAL_STORYBOARD_CONTRACT = new SchemaContract(
             "FinalStoryboard",
             "FINAL_STORYBOARD",
@@ -347,6 +349,9 @@ public final class ImageAgentCatalog {
                 .collect(Collectors.joining("\n"));
         String beginMarker = "<" + schemaContract.markerKey() + "_JSON_BEGIN>";
         String endMarker = "<" + schemaContract.markerKey() + "_JSON_END>";
+        String textAnchorContract = schemaContract.requiresTextAnchor()
+                ? "字段 shots.textAnchor 必须为 null 或 object，object 必须且只能包含 x、y；x、y 为 0 到 1 的归一化数字。"
+                : "";
         return ("""
                 你是%s。%s
 
@@ -359,6 +364,7 @@ public final class ImageAgentCatalog {
                 输出 schema：%s。
                 顶层字段必须且只能包含 %s。
                 %s
+                %s
                 所有 object 字段均为必填；数组可为空但不得省略。禁止添加未声明的顶层字段。
                 """).formatted(
                 agentName,
@@ -368,7 +374,8 @@ public final class ImageAgentCatalog {
                 endMarker,
                 schemaContract.schemaName(),
                 schemaContract.topLevelDeclaration(),
-                arrayContracts).strip();
+                arrayContracts,
+                textAnchorContract).strip();
     }
 
     private static ArrayItemContract objectArray(String... fields) {
@@ -437,6 +444,10 @@ public final class ImageAgentCatalog {
             return topLevelFields.stream()
                     .map(field -> field.name() + (field.array() ? "（array）" : ""))
                     .collect(Collectors.joining("、"));
+        }
+
+        private boolean requiresTextAnchor() {
+            return "FINAL_STORYBOARD".equals(markerKey) || "PREFLIGHT_PLAN".equals(markerKey);
         }
     }
 

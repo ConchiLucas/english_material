@@ -295,6 +295,11 @@ class ImageAgentCatalogTest {
             assertFalse(prompt.contains("]"), agent.key());
             assertTrue(prompt.contains("所有 object 字段均为必填；数组可为空但不得省略。"), agent.key());
             assertTrue(prompt.contains("禁止添加未声明的顶层字段。"), agent.key());
+            if ("FINAL_STORYBOARD".equals(contract.markerKey()) || "PREFLIGHT_PLAN".equals(contract.markerKey())) {
+                assertTrue(
+                        prompt.contains("字段 shots.textAnchor 必须为 null 或 object，object 必须且只能包含 x、y；x、y 为 0 到 1 的归一化数字。"),
+                        agent.key());
+            }
             assertFalse(contract.arrayItemContracts().isEmpty(), agent.key());
             for (Map.Entry<String, ArrayItemContract> arrayContract : contract.arrayItemContracts().entrySet()) {
                 if (arrayContract.getValue().scalarString()) {
@@ -316,17 +321,19 @@ class ImageAgentCatalogTest {
                 "StoryboardProposal",
                 "STORYBOARD_PROPOSAL",
                 List.of(arrayField("shots")),
-                Map.of(
-                        "shots",
-                        objectArray(
-                                "sceneIndex",
-                                "beat",
-                                "action",
-                                "characters",
-                                "location",
-                                "dialogue",
-                                "narration",
-                                "splitReason")));
+                Map.ofEntries(
+                        Map.entry(
+                                "shots",
+                                objectArray(
+                                        "sceneIndex",
+                                        "beat",
+                                        "action",
+                                        "characters",
+                                        "location",
+                                        "dialogue",
+                                        "narration",
+                                        "splitReason")),
+                        Map.entry("shots.characters", stringArray())));
     }
 
     private static ArrayItemContract objectArray(String... fields) {
