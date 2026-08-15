@@ -1,5 +1,6 @@
 package com.aitaskcenter.service;
 
+import com.aitaskcenter.config.ImageAgentCatalog;
 import com.aitaskcenter.dto.ImageRunDtos.AssetView;
 import com.aitaskcenter.dto.ImageRunDtos.AgentSnapshotView;
 import com.aitaskcenter.dto.ImageRunDtos.RunDetail;
@@ -209,7 +210,7 @@ public class ImageRunQueryService {
                 root = objectMapper.readTree(parser);
                 if (parser.nextToken() != null) throw invalidAgentSnapshots();
             }
-            if (root == null || !root.isArray() || root.size() > 9) throw invalidAgentSnapshots();
+            if (root == null || !root.isArray() || root.size() != 9) throw invalidAgentSnapshots();
             List<AgentSnapshotView> result = new ArrayList<>();
             Set<Integer> sequences = new HashSet<>();
             Set<String> keys = new HashSet<>();
@@ -241,6 +242,7 @@ public class ImageRunQueryService {
                         temperature, providerId, providerLabel, providerType, providerModel, maxTokens, capabilities));
             }
             result.sort(Comparator.comparingInt(AgentSnapshotView::sequence));
+            validateCompleteAgentCatalog(result);
             return new ParsedAgentSnapshots(List.copyOf(result), null);
         } catch (Exception exception) {
             return new ParsedAgentSnapshots(List.of(), "Agent 运行快照无法读取");
@@ -251,6 +253,24 @@ public class ImageRunQueryService {
         Set<String> names = new HashSet<>();
         node.fieldNames().forEachRemaining(names::add);
         return names;
+    }
+
+    private static void validateCompleteAgentCatalog(List<AgentSnapshotView> snapshots) {
+        List<ImageAgentCatalog.NodeDefinition> expected = ImageAgentCatalog.agents();
+        if (expected.size() != 9 || snapshots.size() != expected.size()) throw invalidAgentSnapshots();
+        for (int index = 0; index < expected.size(); index++) {
+            AgentSnapshotView actual = snapshots.get(index);
+            ImageAgentCatalog.NodeDefinition definition = expected.get(index);
+            String expectedStage = ImageAgentCatalog.stages().stream()
+                    .filter(stage -> stage.nodes().stream().anyMatch(node -> node.key().equals(definition.key())))
+                    .findFirst()
+                    .orElseThrow(ImageRunQueryService::invalidAgentSnapshots)
+                    .key();
+            if (actual.sequence() != index + 1 || !actual.key().equals(definition.key())
+                    || !actual.stageKey().equals(expectedStage)) {
+                throw invalidAgentSnapshots();
+            }
+        }
     }
 
     private static String requiredText(JsonNode node, int maxLength, boolean identifier) {

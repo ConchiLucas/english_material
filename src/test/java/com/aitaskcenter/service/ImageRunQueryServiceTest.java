@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aitaskcenter.config.ImageAgentCatalog;
 import com.aitaskcenter.dto.ImageRunDtos.RunDetail;
 import com.aitaskcenter.dto.ImageRunDtos.SourceStoryView;
 import com.aitaskcenter.model.ImageAsset;
@@ -19,6 +20,8 @@ import com.aitaskcenter.repository.ImageRunStepRepository;
 import com.aitaskcenter.repository.ImageShotRepository;
 import com.aitaskcenter.repository.StoryRunRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.time.OffsetDateTime;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -108,7 +111,8 @@ class ImageRunQueryServiceTest {
         assertThat(detail.steps().get(0).parsedOutputJson()).isEqualTo("{\"parsed\":true}");
         assertThat(detail.shots().get(0).dialogue()).isEqualTo("Hello!");
         assertThat(detail.shots().get(0).caption()).isEqualTo("Toby opens the book.");
-        assertThat(detail.agentSnapshots()).singleElement().satisfies(snapshot -> {
+        assertThat(detail.agentSnapshots()).hasSize(9);
+        assertThat(detail.agentSnapshots().get(0)).satisfies(snapshot -> {
             assertThat(snapshot.key()).isEqualTo("image-story-analyst");
             assertThat(snapshot.systemPrompt()).isEqualTo("Analyze the saved story into visual beats.");
             assertThat(snapshot.temperature()).isEqualTo(0.35d);
@@ -170,6 +174,34 @@ class ImageRunQueryServiceTest {
     }
 
     @Test
+    void requiresTheCompleteCatalogWithExactStagesAndContiguousSequence() throws Exception {
+        ArrayNode missing = agentSnapshotsNode();
+        missing.remove(missing.size() - 1);
+        assertAgentSnapshotRejected("missing", missing);
+
+        ArrayNode programNode = agentSnapshotsNode();
+        ((ObjectNode) programNode.get(0)).put("key", "reference-image-generator");
+        assertAgentSnapshotRejected("program-node", programNode);
+
+        ArrayNode unknownKey = agentSnapshotsNode();
+        ((ObjectNode) unknownKey.get(0)).put("key", "unknown-agent");
+        assertAgentSnapshotRejected("unknown-key", unknownKey);
+
+        ArrayNode wrongStage = agentSnapshotsNode();
+        ((ObjectNode) wrongStage.get(0)).put("stageKey", "delivery");
+        assertAgentSnapshotRejected("wrong-stage", wrongStage);
+
+        ArrayNode sequenceGap = agentSnapshotsNode();
+        ((ObjectNode) sequenceGap.get(sequenceGap.size() - 1)).put("sequence", 10);
+        assertAgentSnapshotRejected("sequence-gap", sequenceGap);
+
+        ArrayNode wrongSequence = agentSnapshotsNode();
+        ((ObjectNode) wrongSequence.get(0)).put("sequence", 2);
+        ((ObjectNode) wrongSequence.get(1)).put("sequence", 1);
+        assertAgentSnapshotRejected("wrong-sequence", wrongSequence);
+    }
+
+    @Test
     void rejectsMissingRunWithBoundedMessage() {
         when(runs.findByRunId("missing")).thenReturn(java.util.Optional.empty());
 
@@ -199,26 +231,7 @@ class ImageRunQueryServiceTest {
         run.setStylePresetId("7");
         run.setStyleSnapshotJson("{\"id\":7,\"name\":\"Paper Cut\",\"positivePrompt\":\"paper\"}");
         run.setFlowSnapshotJson("{\"width\":1536,\"height\":864,\"imageProvider\":{\"id\":\"image-provider\",\"model\":\"image-v1\"}}");
-        run.setAgentSnapshotJson("""
-                [{
-                  "sequence": 1,
-                  "stageKey": "story-understanding",
-                  "key": "image-story-analyst",
-                  "name": "故事结构分析",
-                  "systemPrompt": "Analyze the saved story into visual beats.",
-                  "promptVersion": 3,
-                  "temperature": 0.35,
-                  "provider": {
-                    "id": "text-provider",
-                    "label": "Text Provider",
-                    "type": "OPENAI_COMPATIBLE",
-                    "model": "text-model-v1",
-                    "maxTokens": 4096,
-                    "capabilities": ["TEXT_GENERATION"],
-                    "options": {}
-                  }
-                }]
-                """);
+        run.setAgentSnapshotJson(agentSnapshotsJson());
         run.setStatus("COMPLETED");
         run.setExpectedImageCount(2);
         run.setGeneratedImageCount(2);
@@ -287,5 +300,59 @@ class ImageRunQueryServiceTest {
         asset.setNegativePrompt("negative");
         asset.setMetadataJson("{\"usage\":3}");
         return asset;
+    }
+
+    private void assertAgentSnapshotRejected(String suffix, ArrayNode snapshot) throws Exception {
+        ImageRun run = imageRun("image-" + suffix, "[]", "2026-08-15T10:00:00+08:00");
+        run.setAgentSnapshotJson(new ObjectMapper().writeValueAsString(snapshot));
+        when(runs.findByRunId("image-" + suffix)).thenReturn(java.util.Optional.of(run));
+
+        RunDetail detail = service.getRun("image-" + suffix);
+
+        assertThat(detail.agentSnapshots()).as(suffix).isEmpty();
+        assertThat(detail.agentSnapshotError()).as(suffix).isEqualTo("Agent 运行快照无法读取");
+    }
+
+    private String agentSnapshotsJson() {
+        try {
+            return new ObjectMapper().writeValueAsString(agentSnapshotsNode());
+        } catch (Exception exception) {
+            throw new AssertionError(exception);
+        }
+    }
+
+    private ArrayNode agentSnapshotsNode() {
+        ObjectMapper mapper = new ObjectMapper();
+        ArrayNode snapshots = mapper.createArrayNode();
+        int sequence = 1;
+        for (ImageAgentCatalog.NodeDefinition agent : ImageAgentCatalog.agents()) {
+            String stageKey = ImageAgentCatalog.stages().stream()
+                    .filter(stage -> stage.nodes().stream().anyMatch(node -> node.key().equals(agent.key())))
+                    .findFirst()
+                    .orElseThrow()
+                    .key();
+            ObjectNode provider = mapper.createObjectNode();
+            provider.put("id", "text-provider");
+            provider.put("label", "Text Provider");
+            provider.put("type", "OPENAI_COMPATIBLE");
+            provider.put("model", "text-model-v1");
+            provider.put("maxTokens", 4096);
+            provider.putArray("capabilities").add("TEXT_GENERATION");
+            provider.putObject("options");
+            ObjectNode snapshot = snapshots.addObject();
+            snapshot.put("sequence", sequence);
+            snapshot.put("stageKey", stageKey);
+            snapshot.put("key", agent.key());
+            snapshot.put("name", "历史显示名 " + sequence);
+            snapshot.put("systemPrompt", sequence == 1
+                    ? "Analyze the saved story into visual beats."
+                    : "Historical prompt for " + agent.key());
+            snapshot.put("promptVersion", sequence + 2);
+            snapshot.put("temperature", sequence == 1 ? 0.35d : 0.2d);
+            snapshot.set("provider", provider);
+            sequence++;
+        }
+        assertThat(snapshots).hasSize(9);
+        return snapshots;
     }
 }
