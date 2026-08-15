@@ -44,6 +44,19 @@ class ImageAssetStoreTest {
     }
 
     @Test
+    void verifiesWritableStorageThroughSecureProbeAndLeavesNoFile() throws Exception {
+        Path storageRoot = storageRoot();
+        ImageAssetStore store = new ImageAssetStore(storageRoot.toString());
+
+        store.assertWritable();
+        store.assertWritable();
+
+        try (var files = Files.list(storageRoot)) {
+            assertEquals(0, files.count());
+        }
+    }
+
+    @Test
     void storesAndReadsPngAtDeterministicRelativePathWithVerifiedMetadata() throws Exception {
         byte[] png = png(16, 9);
         ImageAssetStore store = new ImageAssetStore(storageRoot().toString());

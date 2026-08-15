@@ -60,6 +60,7 @@ class ImageRunExecutionServiceTest {
     private AiConfigService aiConfigs;
     private AiTextGenerationService textGeneration;
     private AiImageGenerationService imageGeneration;
+    private ImageAssetStore assetStore;
     private ObjectMapper mapper;
     private StoryRun story;
     private ImageStylePreset style;
@@ -82,6 +83,7 @@ class ImageRunExecutionServiceTest {
         aiConfigs = mock(AiConfigService.class);
         textGeneration = mock(AiTextGenerationService.class);
         imageGeneration = mock(AiImageGenerationService.class);
+        assetStore = mock(ImageAssetStore.class);
         mapper = new ObjectMapper().findAndRegisterModules();
         savedSteps = Collections.synchronizedList(new ArrayList<>());
         startedSteps = new ConcurrentHashMap<>();
@@ -91,6 +93,7 @@ class ImageRunExecutionServiceTest {
         flow = flow();
         textProvider = provider("text-provider", "text-model", List.of("TEXT_GENERATION"));
         imageProvider = provider("image-provider", "image-model", List.of("IMAGE_GENERATION", "IMAGE_REFERENCE"));
+        imageProvider.setType("  OPENAI-COMPATIBLE  ");
         generationOutputs = validOutputs();
 
         when(stories.findByRunId("story-run-1")).thenReturn(java.util.Optional.of(story));
@@ -173,6 +176,18 @@ class ImageRunExecutionServiceTest {
     }
 
     @Test
+    void rejectsNonOpenAiCompatibleImageProviderProtocol() {
+        imageProvider.setType("  anthropic-compatible  ");
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> service(command -> { }, new SyncTaskExecutor())
+                        .createRun(new StartImageRunRequest("story-run-1", 7L)));
+
+        assertTrue(error.getMessage().contains("OpenAI"));
+        verifyNoInteractions(runs, steps, textGeneration, imageGeneration);
+    }
+
+    @Test
     void acceptsNullOptionalImageProviderOptionsAsAdapterDefaults() {
         Map<String, Object> options = new LinkedHashMap<>();
         options.put("quality", null);
@@ -183,6 +198,19 @@ class ImageRunExecutionServiceTest {
 
         assertEquals("QUEUED", summary.status());
         verify(runs).saveAndFlush(any(ImageRun.class));
+    }
+
+    @Test
+    void rejectsUnwritableStorageBeforePersistingOrCallingAnyModel() {
+        org.mockito.Mockito.doThrow(new IllegalStateException("not writable"))
+                .when(assetStore).assertWritable();
+
+        assertThrows(IllegalStateException.class,
+                () -> service(command -> { }, new SyncTaskExecutor())
+                        .createRun(new StartImageRunRequest("story-run-1", 7L)));
+
+        verify(assetStore).assertWritable();
+        verifyNoInteractions(runs, steps, textGeneration, imageGeneration);
     }
 
     @Test
@@ -290,7 +318,7 @@ class ImageRunExecutionServiceTest {
 
     private ImageRunExecutionService service(TaskExecutor runExecutor, TaskExecutor planningExecutor) {
         return new ImageRunExecutionService(stories, runs, steps, agents, styles, flows, aiConfigs,
-                textGeneration, imageGeneration, mapper, runExecutor, planningExecutor);
+                textGeneration, imageGeneration, assetStore, mapper, runExecutor, planningExecutor);
     }
 
     private AiTextGenerationService.GenerationResult generationResult(String systemPrompt) {

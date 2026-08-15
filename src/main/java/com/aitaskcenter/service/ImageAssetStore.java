@@ -46,6 +46,44 @@ public class ImageAssetStore {
         this.storageRoot = Path.of(storageRoot).toAbsolutePath().normalize();
     }
 
+    public void assertWritable() {
+        Path probe = Path.of(".readiness-" + UUID.randomUUID() + ".tmp");
+        SecureDirectoryStream<Path> root = null;
+        boolean created = false;
+        Exception failure = null;
+        try {
+            root = openSecureRoot();
+            try (SeekableByteChannel channel = root.newByteChannel(probe,
+                    Set.of(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS))) {
+                created = true;
+                writeFully(channel, ByteBuffer.wrap(new byte[] {0}));
+                force(channel);
+            }
+            root.deleteFile(probe);
+            created = false;
+        } catch (Exception exception) {
+            failure = exception;
+        } finally {
+            if (created && root != null) {
+                try {
+                    root.deleteFile(probe);
+                } catch (Exception cleanupFailure) {
+                    if (failure == null) failure = cleanupFailure;
+                    else failure.addSuppressed(cleanupFailure);
+                }
+            }
+            if (root != null) {
+                try {
+                    root.close();
+                } catch (Exception closeFailure) {
+                    if (failure == null) failure = closeFailure;
+                    else failure.addSuppressed(closeFailure);
+                }
+            }
+        }
+        if (failure != null) throw new IllegalStateException("图片存储目录不可写", failure);
+    }
+
     public StoredAsset store(String runId, String assetKey, String declaredMime, byte[] bytes) {
         validateSegment(runId, MAX_RUN_ID_LENGTH, "runId");
         validateSegment(assetKey, MAX_ASSET_KEY_LENGTH, "assetKey");

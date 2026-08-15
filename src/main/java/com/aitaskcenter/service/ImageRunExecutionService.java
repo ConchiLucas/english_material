@@ -69,6 +69,7 @@ public class ImageRunExecutionService {
     private final AiTextGenerationService textGenerationService;
     @SuppressWarnings("unused")
     private final AiImageGenerationService imageGenerationService;
+    private final ImageAssetStore assetStore;
     private final ObjectMapper objectMapper;
     private final ImageStructuredOutputParser parser;
     private final TaskExecutor runExecutor;
@@ -84,6 +85,7 @@ public class ImageRunExecutionService {
             AiConfigService aiConfigService,
             AiTextGenerationService textGenerationService,
             AiImageGenerationService imageGenerationService,
+            ImageAssetStore assetStore,
             ObjectMapper objectMapper,
             @Qualifier("imageRunExecutor") TaskExecutor runExecutor,
             @Qualifier("imagePlanningExecutor") TaskExecutor planningExecutor) {
@@ -96,6 +98,7 @@ public class ImageRunExecutionService {
         this.aiConfigService = aiConfigService;
         this.textGenerationService = textGenerationService;
         this.imageGenerationService = imageGenerationService;
+        this.assetStore = assetStore;
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
         this.parser = new ImageStructuredOutputParser(objectMapper);
         this.runExecutor = runExecutor;
@@ -105,6 +108,7 @@ public class ImageRunExecutionService {
     public RunSummary createRun(StartImageRunRequest request) {
         PreparedRun prepared = prepare(request);
         ImageRun run = prepared.run();
+        assetStore.assertWritable();
         runRepository.saveAndFlush(run);
         RunSummary queued = summary(run, prepared.style());
         try {
@@ -450,6 +454,9 @@ public class ImageRunExecutionService {
                 .filter(value -> clean(id).equals(clean(value.getId())))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("图片 Provider 不存在"));
+        if (!"openai-compatible".equals(clean(provider.getType()).toLowerCase(Locale.ROOT))) {
+            throw new IllegalArgumentException("图片 Provider 必须使用 OpenAI compatible 协议");
+        }
         if (!provider.isEnabled() || !supports(provider, "IMAGE_GENERATION") || !supports(provider, "IMAGE_REFERENCE")) {
             throw new IllegalArgumentException("图片 Provider 必须启用并支持图片生成和多参考图");
         }
