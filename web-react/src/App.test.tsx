@@ -9,6 +9,10 @@ const apiMocks = vi.hoisted(() => ({
   getAIConfig: vi.fn(),
   getLocalCliConfig: vi.fn(),
   getStoryAgentFlow: vi.fn(),
+  getImageAgentFlow: vi.fn(),
+  updateImageFlowConfig: vi.fn(),
+  bootstrapAntigravityImageProvider: vi.fn(),
+  saveAIConfig: vi.fn(),
 }));
 
 vi.mock('./api', async (importOriginal) => ({
@@ -46,6 +50,22 @@ vi.mock('./ImageAgentFlowPage', () => ({
   ),
 }));
 
+vi.mock('./ImageModelConfigPage', () => ({
+  default: ({
+    config,
+    onBootstrap,
+  }: {
+    config: { providers: Array<{ id: string; label: string }> };
+    onBootstrap: (sourceProviderId: string) => Promise<void>;
+  }) => (
+    <section aria-label="图片模型配置页面">
+      <h2>图片模型配置</h2>
+      <span>{`Configured image providers: ${config.providers.map((provider) => provider.label).join(', ')}`}</span>
+      <button type="button" onClick={() => void onBootstrap('antigravity-gemini-3-1-pro')}>引导图片模型</button>
+    </section>
+  ),
+}));
+
 interface ConfirmLifecycle {
   title?: unknown;
   onCancel?: () => void;
@@ -73,6 +93,35 @@ describe('App primary navigation', () => {
     apiMocks.getAIConfig.mockReset().mockResolvedValue({ active: '', providers: [] });
     apiMocks.getLocalCliConfig.mockReset().mockResolvedValue({ active: '', configs: [] });
     apiMocks.getStoryAgentFlow.mockReset().mockResolvedValue({ stages: [], budget: {} });
+    apiMocks.getImageAgentFlow.mockReset().mockResolvedValue({
+      stages: [],
+      stylePresets: [],
+      config: {
+        imageProviderId: null,
+        width: 1536,
+        height: 864,
+        maxShotsPerScene: 5,
+        maxShotsPerStory: 20,
+        updatedAt: '2026-08-15T01:00:00Z',
+      },
+    });
+    apiMocks.updateImageFlowConfig.mockReset().mockResolvedValue({});
+    apiMocks.bootstrapAntigravityImageProvider.mockReset().mockResolvedValue({
+      active: 'antigravity-gemini-3-1-pro',
+      providers: [{
+        id: 'antigravity-gemini-image',
+        label: 'Antigravity Gemini Image',
+        type: 'openai-compatible',
+        base_url: 'https://antigravity.example/v1',
+        api_key: '',
+        model: 'gemini-3-pro-image',
+        max_tokens: 4096,
+        capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'],
+        options: { responseFormat: 'b64_json', quality: 'hd', size: '1536x864' },
+        enabled: true,
+      }],
+    });
+    apiMocks.saveAIConfig.mockReset().mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -99,6 +148,88 @@ describe('App primary navigation', () => {
     await user.click(within(navigation).getByRole('menuitem', { name: /Agent 工作台/ }));
 
     expect(screen.getByRole('region', { name: 'Agent 流程工作台' })).toBeInTheDocument();
+  });
+
+  it('shows image model configuration after local CLI in the configuration menu', async () => {
+    const user = userEvent.setup();
+    render(<AntApp><App /></AntApp>);
+
+    const menus = await screen.findAllByRole('navigation', { name: '配置管理导航' });
+    expect(within(menus[0]).getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
+      '数据库配置',
+      'AI 配置',
+      '本地 CLI 配置',
+      '图片模型配置',
+    ]);
+
+    await user.click(within(menus[0]).getByRole('menuitem', { name: /图片模型配置/ }));
+    expect(await screen.findByRole('heading', { name: '图片模型配置' })).toBeInTheDocument();
+  });
+
+  it('bootstraps Antigravity and selects it when the image flow has no executable provider', async () => {
+    const user = userEvent.setup();
+    render(<AntApp><App /></AntApp>);
+
+    const menus = await screen.findAllByRole('navigation', { name: '配置管理导航' });
+    await user.click(within(menus[0]).getByRole('menuitem', { name: /图片模型配置/ }));
+    await user.click(await screen.findByRole('button', { name: '引导图片模型' }));
+
+    expect(apiMocks.bootstrapAntigravityImageProvider).toHaveBeenCalledWith('antigravity-gemini-3-1-pro');
+    expect(apiMocks.updateImageFlowConfig).toHaveBeenCalledWith({
+      imageProviderId: 'antigravity-gemini-image',
+      width: 1536,
+      height: 864,
+      maxShotsPerScene: 5,
+      maxShotsPerStory: 20,
+      updatedAt: '2026-08-15T01:00:00Z',
+    });
+
+    const navigation = screen.getByRole('menu', { name: '主导航' });
+    await user.click(within(navigation).getByRole('menuitem', { name: /图片工作台/ }));
+    expect(await screen.findByText('Image Providers: 1 Antigravity Gemini Image')).toBeInTheDocument();
+  });
+
+  it('does not overwrite an existing executable image provider after bootstrap', async () => {
+    const user = userEvent.setup();
+    const existing = {
+      id: 'existing-image',
+      label: 'Existing Image',
+      type: 'openai-compatible',
+      base_url: 'https://images.example/v1',
+      api_key: '',
+      model: 'existing-model',
+      max_tokens: 4096,
+      capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'],
+      options: { responseFormat: 'b64_json', quality: 'hd', size: '1536x864' },
+      enabled: true,
+    };
+    apiMocks.getImageAgentFlow.mockResolvedValue({
+      stages: [], stylePresets: [],
+      config: {
+        imageProviderId: existing.id,
+        width: 1536,
+        height: 864,
+        maxShotsPerScene: 5,
+        maxShotsPerStory: 20,
+        updatedAt: '2026-08-15T01:00:00Z',
+      },
+    });
+    apiMocks.bootstrapAntigravityImageProvider.mockResolvedValue({
+      active: '',
+      providers: [existing, {
+        ...existing,
+        id: 'antigravity-gemini-image',
+        label: 'Antigravity Gemini Image',
+        model: 'gemini-3-pro-image',
+      }],
+    });
+    render(<AntApp><App /></AntApp>);
+
+    const menus = await screen.findAllByRole('navigation', { name: '配置管理导航' });
+    await user.click(within(menus[0]).getByRole('menuitem', { name: /图片模型配置/ }));
+    await user.click(await screen.findByRole('button', { name: '引导图片模型' }));
+
+    expect(apiMocks.updateImageFlowConfig).not.toHaveBeenCalled();
   });
 
   it('renders the Agent workbench with available providers when an unrelated request fails', async () => {

@@ -50,18 +50,23 @@ import {
   saveAIConfig,
   saveLocalCliConfig,
   testConnectionPayload,
+  bootstrapAntigravityImageProvider,
+  getImageAgentFlow,
+  updateImageFlowConfig,
   updateConnection,
 } from './api';
 import StoryAgentFlowPage from './StoryAgentFlowPage';
 import ImageAgentFlowPage from './ImageAgentFlowPage';
+import ImageModelConfigPage from './ImageModelConfigPage';
 import WordCleanPage from './WordCleanPage';
+import { isExecutableImageProvider } from './image-provider-policy';
 
 const { Header, Sider, Content } = Layout;
 const { Title, Text } = Typography;
 
-type ConfigTab = 'database' | 'ai' | 'cli';
+type ConfigTab = 'database' | 'ai' | 'cli' | 'image-model';
 type WorkspaceSection = 'config' | 'word-clean' | 'agents' | 'image-agents';
-type BusyAction = 'connection-save' | 'connection-test' | 'ai-save' | 'cli-save' | `delete-${number}` | null;
+type BusyAction = 'connection-save' | 'connection-test' | 'ai-save' | 'cli-save' | 'image-model-save' | 'image-model-bootstrap' | `delete-${number}` | null;
 
 const newProvider = (index: number): AIProviderConfigItem => ({
   id: `provider-${index}`,
@@ -90,6 +95,7 @@ const configNavigationItems = [
   { key: 'database', icon: <DatabaseOutlined />, label: '数据库配置' },
   { key: 'ai', icon: <RobotOutlined />, label: 'AI 配置' },
   { key: 'cli', icon: <CodeOutlined />, label: '本地 CLI 配置' },
+  { key: 'image-model', icon: <PictureOutlined />, label: '图片模型配置' },
 ];
 
 const workspaceNavigationItems = [
@@ -123,6 +129,7 @@ export default function App() {
   const [cliDirty, setCliDirty] = useState(false);
   const [agentDirty, setAgentDirty] = useState(false);
   const [imageAgentDirty, setImageAgentDirty] = useState(false);
+  const [, setImageModelDirty] = useState(false);
 
   const reload = async () => {
     setLoading(true);
@@ -307,6 +314,44 @@ export default function App() {
       await reload();
     } catch {
       message.error('CLI 配置保存失败，请检查后端服务。');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const saveImageModels = async (next: AIConfig) => {
+    setBusy('image-model-save');
+    try {
+      await saveAIConfig(next);
+      setImageModelDirty(false);
+      await reload();
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const bootstrapImageModel = async (sourceProviderId: string) => {
+    setBusy('image-model-bootstrap');
+    try {
+      const updated = await bootstrapAntigravityImageProvider(sourceProviderId);
+      setAi(updated);
+      setImageModelDirty(false);
+      try {
+        const flow = await getImageAgentFlow();
+        const current = updated.providers.find((provider) => provider.id === flow.config.imageProviderId);
+        if (!current || !isExecutableImageProvider(current)) {
+          await updateImageFlowConfig({
+            imageProviderId: 'antigravity-gemini-image',
+            width: flow.config.width,
+            height: flow.config.height,
+            maxShotsPerScene: flow.config.maxShotsPerScene,
+            maxShotsPerStory: flow.config.maxShotsPerStory,
+            updatedAt: flow.config.updatedAt,
+          });
+        }
+      } catch {
+        message.warning('图片 Provider 已创建，但默认图片模型未能自动选择，请在图片工作台中手动选择。');
+      }
     } finally {
       setBusy(null);
     }
@@ -769,7 +814,17 @@ export default function App() {
     ? <WordCleanPage connections={connections} />
     : tab === 'database'
       ? renderDatabase()
-      : renderEditor(tab);
+      : tab === 'image-model'
+        ? (
+          <ImageModelConfigPage
+            config={ai}
+            saving={busy === 'image-model-save' || busy === 'image-model-bootstrap'}
+            onChange={(next) => { setAi(next); setImageModelDirty(true); }}
+            onSave={saveImageModels}
+            onBootstrap={bootstrapImageModel}
+          />
+        )
+        : renderEditor(tab);
 
   return (
     <Layout className="app-shell">
