@@ -14,6 +14,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
 import javax.imageio.stream.ImageInputStream;
@@ -32,12 +33,18 @@ public class ImageAssetStore {
             "image/webp", "webp");
 
     private final Path storageRoot;
+    private final Runnable beforePublish;
 
     public ImageAssetStore(@Value("${image-story.storage-root}") String storageRoot) {
+        this(storageRoot, () -> { });
+    }
+
+    ImageAssetStore(String storageRoot, Runnable beforePublish) {
         if (storageRoot == null || storageRoot.isBlank()) {
             throw new IllegalArgumentException("图片存储目录不能为空");
         }
         this.storageRoot = Path.of(storageRoot).toAbsolutePath().normalize();
+        this.beforePublish = Objects.requireNonNull(beforePublish, "beforePublish");
     }
 
     public StoredAsset store(String runId, String assetKey, String declaredMime, byte[] bytes) {
@@ -71,6 +78,7 @@ public class ImageAssetStore {
 
             temporary = Files.createTempFile(realParent, "." + assetKey + "-", ".tmp");
             writeAndSync(temporary, bytes);
+            beforePublish.run();
             try {
                 Files.createLink(target, temporary);
             } catch (FileAlreadyExistsException ex) {

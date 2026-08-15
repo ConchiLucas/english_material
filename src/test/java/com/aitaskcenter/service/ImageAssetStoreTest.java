@@ -79,14 +79,14 @@ class ImageAssetStoreTest {
 
     @Test
     void publishesOnlyOneCompleteAssetWhenConcurrentWritersUseTheSameKey() throws Exception {
-        ImageAssetStore store = new ImageAssetStore(tempDir.toString());
         byte[] first = png(4, 3);
         byte[] second = png(5, 3);
-        CyclicBarrier start = new CyclicBarrier(2);
+        CyclicBarrier beforePublish = new CyclicBarrier(2);
+        ImageAssetStore store = new ImageAssetStore(tempDir.toString(), () -> awaitBarrier(beforePublish));
         ExecutorService workers = Executors.newFixedThreadPool(2);
         try {
             List<Future<StoreAttempt>> attempts = workers.invokeAll(List.of(
-                    concurrentStore(store, start, first), concurrentStore(store, start, second)));
+                    concurrentStore(store, first), concurrentStore(store, second)));
             List<StoreAttempt> results = attempts.stream().map(this::await).toList();
 
             assertEquals(1, results.stream().filter(StoreAttempt::succeeded).count());
@@ -128,16 +128,22 @@ class ImageAssetStoreTest {
         return output.toByteArray();
     }
 
-    private static Callable<StoreAttempt> concurrentStore(
-            ImageAssetStore store, CyclicBarrier start, byte[] bytes) {
+    private static Callable<StoreAttempt> concurrentStore(ImageAssetStore store, byte[] bytes) {
         return () -> {
-            start.await();
             try {
                 return new StoreAttempt(store.store("run-123", "shot-001", "image/png", bytes), null);
             } catch (Exception ex) {
                 return new StoreAttempt(null, ex);
             }
         };
+    }
+
+    private static void awaitBarrier(CyclicBarrier barrier) {
+        try {
+            barrier.await();
+        } catch (Exception ex) {
+            throw new IllegalStateException("测试发布栅栏失败", ex);
+        }
     }
 
     private StoreAttempt await(Future<StoreAttempt> future) {
