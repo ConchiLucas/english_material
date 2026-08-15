@@ -35,6 +35,26 @@ export interface AIConfig { active: string; providers: AIProviderConfigItem[]; }
 export interface ImageProviderBootstrapRequest { sourceProviderId: string; }
 export interface LocalCliConfigItem { enabled: boolean; id: string; label: string; command: string; defaultArgs: string[]; model?: string; reasoningEffort?: string; workingDirectory: string; timeoutSeconds: number; active?: boolean; }
 export interface LocalCliConfig { active: string; configs: LocalCliConfigItem[]; }
+export interface MinioConfig {
+  enabled: boolean;
+  endpoint: string;
+  accessKeyId: string;
+  useSsl: boolean;
+  bucketName: string;
+  basePath: string;
+  secretConfigured: boolean;
+  updatedAt: string | null;
+}
+export interface MinioConfigUpdate {
+  enabled: boolean;
+  endpoint: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  useSsl: boolean;
+  bucketName: string;
+  basePath: string;
+  updatedAt: string | null;
+}
 export interface WordCleanItem {
   id: number;
   word: string;
@@ -108,6 +128,12 @@ export const bootstrapAntigravityImageProvider = (sourceProviderId: string) =>
   request.post<ApiResponse<AIConfig>>('/ai/config/image/bootstrap', { sourceProviderId }).then(unwrap);
 export const getLocalCliConfig = () => request.get<ApiResponse<LocalCliConfig>>('/ai/cli/config').then(unwrap);
 export const saveLocalCliConfig = (value: LocalCliConfig) => request.post('/ai/cli/config', value).then(unwrap);
+export const getMinioConfig = () =>
+  request.get<ApiResponse<MinioConfig>>('/minio-config').then(unwrap);
+export const testMinioConfig = (value: MinioConfigUpdate) =>
+  request.post<ApiResponse<null>>('/minio-config/test', value).then(unwrap);
+export const saveMinioConfig = (value: MinioConfigUpdate) =>
+  request.put<ApiResponse<MinioConfig>>('/minio-config', value).then(unwrap);
 export const getWordCleanWords = (params: WordCleanQuery) =>
   request.get<ApiResponse<{ list: WordCleanItem[]; total: number; page: number; pageSize: number }>>('/word-clean', { params }).then(unwrap);
 export const getWordCleanFacets = (connectionId: number) =>

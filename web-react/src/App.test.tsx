@@ -159,6 +159,7 @@ describe('App primary navigation', () => {
       '数据库配置',
       'AI 配置',
       '本地 CLI 配置',
+      'MinIO 配置',
       '图片模型配置',
     ]);
 

@@ -10,6 +10,9 @@ import {
   getImageSourceStories,
   getImageStylePresets,
   imageAssetUrl,
+  getMinioConfig,
+  saveMinioConfig,
+  testMinioConfig,
   restoreImageAgentVersion,
   updateImageAgent,
   updateImageFlowConfig,
@@ -68,6 +71,30 @@ describe('image story API contracts', () => {
     requestMock.get.mockReturnValue(apiResult({ stages: [] }));
     await getImageAgentFlow();
     expect(requestMock.get).toHaveBeenCalledWith('/image-agents/flow');
+  });
+
+  it('gets, tests and saves the MinIO configuration with exact routes', async () => {
+    const body = {
+      enabled: true,
+      endpoint: 'minio.internal:9000',
+      accessKeyId: 'english-app',
+      secretAccessKey: '',
+      useSsl: false,
+      bucketName: 'english-material',
+      basePath: 'image-story',
+      updatedAt: null,
+    };
+    requestMock.get.mockReturnValue(apiResult({ ...body, secretConfigured: true }));
+    requestMock.post.mockReturnValue(apiResult(null));
+    requestMock.put.mockReturnValue(apiResult({ ...body, secretConfigured: true }));
+
+    await getMinioConfig();
+    await testMinioConfig(body);
+    await saveMinioConfig(body);
+
+    expect(requestMock.get).toHaveBeenCalledWith('/minio-config');
+    expect(requestMock.post).toHaveBeenCalledWith('/minio-config/test', body);
+    expect(requestMock.put).toHaveBeenCalledWith('/minio-config', body);
   });
 
   it('bootstraps an Antigravity image provider from a source ID only', async () => {

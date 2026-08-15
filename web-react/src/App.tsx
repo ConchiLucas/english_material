@@ -3,6 +3,7 @@ import {
   CheckCircleFilled,
   BookOutlined,
   CodeOutlined,
+  CloudServerOutlined,
   DatabaseOutlined,
   DeleteOutlined,
   EditOutlined,
@@ -58,13 +59,14 @@ import {
 import StoryAgentFlowPage from './StoryAgentFlowPage';
 import ImageAgentFlowPage from './ImageAgentFlowPage';
 import ImageModelConfigPage from './ImageModelConfigPage';
+import MinioConfigPage from './MinioConfigPage';
 import WordCleanPage from './WordCleanPage';
 import { isExecutableImageProvider } from './image-provider-policy';
 
 const { Header, Sider, Content } = Layout;
 const { Title, Text } = Typography;
 
-type ConfigTab = 'database' | 'ai' | 'cli' | 'image-model';
+type ConfigTab = 'database' | 'ai' | 'cli' | 'minio' | 'image-model';
 type WorkspaceSection = 'config' | 'word-clean' | 'agents' | 'image-agents';
 type BusyAction = 'connection-save' | 'connection-test' | 'ai-save' | 'cli-save' | 'image-model-save' | 'image-model-bootstrap' | `delete-${number}` | null;
 
@@ -95,6 +97,7 @@ const configNavigationItems = [
   { key: 'database', icon: <DatabaseOutlined />, label: '数据库配置' },
   { key: 'ai', icon: <RobotOutlined />, label: 'AI 配置' },
   { key: 'cli', icon: <CodeOutlined />, label: '本地 CLI 配置' },
+  { key: 'minio', icon: <CloudServerOutlined />, label: 'MinIO 配置' },
   { key: 'image-model', icon: <PictureOutlined />, label: '图片模型配置' },
 ];
 
@@ -814,6 +817,8 @@ export default function App() {
     ? <WordCleanPage connections={connections} />
     : tab === 'database'
       ? renderDatabase()
+      : tab === 'minio'
+        ? <MinioConfigPage />
       : tab === 'image-model'
         ? (
           <ImageModelConfigPage
