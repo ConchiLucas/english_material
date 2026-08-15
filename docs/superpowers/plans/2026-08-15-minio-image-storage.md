@@ -269,7 +269,7 @@ Expected: old filesystem implementation fails the MinIO interactions and object-
 
 - [ ] **Step 3: Implement MinIO-only store/read/delete**
 
-Resolve enabled configuration for every operation. Use `statObject` before `putObject` to enforce no overwrite; only treat the SDK's exact no-such-key response as absent. Upload known-length bytes, then `statObject` and verify size. Read through `GetObjectResponse` into a bounded stream capped at `MAX_BYTES + 1`, then validate SHA. Delete first reads and verifies SHA, then removes the key. Never list buckets or objects.
+Resolve enabled configuration for every operation. Upload known-length bytes with `PutObjectArgs.headers(Map.of("If-None-Match", "*"))`; map only the exact HTTP 412 precondition failure to the duplicate-object error, so the object store enforces create-only publication atomically. After upload, call `statObject` and verify size. Read through `GetObjectResponse` into a bounded stream capped at `MAX_BYTES + 1`, then validate SHA. Delete first reads and verifies SHA, then removes the key. Never list buckets or objects.
 
 Preserve the existing controlled path contract while prefixing with configured `basePath`; the database `relativePath` is the full object key. Remove all `SecureDirectoryStream`, portable filesystem and host-path code.
 
