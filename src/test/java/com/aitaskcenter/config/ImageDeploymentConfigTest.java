@@ -45,4 +45,18 @@ class ImageDeploymentConfigTest {
         String environmentTemplate = Files.readString(Path.of(".env.local.example"));
         assertTrue(environmentTemplate.contains("IMAGE_STORY_ALLOW_PORTABLE_STORAGE=false"));
     }
+
+    @Test
+    void boundsFullDeploymentBaseImagePullsAndOnlyFallsBackToAnExistingLocalImage() throws Exception {
+        String fullDeploy = Files.readString(Path.of("deploy/context-router/full/deploy.sh"));
+
+        assertTrue(fullDeploy.contains("pull_image_with_timeout()"));
+        assertTrue(fullDeploy.contains("${ENGLISH_MATERIAL_IMAGE_PULL_TIMEOUT:-120}"));
+        assertTrue(fullDeploy.contains("kill -TERM \"$pull_pid\""));
+        assertTrue(fullDeploy.contains("kill -KILL \"$pull_pid\""));
+        assertTrue(fullDeploy.contains("wait \"$pull_pid\""));
+        assertTrue(fullDeploy.contains("docker image inspect \"$image\""));
+        assertTrue(fullDeploy.contains("pull_image_with_timeout \"$JAVA_IMAGE\""));
+        assertTrue(fullDeploy.contains("pull_image_with_timeout \"$NODE_IMAGE\""));
+    }
 }

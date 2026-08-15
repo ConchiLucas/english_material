@@ -18,6 +18,8 @@ summary: 区分开发机启动、旧部署目录和 Context Router 统一编排�
 
 Java Full 从当前本地代码完整打包 Spring Boot JAR，提取 `dependencies`、`spring-boot-loader`、`snapshot-dependencies` 和 `application` 四层，建立带哈希标签的 Java 17、Codex CLI 与稳定依赖基线；Java Fast 重新打包当前代码并严格验证基线，只叠加 SNAPSHOT 与业务层。依赖或基线不一致时 Fast 必须失败并要求 Full。
 
+Java Full 拉取 Java 与 Node 基础镜像时使用有界等待，默认上限为 120 秒，可用正整数秒数 `ENGLISH_MATERIAL_IMAGE_PULL_TIMEOUT` 覆盖。拉取失败或超时后，只有对应镜像已存在于本机 Docker 缓存时才会输出警告并继续；本地镜像不存在则部署失败。超时会先终止并回收拉取进程，避免 Host Runtime Runner 长时间卡在无界 `docker pull`。
+
 React Fast 使用锁文件哈希隔离的 `node_modules` Volume 和源码挂载运行 Vite；React Full 执行 `npm ci`、生产构建并生成只读 Nginx 镜像。Fast/Full 替换同一个前端容器并保持宿主机端口 `19638` 不变。
 
 后端和前端都加入 `vibedeploy-shared`。Workspace 启动依次执行后端 Full 和前端 Full，每一步都等待容器健康。

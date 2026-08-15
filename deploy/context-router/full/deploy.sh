@@ -30,6 +30,51 @@ ensure_shared_network() {
     docker network create --driver bridge vibedeploy-shared >/dev/null
 }
 
+pull_image_with_timeout() {
+  image=$1
+  pull_timeout=$IMAGE_PULL_TIMEOUT
+  pull_elapsed=0
+
+  docker pull --platform "$DOCKER_PLATFORM" "$image" &
+  pull_pid=$!
+
+  while kill -0 "$pull_pid" 2>/dev/null; do
+    if [ "$pull_elapsed" -ge "$pull_timeout" ]; then
+      echo "[WARN] 拉取基础镜像 $image 超过 ${pull_timeout}s，终止拉取进程" >&2
+      kill -TERM "$pull_pid" 2>/dev/null || true
+      pull_grace=0
+      while kill -0 "$pull_pid" 2>/dev/null && [ "$pull_grace" -lt 5 ]; do
+        sleep 1
+        pull_grace=$((pull_grace + 1))
+      done
+      if kill -0 "$pull_pid" 2>/dev/null; then
+        kill -KILL "$pull_pid" 2>/dev/null || true
+      fi
+      wait "$pull_pid" 2>/dev/null || true
+      if docker image inspect "$image" >/dev/null 2>&1; then
+        echo "[WARN] 拉取基础镜像 $image 超时，使用已存在的本地缓存镜像" >&2
+        return 0
+      fi
+      echo "[ERROR] 拉取基础镜像 $image 超时，且本地缓存镜像不存在" >&2
+      return 124
+    fi
+    sleep 1
+    pull_elapsed=$((pull_elapsed + 1))
+  done
+
+  if wait "$pull_pid"; then
+    return 0
+  else
+    pull_status=$?
+  fi
+  if docker image inspect "$image" >/dev/null 2>&1; then
+    echo "[WARN] 拉取基础镜像 $image 失败，使用已存在的本地缓存镜像" >&2
+    return 0
+  fi
+  echo "[ERROR] 拉取基础镜像 $image 失败，且本地缓存镜像不存在" >&2
+  return "$pull_status"
+}
+
 remove_legacy_container() {
   if docker container inspect english-material-backend-1 >/dev/null 2>&1; then
     echo "[STEP] 移除旧统一 Compose 后端容器 english-material-backend-1"
@@ -78,6 +123,17 @@ JAVA_IMAGE=${ENGLISH_MATERIAL_JAVA_IMAGE:-eclipse-temurin:17-jre}
 NODE_IMAGE=${ENGLISH_MATERIAL_NODE_IMAGE:-node:22-bookworm-slim}
 DOCKER_ARCH=$(docker version --format '{{.Server.Arch}}')
 DOCKER_PLATFORM=${ENGLISH_MATERIAL_DOCKER_PLATFORM:-linux/$DOCKER_ARCH}
+IMAGE_PULL_TIMEOUT=${ENGLISH_MATERIAL_IMAGE_PULL_TIMEOUT:-120}
+case "$IMAGE_PULL_TIMEOUT" in
+  ''|*[!0-9]*)
+    echo "[ERROR] ENGLISH_MATERIAL_IMAGE_PULL_TIMEOUT 必须是正整数秒数" >&2
+    exit 1
+    ;;
+esac
+if [ "$IMAGE_PULL_TIMEOUT" -le 0 ]; then
+  echo "[ERROR] ENGLISH_MATERIAL_IMAGE_PULL_TIMEOUT 必须是正整数秒数" >&2
+  exit 1
+fi
 
 echo "[STEP] 使用当前工作树完整打包英语材料后端"
 mvn -B -ntp -U -Dmaven.test.skip=true -f "$PROJECT_ROOT/pom.xml" clean package
@@ -92,8 +148,8 @@ LOADER_HASH=$(em_layer_hash "$LAYERS_DIR/spring-boot-loader")
 BASE_DOCKERFILE_HASH=$(em_file_hash "$SCRIPT_DIR/Dockerfile.base")
 
 echo "[STEP] 拉取 Java 17 与 Codex CLI 工具链基础镜像"
-docker pull --platform "$DOCKER_PLATFORM" "$JAVA_IMAGE"
-docker pull --platform "$DOCKER_PLATFORM" "$NODE_IMAGE"
+pull_image_with_timeout "$JAVA_IMAGE"
+pull_image_with_timeout "$NODE_IMAGE"
 JAVA_IMAGE_ID=$(docker image inspect --format '{{.Id}}' "$JAVA_IMAGE")
 NODE_IMAGE_ID=$(docker image inspect --format '{{.Id}}' "$NODE_IMAGE")
 BASE_KEY=$(em_base_key "$DEPENDENCIES_HASH" "$LOADER_HASH" "$BASE_DOCKERFILE_HASH" \
