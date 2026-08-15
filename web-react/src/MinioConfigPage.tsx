@@ -105,10 +105,10 @@ export default function MinioConfigPage() {
           <Text type="secondary">配置图片故事资产使用的私有对象存储。</Text>
         </div>
         <Space className="page-actions" wrap>
-          <Button aria-label="测试连接" icon={<ExperimentOutlined />} loading={busy === 'test'} onClick={() => void test()}>
+          <Button aria-label="测试连接" icon={<ExperimentOutlined />} loading={busy === 'test'} disabled={busy === 'save'} onClick={() => void test()}>
             测试连接
           </Button>
-          <Button aria-label="保存配置" type="primary" icon={<SaveOutlined />} loading={busy === 'save'} onClick={() => void save()}>
+          <Button aria-label="保存配置" type="primary" icon={<SaveOutlined />} loading={busy === 'save'} disabled={busy === 'test'} onClick={() => void save()}>
             保存配置
           </Button>
         </Space>

@@ -799,6 +799,8 @@ export default function App() {
     ? <StoryAgentFlowPage providers={ai.providers} connections={connections} onDirtyChange={setAgentDirty} />
     : section === 'image-agents'
       ? <ImageAgentFlowPage providers={ai.providers} onDirtyChange={setImageAgentDirty} />
+    : section === 'config' && tab === 'minio'
+      ? <MinioConfigPage />
     : loading ? (
     <div className="panel-page loading-panel" aria-busy="true" aria-label="正在加载配置">
       <Skeleton active paragraph={{ rows: 8 }} />
@@ -817,8 +819,6 @@ export default function App() {
     ? <WordCleanPage connections={connections} />
     : tab === 'database'
       ? renderDatabase()
-      : tab === 'minio'
-        ? <MinioConfigPage />
       : tab === 'image-model'
         ? (
           <ImageModelConfigPage

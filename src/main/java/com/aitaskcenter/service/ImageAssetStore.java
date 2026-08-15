@@ -53,13 +53,27 @@ public class ImageAssetStore {
         }
         MinioStorageConfig config = configService.requireEnabled();
         String relativePath = runId + "/" + assetKey + "." + MIME_TO_EXTENSION.get(mime);
+        String objectKey = objectKey(config, relativePath);
+        MinioClientFactory.Client client = clientFactory.create(config);
+        boolean uploaded = false;
         try {
-            clientFactory.create(config).putObject(
-                    config.bucketName(), objectKey(config, relativePath), bytes, mime, true);
+            client.putObject(config.bucketName(), objectKey, bytes, mime, true);
+            uploaded = true;
+            MinioClientFactory.ObjectMetadata metadata = client.statObject(config.bucketName(), objectKey);
+            if (metadata == null || metadata.size() != bytes.length || !mime.equals(metadata.contentType())) {
+                throw new IllegalStateException("MinIO 图片对象元数据校验失败");
+            }
             return new StoredAsset(relativePath, mime, image.width(), image.height(), sha256(bytes));
         } catch (MinioClientFactory.ObjectAlreadyExistsException exception) {
             throw duplicate();
         } catch (Exception exception) {
+            if (uploaded) {
+                try {
+                    removeUploadedObjectIfMatching(client, config.bucketName(), objectKey, sha256(bytes));
+                } catch (Exception cleanup) {
+                    exception.addSuppressed(cleanup);
+                }
+            }
             throw new IllegalStateException("保存图片资产失败", exception);
         }
     }
@@ -74,6 +88,7 @@ public class ImageAssetStore {
             if (!sha256(content).equals(expectedSha256)) {
                 throw new IllegalArgumentException("图片资产哈希不匹配");
             }
+            inspect(content);
             return content;
         } catch (MinioClientFactory.ObjectMissingException exception) {
             throw new IllegalArgumentException("图片资产不存在");
@@ -94,6 +109,7 @@ public class ImageAssetStore {
             if (!sha256(content).equals(expectedSha256)) {
                 throw new IllegalArgumentException("图片资产哈希不匹配，拒绝删除");
             }
+            inspect(content);
             client.removeObject(config.bucketName(), objectKey(config, safePath));
         } catch (MinioClientFactory.ObjectMissingException exception) {
             throw new IllegalArgumentException("图片资产不存在");
@@ -106,6 +122,15 @@ public class ImageAssetStore {
 
     private static String objectKey(MinioStorageConfig config, String relativePath) {
         return config.basePath() + "/" + relativePath;
+    }
+
+    private static void removeUploadedObjectIfMatching(
+            MinioClientFactory.Client client, String bucket, String objectKey, String expectedSha256)
+            throws Exception {
+        try (InputStream input = client.getObject(bucket, objectKey)) {
+            byte[] stored = readBounded(input);
+            if (sha256(stored).equals(expectedSha256)) client.removeObject(bucket, objectKey);
+        }
     }
 
     private static byte[] readBounded(InputStream input) throws IOException {

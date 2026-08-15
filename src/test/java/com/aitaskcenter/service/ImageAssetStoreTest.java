@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -64,6 +65,8 @@ class ImageAssetStoreTest {
     @Test
     void storesAndReadsPngAtDeterministicRelativePathWithVerifiedMetadata() throws Exception {
         byte[] png = png(16, 9);
+        when(client.statObject("english-material", "image-story/run-123/shot-001.png"))
+                .thenReturn(new MinioClientFactory.ObjectMetadata(png.length, "image/png"));
         when(client.getObject("english-material", "image-story/run-123/shot-001.png"))
                 .thenReturn(new ByteArrayInputStream(png));
 
@@ -77,6 +80,36 @@ class ImageAssetStoreTest {
         verify(client).putObject("english-material", "image-story/run-123/shot-001.png", png,
                 "image/png", true);
         assertArrayEquals(png, store.read(stored.relativePath(), stored.sha256()));
+    }
+
+    @Test
+    void removesAnUploadedObjectWhenPostUploadMetadataVerificationFails() throws Exception {
+        byte[] png = png(4, 3);
+        String key = "image-story/run-123/shot-001.png";
+        when(client.statObject("english-material", key))
+                .thenReturn(new MinioClientFactory.ObjectMetadata(png.length + 1L, "image/png"));
+        when(client.getObject("english-material", key)).thenReturn(new ByteArrayInputStream(png));
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> store.store("run-123", "shot-001", "image/png", png));
+
+        assertEquals("保存图片资产失败", error.getMessage());
+        verify(client).removeObject("english-material", key);
+    }
+
+    @Test
+    void neverDeletesAReplacedObjectDuringPostUploadCompensation() throws Exception {
+        byte[] uploaded = png(4, 3);
+        byte[] replacement = png(5, 3);
+        String key = "image-story/run-123/shot-001.png";
+        when(client.statObject("english-material", key))
+                .thenReturn(new MinioClientFactory.ObjectMetadata(uploaded.length + 1L, "image/png"));
+        when(client.getObject("english-material", key)).thenReturn(new ByteArrayInputStream(replacement));
+
+        assertThrows(IllegalStateException.class,
+                () -> store.store("run-123", "shot-001", "image/png", uploaded));
+
+        verify(client, never()).removeObject("english-material", key);
     }
 
     @Test
@@ -236,6 +269,13 @@ class ImageAssetStoreTest {
             byte[] bytes = objects.get(key);
             if (bytes == null) throw new MinioClientFactory.ObjectMissingException();
             return new ByteArrayInputStream(bytes);
+        }
+
+        @Override
+        public MinioClientFactory.ObjectMetadata statObject(String bucket, String key) throws Exception {
+            byte[] bytes = objects.get(key);
+            if (bytes == null) throw new MinioClientFactory.ObjectMissingException();
+            return new MinioClientFactory.ObjectMetadata(bytes.length, "image/png");
         }
 
         @Override public void removeObject(String bucket, String key) { objects.remove(key); }

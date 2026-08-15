@@ -6,6 +6,7 @@ import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import io.minio.RemoveObjectArgs;
+import io.minio.StatObjectArgs;
 import io.minio.errors.ErrorResponseException;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
@@ -28,6 +29,7 @@ public class MinioClientFactory {
         void makeBucket(String bucket) throws Exception;
         void putObject(String bucket, String key, byte[] bytes, String contentType, boolean createOnly) throws Exception;
         InputStream getObject(String bucket, String key) throws Exception;
+        ObjectMetadata statObject(String bucket, String key) throws Exception;
         void removeObject(String bucket, String key) throws Exception;
     }
 
@@ -70,6 +72,12 @@ public class MinioClientFactory {
         }
 
         @Override
+        public ObjectMetadata statObject(String bucket, String key) throws Exception {
+            var response = delegate.statObject(StatObjectArgs.builder().bucket(bucket).object(key).build());
+            return new ObjectMetadata(response.size(), response.contentType());
+        }
+
+        @Override
         public void removeObject(String bucket, String key) throws Exception {
             delegate.removeObject(RemoveObjectArgs.builder().bucket(bucket).object(key).build());
         }
@@ -89,4 +97,5 @@ public class MinioClientFactory {
 
     static final class ObjectAlreadyExistsException extends Exception { }
     static final class ObjectMissingException extends Exception { }
+    record ObjectMetadata(long size, String contentType) { }
 }

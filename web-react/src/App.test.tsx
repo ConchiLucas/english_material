@@ -8,6 +8,7 @@ const apiMocks = vi.hoisted(() => ({
   getConnections: vi.fn(),
   getAIConfig: vi.fn(),
   getLocalCliConfig: vi.fn(),
+  getMinioConfig: vi.fn(),
   getStoryAgentFlow: vi.fn(),
   getImageAgentFlow: vi.fn(),
   updateImageFlowConfig: vi.fn(),
@@ -92,6 +93,16 @@ describe('App primary navigation', () => {
     apiMocks.getConnections.mockReset().mockResolvedValue([]);
     apiMocks.getAIConfig.mockReset().mockResolvedValue({ active: '', providers: [] });
     apiMocks.getLocalCliConfig.mockReset().mockResolvedValue({ active: '', configs: [] });
+    apiMocks.getMinioConfig.mockReset().mockResolvedValue({
+      enabled: false,
+      endpoint: '',
+      accessKeyId: '',
+      useSsl: false,
+      bucketName: 'english-material',
+      basePath: 'image-story',
+      secretConfigured: false,
+      updatedAt: null,
+    });
     apiMocks.getStoryAgentFlow.mockReset().mockResolvedValue({ stages: [], budget: {} });
     apiMocks.getImageAgentFlow.mockReset().mockResolvedValue({
       stages: [],
@@ -165,6 +176,18 @@ describe('App primary navigation', () => {
 
     await user.click(within(menus[0]).getByRole('menuitem', { name: /图片模型配置/ }));
     expect(await screen.findByRole('heading', { name: '图片模型配置' })).toBeInTheDocument();
+  });
+
+  it('opens MinIO configuration even when unrelated configuration loading fails', async () => {
+    apiMocks.getConnections.mockRejectedValueOnce(new Error('database unavailable'));
+    const user = userEvent.setup();
+    render(<AntApp><App /></AntApp>);
+
+    const menus = await screen.findAllByRole('navigation', { name: '配置管理导航' });
+    await user.click(within(menus[0]).getByRole('menuitem', { name: /MinIO 配置/ }));
+
+    expect(await screen.findByRole('heading', { name: 'MinIO 配置' })).toBeInTheDocument();
+    expect(await screen.findByDisplayValue('english-material')).toBeInTheDocument();
   });
 
   it('bootstraps Antigravity and selects it when the image flow has no executable provider', async () => {
