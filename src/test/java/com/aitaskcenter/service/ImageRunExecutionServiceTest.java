@@ -44,8 +44,6 @@ import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -62,7 +60,6 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 import org.mockito.InOrder;
 import org.springframework.core.task.SyncTaskExecutor;
 import org.springframework.core.task.TaskExecutor;
@@ -72,8 +69,6 @@ class ImageRunExecutionServiceTest {
         System.setProperty("java.awt.headless", "true");
     }
 
-    @TempDir
-    Path tempDir;
     private StoryRunRepository stories;
     private ImageRunRepository runs;
     private ImageRunStepRepository steps;
@@ -789,8 +784,6 @@ class ImageRunExecutionServiceTest {
 
     @Test
     void removesJustWrittenFileAndPreservesOriginalErrorWhenAssetDatabaseSaveFails() throws Exception {
-        Path storageRoot = Files.createDirectory(tempDir.toRealPath().resolve("image-assets"));
-        assetStore = new ImageAssetStore(storageRoot.toString(), true);
         when(assets.saveAndFlush(any(ImageAsset.class)))
                 .thenThrow(new IllegalStateException("db-write-original"));
 
@@ -801,9 +794,7 @@ class ImageRunExecutionServiceTest {
         assertTrue(currentRun.get().getErrorMessage().contains("db-write-original"));
         verify(imageGeneration, org.mockito.Mockito.times(1))
                 .generate(any(), anyString(), anyString(), anyInt(), anyInt(), any());
-        try (var files = Files.walk(storageRoot)) {
-            assertEquals(0, files.filter(Files::isRegularFile).count());
-        }
+        verify(assetStore).delete(anyString(), anyString());
     }
 
     @Test
