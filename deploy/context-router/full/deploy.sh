@@ -85,6 +85,32 @@ registry_docker() {
     docker "$@"
 }
 
+prepare_anonymous_docker_config() {
+  mkdir -p "$ANONYMOUS_DOCKER_CONFIG"
+  printf '{}\n' > "$ANONYMOUS_DOCKER_CONFIG/config.json"
+  if registry_docker buildx version >/dev/null 2>&1; then
+    return 0
+  fi
+
+  mkdir -p "$ANONYMOUS_DOCKER_CONFIG/cli-plugins"
+  for buildx_candidate in \
+    "$ORIGINAL_DOCKER_CONFIG/cli-plugins/docker-buildx" \
+    /Applications/Docker.app/Contents/Resources/cli-plugins/docker-buildx \
+    /usr/local/lib/docker/cli-plugins/docker-buildx \
+    /usr/libexec/docker/cli-plugins/docker-buildx; do
+    if [ -x "$buildx_candidate" ]; then
+      ln -s "$buildx_candidate" \
+        "$ANONYMOUS_DOCKER_CONFIG/cli-plugins/docker-buildx"
+      break
+    fi
+  done
+
+  if ! registry_docker buildx version >/dev/null 2>&1; then
+    echo "[ERROR] 临时无凭据 Docker 配置无法使用 buildx 插件" >&2
+    return 1
+  fi
+}
+
 normalize_platform() {
   platform_input=$1
   case "$platform_input" in
@@ -241,9 +267,9 @@ DOCKER_ENDPOINT=$(docker context inspect --format '{{.Endpoints.docker.Host}}' "
   echo "[ERROR] 无法解析当前 Docker Context 的守护进程地址" >&2
   exit 1
 }
+ORIGINAL_DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
 ANONYMOUS_DOCKER_CONFIG="$PROJECT_ROOT/target/context-router-docker-anonymous"
-mkdir -p "$ANONYMOUS_DOCKER_CONFIG"
-printf '{}\n' > "$ANONYMOUS_DOCKER_CONFIG/config.json"
+prepare_anonymous_docker_config
 
 echo "[STEP] 拉取 Java 17 与 Codex CLI 工具链基础镜像"
 pull_image_with_timeout "$JAVA_IMAGE"

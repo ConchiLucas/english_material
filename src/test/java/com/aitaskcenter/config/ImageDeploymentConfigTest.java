@@ -102,6 +102,59 @@ class ImageDeploymentConfigTest {
         assertTrue(result.output().contains("使用已存在的本地缓存镜像"));
     }
 
+    @Test
+    void anonymousDockerConfigKeepsBuildxWithoutCopyingUserCredentials() throws Exception {
+        String fullDeploy = Files.readString(Path.of("deploy/context-router/full/deploy.sh"));
+        int helperStart = fullDeploy.indexOf("registry_docker() {");
+        int helperEnd = fullDeploy.indexOf("normalize_platform() {");
+        assertTrue(helperStart >= 0 && helperEnd > helperStart);
+        String helperFunctions = fullDeploy.substring(helperStart, helperEnd);
+
+        Path tempDir = Files.createTempDirectory("image-buildx-test-");
+        Path originalConfig = tempDir.resolve("original-config");
+        Path plugin = originalConfig.resolve("cli-plugins/docker-buildx");
+        Files.createDirectories(plugin.getParent());
+        Files.writeString(plugin, "#!/bin/sh\nexit 0\n");
+        assertTrue(plugin.toFile().setExecutable(true));
+
+        Path fakeDocker = tempDir.resolve("docker");
+        Files.writeString(fakeDocker, """
+                #!/bin/sh
+                if [ "$1" = "buildx" ] && [ "$2" = "version" ] &&
+                   [ -x "$DOCKER_CONFIG/cli-plugins/docker-buildx" ]; then
+                  exit 0
+                fi
+                exit 1
+                """);
+        assertTrue(fakeDocker.toFile().setExecutable(true));
+
+        Path anonymousConfig = tempDir.resolve("anonymous-config");
+        Path harness = tempDir.resolve("harness.sh");
+        Files.writeString(harness, """
+                #!/bin/sh
+                set -eu
+                """ + helperFunctions + """
+                ANONYMOUS_DOCKER_CONFIG="$TEST_ANONYMOUS_CONFIG"
+                ORIGINAL_DOCKER_CONFIG="$TEST_ORIGINAL_CONFIG"
+                DOCKER_ENDPOINT=unix:///tmp/docker.sock
+                prepare_anonymous_docker_config
+                """);
+
+        ProcessBuilder builder = new ProcessBuilder("sh", harness.toString());
+        builder.redirectErrorStream(true);
+        Map<String, String> environment = builder.environment();
+        environment.put("PATH", tempDir + File.pathSeparator + environment.getOrDefault("PATH", ""));
+        environment.put("TEST_ANONYMOUS_CONFIG", anonymousConfig.toString());
+        environment.put("TEST_ORIGINAL_CONFIG", originalConfig.toString());
+        Process process = builder.start();
+        assertTrue(process.waitFor(5, TimeUnit.SECONDS));
+        String output = new String(process.getInputStream().readAllBytes());
+
+        assertEquals(0, process.exitValue(), output);
+        assertEquals("{}\n", Files.readString(anonymousConfig.resolve("config.json")));
+        assertTrue(Files.isSymbolicLink(anonymousConfig.resolve("cli-plugins/docker-buildx")));
+    }
+
     private PullResult runPullHelper(String pullMode, String targetPlatform, String cachePlatform)
             throws Exception {
         String fullDeploy = Files.readString(Path.of("deploy/context-router/full/deploy.sh"));
