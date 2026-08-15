@@ -29,6 +29,7 @@ import javax.imageio.ImageIO;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 class AiImageGenerationServiceTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -48,6 +49,17 @@ class AiImageGenerationServiceTest {
     void tearDown() {
         if (server != null) {
             server.stop(0);
+        }
+    }
+
+    @Test
+    void wiresTheProductionConstructorInSpring() {
+        try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
+            context.registerBean(ObjectMapper.class, () -> new ObjectMapper());
+            context.register(AiImageGenerationService.class);
+            context.refresh();
+
+            assertTrue(context.getBean(AiImageGenerationService.class) != null);
         }
     }
 

@@ -24,6 +24,7 @@ import java.util.UUID;
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
 import javax.imageio.stream.ImageInputStream;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -44,6 +45,7 @@ public class AiImageGenerationService {
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
 
+    @Autowired
     public AiImageGenerationService(ObjectMapper objectMapper) {
         this(objectMapper, HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(20)).build());
     }
