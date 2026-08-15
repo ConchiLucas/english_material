@@ -24,6 +24,16 @@ React 一级导航中的“图片工作台”紧邻“Agent 工作台”。它�
 
 九个文本 Agent 都有独立结构化合同。后端保存完整输入、模型原始输出和解析结果，拒绝重复/未知 key、缺失 Scene、图片数量越界、参考资产错绑、同镜互斥动作、图片内文字指令、无说话人的对白和无法安全排版的文本。预检只输出一份最终计划，不循环回退。
 
+连续性与覆盖约束在规划阶段逐层收紧：
+
+- `StoryAnalysis` 的每个 Scene 必须有 1—5 个从 1 连续编号的 beat，全篇 beat 总数不超过 20；角色和地点都不能为空，两者合计不超过 20。
+- 两份 `StoryboardProposal` 的每个镜头都必须提供安全且稳定的 `shotKey`，引用所属 Scene 的已知 beat、角色和地点，并各自覆盖全部 beat。
+- `FinalStoryboard` 的每个镜头明确保存 `beat`、`action`、`characters` 和 `location`；`shotKey` 必须来自任一提案并保留原 Scene/beat 映射，镜头按 Scene/Shot 严格升序且每个 Scene 的 `shotIndex` 从 1 连续递增，每 Scene 最多 5 镜、全篇最多 20 镜并覆盖全部 beat。
+- `ReferencePlan` 只接受 `CHARACTER` 和 `LOCATION`，必须为故事分析中的每个角色和每个地点各生成且仅生成一个参考资产，总数最多 20。
+- `ShotPromptPlan` 和 `PreflightPlan` 的每个镜头都必须绑定该镜头所属地点和全部出场角色的参考资产；单镜参考 key 去重且最多 8 个。预检还必须与最终分镜的 key、Scene 和 Shot 完全一致。
+
+解析器在每个 Agent 原始输出落入步骤记录时立即执行对应校验。任何一项失败都会把当前 Agent 步骤和图片批次标记为 `FAILED`；执行不会进入参考图生成，因此不会创建 `PROGRAM` 步骤或产生图片调用费用。
+
 固定图片约束为 `1536×864`（16:9）、每个 Scene 1—5 张、全篇最多 20 张。Scene 会按含义、动作和时间点拆成多张分镜，不是固定一 Scene 一图。
 
 ## 创建边界与快照
@@ -35,6 +45,8 @@ React 一级导航中的“图片工作台”紧邻“Agent 工作台”。它�
 - 画风预设存在且启用；
 - 图片流程保持固定尺寸和数量上限，图片 Provider 启用、配置完整、采用 `openai-compatible` 类型，并同时具有 `IMAGE_GENERATION`、`IMAGE_REFERENCE` 能力；
 - 图片文件根目录存在且可安全写入。
+
+画风配置 API 在创建和更新时都要求名称、正向提示词、负向提示词和说明四个文本字段非空；前端也在提交前执行同样的必填校验。
 
 批次持久化最终故事、单词、年级、画风、流程、图片 Provider 安全描述，以及九个 Agent 的 Prompt/版本/温度/文本 Provider 安全描述。Provider 快照不保存 API Key 或 Base URL；图片业务表、步骤、资产、错误和日志也不复制密钥。执行所需的 Provider 地址和密钥只由现有 `tb_ai_config` 配置装入当前执行内存，创建后修改原故事、Prompt、画风或 Provider 不会改变已保存的历史快照。
 
@@ -91,7 +103,7 @@ QUEUED
 | `PUT /api/image-agents/{agentKey}` | 携带 `updatedAt` 保存 Agent 配置并追加版本 |
 | `GET /api/image-agents/{agentKey}/versions` | 倒序查询 Prompt 版本 |
 | `POST /api/image-agents/{agentKey}/versions/{version}/restore` | 恢复历史版本为新的最新版本 |
-| `PUT /api/image-agents/flow/config` | 携带 `updatedAt` 保存唯一双能力图片 Provider |
+| `PUT /api/image-agents/flow/config` | 携带 `updatedAt` 保存已启用的 OpenAI-compatible 双能力图片 Provider |
 | `GET/POST /api/image-style-presets` | 查询或创建画风预设 |
 | `PUT /api/image-style-presets/{presetId}` | 携带 `updatedAt` 更新或停用画风 |
 | `GET /api/image-runs/source-stories` | 查询可用的已有最终故事 |

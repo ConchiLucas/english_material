@@ -27,7 +27,9 @@ summary: 维护数据库、AI、故事与图片 Agent 配置及有界执行，�
 - `ImageAgentController` 与 `ImageAgentService` 维护固定 4 阶段的 9 个文本 Agent、追加式 Prompt 版本、固定图片流程配置和画风预设；`ImageAgentCatalog` 另定义参考图生成、分镜图生成和文字合成 3 个只读程序节点。
 - `ImageRunController`、`ImageRunExecutionService` 与 `ImageRunQueryService` 从已有故事的最终故事创建异步图片批次，保存故事、单词、年级、画风、流程、Agent 和 Provider 的安全快照，并提供 9 个 Agent 与 3 个程序步骤的完整审计。
 - 图片规划先并行执行故事分析/连续性/美术导演，再并行执行双分镜提案，随后顺序完成分镜决策、参考资产规划、分镜提示词和预检。结构化输出逐步校验；任何失败都会停止后续图片调用。
-- `AiImageGenerationService` 使用 OpenAI Images-compatible 协议：无参考图调用 `/v1/images/generations`，携带参考图调用 `/v1/images/edits`，只接受 `b64_json` 图片结果。流程图片 Provider 必须启用并同时声明 `IMAGE_GENERATION`、`IMAGE_REFERENCE` 能力。
+- 两个分镜提案都必须以稳定 `shotKey` 覆盖全部故事节拍；最终分镜只能继承提案 `shotKey` 及其 Scene/beat 映射，并明确保留 `beat`、`action`、`characters`、`location`。故事分析限定每 Scene 1—5 个连续节拍、全篇最多 20 个节拍，并要求角色和地点各至少一个、合计不超过 20。
+- 参考资产规划必须为每个角色和地点各生成且仅生成一份参考；分镜提示词与最终预检都必须为每个镜头绑定所属地点和全部出场角色的参考资产。所有这些结构约束都在 `PLANNING` 内完成校验，失败的 Agent 步骤和批次会在任何图片调用或 `PROGRAM` 步骤创建前终止。
+- `AiImageGenerationService` 使用 OpenAI Images-compatible 协议：无参考图调用 `/v1/images/generations`，携带参考图调用 `/v1/images/edits`，只接受 `b64_json` 图片结果。流程图片 Provider 必须启用、类型为 `openai-compatible`，并同时声明 `IMAGE_GENERATION`、`IMAGE_REFERENCE` 能力。
 - 图片执行固定输出 `1536×864`，每个 Scene 1—5 张、全篇最多 20 张；先生成角色和地点参考图，再按 Scene/Shot 顺序为每个分镜调用一次图片模型，最后由 `ImageTextCompositor` 以 Java2D 合成角色对话气泡和底部叙事字幕。
 - 故事与图片运行都使用进程内有界线程池，不包含 Python Worker、分布式队列、暂停、删除、跨重启续跑或图片重试。第一版也没有视觉评审、自动/手工重绘或审核写入能力。
 
@@ -57,7 +59,7 @@ summary: 维护数据库、AI、故事与图片 Agent 配置及有界执行，�
 | `PUT /api/image-agents/{agentKey}` | 保存文本 Agent 的 Prompt、文本 Provider、温度和启用状态，并追加版本 |
 | `GET /api/image-agents/{agentKey}/versions` | 按版本倒序读取图片 Agent Prompt 历史 |
 | `POST /api/image-agents/{agentKey}/versions/{version}/restore` | 携带当前 `updatedAt`，恢复历史 Prompt 为新的最新版本 |
-| `PUT /api/image-agents/flow/config` | 保存同时支持生成和多参考图的固定图片 Provider；尺寸和数量上限不可修改 |
+| `PUT /api/image-agents/flow/config` | 保存已启用、采用 OpenAI-compatible 协议并支持生成/多参考图的固定图片 Provider；尺寸和数量上限不可修改 |
 | `GET /api/image-style-presets` | 查询全部画风预设 |
 | `POST /api/image-style-presets` | 新增画风预设 |
 | `PUT /api/image-style-presets/{presetId}` | 携带 `updatedAt` 更新或停用画风预设 |
@@ -82,6 +84,7 @@ summary: 维护数据库、AI、故事与图片 Agent 配置及有界执行，�
 - `StoryWordSourceService` 只参数化读取 `word_library` 与 `word`；运行创建后使用本地 JSON 单词快照，不再依赖外部库内容是否变化。
 - 运行步骤只保存 Provider ID、模型名、Prompt 版本、完整输入/输出与用量，不复制 API Key、数据库密码或完整连接信息。
 - 图片 Agent 只引用现有 `tb_ai_config` Provider ID；图片业务表、运行快照、步骤、资产元数据、错误信息和日志都不复制 API Key。执行所需密钥只从既有 Provider 配置装入当前进程内存，并对可见错误做脱敏。
+- 图片画风的名称、正向提示词、负向提示词和说明四个文本字段在前后端都必填；创建或更新时任一字段为空都会被拒绝，启用状态仍独立保存。
 - 图片批次创建边界会复制已校验的 `finalStory`、输入单词、目标年级、画风、固定流程和 9 个 Agent/Provider 的安全快照；之后修改原故事、Prompt、画风或 Provider 不改变历史批次含义。Provider 快照不含 API Key 或 Base URL。
 - `ImageAssetStore` 将 PNG/JPEG 写入 `IMAGE_STORY_STORAGE_ROOT` 下的单批次目录，数据库只保存两段式相对路径、MIME、尺寸和 SHA-256。读取时重新校验文件类型、大小、路径和哈希，禁止客户端提交文件路径。默认严格模式要求文件系统支持 `SecureDirectoryStream`，否则拒绝运行；`image-story.allow-portable-storage` 默认 `false`，只允许受信任的单用户 native 开发显式开启。
 - 图片状态按 `QUEUED → PLANNING → GENERATING_REFERENCES → GENERATING_SHOTS → COMPOSITING → COMPLETED` 前进；任一步骤失败进入 `FAILED` 并保留已完成审计/文件。应用启动时会把残留活动批次标为 `FAILED`，不会续跑。
