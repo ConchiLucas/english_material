@@ -202,6 +202,17 @@ describe('ImageAgentFlowPage', () => {
     act(() => { modal.confirms[1]?.onOk?.(); modal.confirms[1]?.afterClose?.(); }); expect(screen.getByLabelText('画风名称')).toHaveValue('');
   });
 
+  it('rebases a reincarnated existing style on an older save timestamp', async () => {
+    const modal = installConfirmHarness(); const pending = deferred<ImageStylePreset>(); const dirty = vi.fn(); const flow = makeFlow(); flow.stylePresets.push(style({ id: 8, key: 'ink', name: '线稿风', builtIn: false }));
+    apiMocks.updateImageStylePreset.mockReturnValueOnce(pending.promise).mockResolvedValueOnce(style({ name: '水彩新稿', positivePrompt: 'fresh watercolor', updatedAt: '2026-08-15T03:00:00Z' }));
+    const user = userEvent.setup(); renderPage(flow, dirty); await user.click(await screen.findByRole('tab', { name: '画风预设' })); await user.click(screen.getByRole('button', { name: '编辑 水彩绘本' })); await user.clear(screen.getByLabelText('画风名称')); await user.type(screen.getByLabelText('画风名称'), '待保存水彩'); await user.click(screen.getByRole('button', { name: '保存画风' }));
+    await user.click(screen.getByRole('button', { name: '编辑 线稿风' })); act(() => { modal.confirms[0]?.onOk?.(); modal.confirms[0]?.afterClose?.(); }); await user.click(screen.getByRole('button', { name: '编辑 水彩绘本' }));
+    await user.clear(screen.getByLabelText('画风名称')); await user.type(screen.getByLabelText('画风名称'), '水彩新稿'); await user.clear(screen.getByLabelText('正向风格约束')); await user.type(screen.getByLabelText('正向风格约束'), 'fresh watercolor');
+    await act(async () => { pending.resolve(style({ name: '待保存水彩', updatedAt: '2026-08-15T02:00:00Z' })); await pending.promise; });
+    expect(screen.getByLabelText('画风名称')).toHaveValue('水彩新稿'); expect(screen.getByLabelText('正向风格约束')).toHaveValue('fresh watercolor'); await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(true));
+    await user.click(screen.getByRole('button', { name: /保存画风/ })); await waitFor(() => expect(apiMocks.updateImageStylePreset).toHaveBeenCalledTimes(2)); expect(apiMocks.updateImageStylePreset.mock.calls[1]).toEqual([7, expect.objectContaining({ name: '水彩新稿', positivePrompt: 'fresh watercolor', updatedAt: '2026-08-15T02:00:00Z' })]); await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(false));
+  });
+
   it('keeps a late created style identity away from a newly selected draft', async () => {
     const modal = installConfirmHarness(); const pending = deferred<ImageStylePreset>(); apiMocks.createImageStylePreset.mockReturnValueOnce(pending.promise).mockResolvedValueOnce(style({ id: 9, key: 'second', name: '第二个', builtIn: false }));
     const user = userEvent.setup(); renderPage(); await user.click(await screen.findByRole('tab', { name: '画风预设' })); await user.click(screen.getByRole('button', { name: '新增画风' }));

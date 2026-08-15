@@ -182,8 +182,9 @@ export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAg
     try {
       const saved = submitted.id === null ? await createImageStylePreset({ name, positivePrompt, negativePrompt: submitted.negativePrompt.trim(), description: submitted.description.trim(), enabled: submitted.enabled }) : await updateImageStylePreset(submitted.id, { name, positivePrompt, negativePrompt: submitted.negativePrompt.trim(), description: submitted.description.trim(), enabled: submitted.enabled, updatedAt: submitted.updatedAt });
       const currentStyles = flowRef.current?.stylePresets ?? []; const nextStyles = submitted.id === null ? [...currentStyles, saved] : currentStyles.map((item) => item.id === saved.id ? saved : item); replaceStyles(nextStyles);
-      if (generation === styleDraftGenerationRef.current) setStyleDraft((current) => {
+      setStyleDraft((current) => {
         if (!current) return current;
+        if (generation !== styleDraftGenerationRef.current) return current.id !== null && current.id === saved.id ? { ...current, updatedAt: saved.updatedAt } : current;
         if (sameStyle(current, submitted)) return fromStyle(saved);
         if (submitted.id === null && current.id === null) return { ...current, id: saved.id, updatedAt: saved.updatedAt };
         return current.id === saved.id ? { ...current, updatedAt: saved.updatedAt } : current;
