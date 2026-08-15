@@ -67,6 +67,10 @@ class ImageDeploymentConfigTest {
         assertTrue(fullDeploy.contains("{{if .Variant}}/{{.Variant}}{{end}}"));
         assertTrue(fullDeploy.contains("pull_image_with_timeout \"$JAVA_IMAGE\""));
         assertTrue(fullDeploy.contains("pull_image_with_timeout \"$NODE_IMAGE\""));
+        assertTrue(fullDeploy.contains("registry_docker()"));
+        assertTrue(fullDeploy.contains("DOCKER_CONFIG=\"$ANONYMOUS_DOCKER_CONFIG\""));
+        assertTrue(fullDeploy.contains("DOCKER_HOST=\"$DOCKER_ENDPOINT\""));
+        assertTrue(fullDeploy.contains("registry_docker build"));
     }
 
     @Test
@@ -75,6 +79,8 @@ class ImageDeploymentConfigTest {
 
         assertEquals(0, result.exitCode());
         assertTrue(result.output().contains("使用已存在的本地缓存镜像"));
+        assertTrue(result.dockerLog().contains("config=/tmp/anonymous-docker-config"));
+        assertTrue(result.dockerLog().contains("host=unix:///tmp/docker.sock"));
     }
 
     @Test
@@ -109,7 +115,7 @@ class ImageDeploymentConfigTest {
         Path fakeDocker = tempDir.resolve("docker");
         Files.writeString(fakeDocker, """
                 #!/bin/sh
-                printf '%s\\n' "$*" >> "$FAKE_DOCKER_LOG"
+                printf 'config=%s host=%s args=%s\\n' "$DOCKER_CONFIG" "$DOCKER_HOST" "$*" >> "$FAKE_DOCKER_LOG"
                 if [ "$1" = "pull" ]; then
                   if [ "$FAKE_PULL_MODE" = "timeout" ]; then
                     trap 'printf "%s\\n" TERM >> "$FAKE_DOCKER_LOG"' TERM
@@ -133,6 +139,8 @@ class ImageDeploymentConfigTest {
                 DOCKER_PLATFORM="$TEST_DOCKER_PLATFORM"
                 IMAGE_PULL_TIMEOUT=1
                 IMAGE_PULL_TERMINATION_GRACE=1
+                ANONYMOUS_DOCKER_CONFIG=/tmp/anonymous-docker-config
+                DOCKER_ENDPOINT=unix:///tmp/docker.sock
                 pull_image_with_timeout test/image:latest
                 """);
 

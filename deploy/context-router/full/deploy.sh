@@ -35,7 +35,9 @@ pull_image_with_timeout() {
   pull_timeout=$IMAGE_PULL_TIMEOUT
   pull_elapsed=0
 
-  docker pull --platform "$DOCKER_PLATFORM" "$image" &
+  DOCKER_CONFIG="$ANONYMOUS_DOCKER_CONFIG" \
+    DOCKER_HOST="$DOCKER_ENDPOINT" \
+    docker pull --platform "$DOCKER_PLATFORM" "$image" &
   pull_pid=$!
 
   while kill -0 "$pull_pid" 2>/dev/null; do
@@ -75,6 +77,12 @@ pull_image_with_timeout() {
   fi
   echo "[ERROR] 拉取基础镜像 $image 失败，且本地缓存镜像不存在或平台不匹配" >&2
   return "$pull_status"
+}
+
+registry_docker() {
+  DOCKER_CONFIG="$ANONYMOUS_DOCKER_CONFIG" \
+    DOCKER_HOST="$DOCKER_ENDPOINT" \
+    docker "$@"
 }
 
 normalize_platform() {
@@ -227,6 +235,15 @@ em_prepare_layers "$JAR_FILE" "$LAYERS_DIR"
 DEPENDENCIES_HASH=$(em_layer_hash "$LAYERS_DIR/dependencies")
 LOADER_HASH=$(em_layer_hash "$LAYERS_DIR/spring-boot-loader")
 BASE_DOCKERFILE_HASH=$(em_file_hash "$SCRIPT_DIR/Dockerfile.base")
+DOCKER_CONTEXT=$(docker context show)
+DOCKER_ENDPOINT=$(docker context inspect --format '{{.Endpoints.docker.Host}}' "$DOCKER_CONTEXT")
+[ -n "$DOCKER_ENDPOINT" ] || {
+  echo "[ERROR] 无法解析当前 Docker Context 的守护进程地址" >&2
+  exit 1
+}
+ANONYMOUS_DOCKER_CONFIG="$PROJECT_ROOT/target/context-router-docker-anonymous"
+mkdir -p "$ANONYMOUS_DOCKER_CONFIG"
+printf '{}\n' > "$ANONYMOUS_DOCKER_CONFIG/config.json"
 
 echo "[STEP] 拉取 Java 17 与 Codex CLI 工具链基础镜像"
 pull_image_with_timeout "$JAVA_IMAGE"
@@ -239,7 +256,7 @@ BASE_IMAGE="$EM_BASE_REPOSITORY:$BASE_KEY"
 BASE_POINTER_IMAGE="$EM_BASE_REPOSITORY:$EM_BASE_POINTER_TAG"
 
 echo "[STEP] 构建英语材料后端稳定依赖基线：$BASE_IMAGE"
-DOCKER_BUILDKIT=1 docker build \
+DOCKER_BUILDKIT=1 registry_docker build \
   --platform "$DOCKER_PLATFORM" \
   --build-arg "JAVA_IMAGE=$JAVA_IMAGE" \
   --build-arg "NODE_IMAGE=$NODE_IMAGE" \
