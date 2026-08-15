@@ -2,11 +2,13 @@ package com.aitaskcenter.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.aitaskcenter.config.ImageAgentCatalog;
+import com.aitaskcenter.config.ImageAgentSnapshotContract;
 import com.aitaskcenter.dto.ImageRunDtos.RunDetail;
 import com.aitaskcenter.dto.ImageRunDtos.SourceStoryView;
 import com.aitaskcenter.model.ImageAsset;
@@ -23,9 +25,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.data.domain.Pageable;
 import org.springframework.test.util.ReflectionTestUtils;
 
 class ImageRunQueryServiceTest {
@@ -52,9 +57,10 @@ class ImageRunQueryServiceTest {
                 "[{\"word\":\"book\",\"meaning\":\"书\"}]", "2026-08-15T10:00:00+08:00");
         StoryRun malformed = story("story-malformed", "LIMIT_REACHED", "Another story.",
                 "[{\"word\":12,\"meaning\":\"错误\"}]", "2026-08-15T11:00:00+08:00");
-        StoryRun failed = story("story-failed", "FAILED", "Do not use.", "[]", "2026-08-15T12:00:00+08:00");
-        StoryRun blank = story("story-blank", "COMPLETED", "  ", "[]", "2026-08-15T13:00:00+08:00");
-        when(stories.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(completed, blank, malformed, failed));
+        StoryRun oversized = story("story-oversized", "COMPLETED", "A".repeat(20_001), "[]",
+                "2026-08-15T13:00:00+08:00");
+        when(stories.findImageSourceStories(any(), eq(20_000), any(Pageable.class)))
+                .thenReturn(List.of(completed, malformed, oversized));
 
         List<SourceStoryView> result = service.listSourceStories();
 
@@ -66,6 +72,9 @@ class ImageRunQueryServiceTest {
             assertThat(word.word()).isEqualTo("book");
             assertThat(word.meaning()).isEqualTo("书");
         });
+        ArgumentCaptor<Pageable> page = ArgumentCaptor.forClass(Pageable.class);
+        verify(stories).findImageSourceStories(any(), eq(20_000), page.capture());
+        assertThat(page.getValue().getPageSize()).isLessThanOrEqualTo(100);
     }
 
     @Test
@@ -73,7 +82,7 @@ class ImageRunQueryServiceTest {
         ImageRun older = imageRun("image-old", "[{\"word\":\"book\",\"meaning\":\"书\"}]",
                 "2026-08-15T10:00:00+08:00");
         ImageRun newer = imageRun("image-new", "not-json", "2026-08-15T12:00:00+08:00");
-        when(runs.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(older, newer));
+        when(runs.findAllByOrderByCreatedAtDesc(any(Pageable.class))).thenReturn(List.of(older, newer));
 
         var result = service.listRuns();
 
@@ -81,10 +90,13 @@ class ImageRunQueryServiceTest {
         assertThat(result.get(0).words()).isEmpty();
         assertThat(result.get(0).wordsError()).isEqualTo("单词快照无法读取");
         assertThat(result.get(1).stylePresetName()).isEqualTo("Paper Cut");
+        ArgumentCaptor<Pageable> page = ArgumentCaptor.forClass(Pageable.class);
+        verify(runs).findAllByOrderByCreatedAtDesc(page.capture());
+        assertThat(page.getValue().getPageSize()).isLessThanOrEqualTo(100);
     }
 
     @Test
-    void returnsCompleteDetailInDeterministicOrderWithoutStoragePathsOrSecrets() {
+    void returnsCompleteDetailInDeterministicOrderWithoutStoragePathsOrSecrets() throws Exception {
         ImageRun run = imageRun("image-1", "[{\"word\":\"book\",\"meaning\":\"书\"}]",
                 "2026-08-15T10:00:00+08:00");
         ImageRunStep secondStep = step(2, "image-art-director");
@@ -92,12 +104,23 @@ class ImageRunQueryServiceTest {
         ImageShot secondShot = shot(2, "scene-1-shot-2");
         ImageShot firstShot = shot(1, "scene-1-shot-1");
         ImageAsset finalAsset = asset(12L, "FINAL", "scene-1-shot-1", "secret/run/final.png");
+        finalAsset.setMetadataJson("""
+                {"responseFormat":"b64_json","quality":"high","size":"1536x864",
+                 "referenceType":"CHARACTER","target":"character-toby",
+                 "referenceAssetKeys":["character-toby"],"compositor":"java2d",
+                 "usage":{"token":"sk-secret"},"Authorization":"Bearer secret","unknown":"/Users/private"}
+                """);
         ImageAsset referenceAsset = asset(11L, "REFERENCE", "character-toby", "/absolute/secret.png");
-        referenceAsset.setMetadataJson("{\"usage\":3,\"Authorization\":\"Bearer secret\",\"headers\":{\"x\":\"y\"}}");
+        referenceAsset.setMetadataJson("""
+                {"target":"sk-do-not-leak","referenceAssetKeys":["token-secret","a..b"],
+                 "usage":{"Authorization":"Bearer secret"},"path":"/Users/private/key"}
+                """);
         when(runs.findByRunId("image-1")).thenReturn(java.util.Optional.of(run));
-        when(steps.findAllByRunIdOrderBySequenceAsc("image-1")).thenReturn(List.of(secondStep, firstStep));
-        when(shots.findAllByRunIdOrderBySequenceAsc("image-1")).thenReturn(List.of(secondShot, firstShot));
-        when(assets.findAllByRunIdOrderByAssetTypeAscAssetKeyAsc("image-1"))
+        when(steps.findAllByRunIdOrderBySequenceAsc(eq("image-1"), any(Pageable.class)))
+                .thenReturn(List.of(secondStep, firstStep));
+        when(shots.findAllByRunIdOrderBySequenceAsc(eq("image-1"), any(Pageable.class)))
+                .thenReturn(List.of(secondShot, firstShot));
+        when(assets.findAllByRunIdOrderByAssetTypeAscAssetKeyAsc(eq("image-1"), any(Pageable.class)))
                 .thenReturn(List.of(referenceAsset, finalAsset));
 
         RunDetail detail = service.getRun("image-1");
@@ -120,12 +143,25 @@ class ImageRunQueryServiceTest {
             assertThat(snapshot.capabilities()).containsExactly("TEXT_GENERATION");
         });
         assertThat(detail.agentSnapshotError()).isNull();
+        assertThat(detail.agentSnapshotSchemaVersion()).isEqualTo(1);
         assertThat(detail.assets().get(1).contentUrl()).isEqualTo("/api/image-assets/11/content");
-        assertThat(detail.assets().get(1).providerMetadataJson()).isEqualTo("{\"usage\":3}");
-        assertThat(detail.toString()).doesNotContain("absolute", "secret.png", "Bearer secret", "Authorization", "headers");
-        verify(steps).findAllByRunIdOrderBySequenceAsc("image-1");
-        verify(shots).findAllByRunIdOrderBySequenceAsc("image-1");
-        verify(assets).findAllByRunIdOrderByAssetTypeAscAssetKeyAsc("image-1");
+        assertThat(detail.assets().get(0).providerMetadataJson()).isEqualTo(
+                "{\"responseFormat\":\"b64_json\",\"quality\":\"high\",\"size\":\"1536x864\","
+                        + "\"referenceType\":\"CHARACTER\",\"target\":\"character-toby\","
+                        + "\"referenceAssetKeys\":[\"character-toby\"],\"compositor\":\"java2d\"}");
+        assertThat(detail.assets().get(1).providerMetadataJson()).isNull();
+        String serialized = new ObjectMapper().findAndRegisterModules().writeValueAsString(detail);
+        assertThat(serialized).doesNotContain("absolute", "secret.png", "Bearer secret", "Authorization",
+                "sk-do-not-leak", "token-secret", "a..b", "/Users/private", "usage");
+        ArgumentCaptor<Pageable> stepPage = ArgumentCaptor.forClass(Pageable.class);
+        ArgumentCaptor<Pageable> shotPage = ArgumentCaptor.forClass(Pageable.class);
+        ArgumentCaptor<Pageable> assetPage = ArgumentCaptor.forClass(Pageable.class);
+        verify(steps).findAllByRunIdOrderBySequenceAsc(eq("image-1"), stepPage.capture());
+        verify(shots).findAllByRunIdOrderBySequenceAsc(eq("image-1"), shotPage.capture());
+        verify(assets).findAllByRunIdOrderByAssetTypeAscAssetKeyAsc(eq("image-1"), assetPage.capture());
+        assertThat(stepPage.getValue().getPageSize()).isEqualTo(13);
+        assertThat(shotPage.getValue().getPageSize()).isEqualTo(21);
+        assertThat(assetPage.getValue().getPageSize()).isEqualTo(61);
     }
 
     @Test
@@ -199,6 +235,75 @@ class ImageRunQueryServiceTest {
         ((ObjectNode) wrongSequence.get(0)).put("sequence", 2);
         ((ObjectNode) wrongSequence.get(1)).put("sequence", 1);
         assertAgentSnapshotRejected("wrong-sequence", wrongSequence);
+    }
+
+    @Test
+    void readsLegacyV1FromTheFrozenContractAndRejectsUnknownEnvelopeVersions() throws Exception {
+        ImageRun legacy = imageRun("image-legacy", "[]", "2026-08-15T10:00:00+08:00");
+        legacy.setAgentSnapshotJson(new ObjectMapper().writeValueAsString(agentSnapshotsNode()));
+        when(runs.findByRunId("image-legacy")).thenReturn(java.util.Optional.of(legacy));
+
+        RunDetail legacyDetail = service.getRun("image-legacy");
+
+        assertThat(legacyDetail.agentSnapshotSchemaVersion()).isEqualTo(1);
+        assertThat(legacyDetail.agentSnapshots()).extracting(item -> item.key())
+                .containsExactlyElementsOf(ImageAgentSnapshotContract.v1Agents().stream()
+                        .map(item -> item.key()).toList());
+
+        ObjectNode unknownEnvelope = new ObjectMapper().createObjectNode();
+        unknownEnvelope.put("schemaVersion", 99);
+        unknownEnvelope.set("agents", agentSnapshotsNode());
+        ImageRun unknown = imageRun("image-unknown-schema", "[]", "2026-08-15T10:00:00+08:00");
+        unknown.setAgentSnapshotJson(new ObjectMapper().writeValueAsString(unknownEnvelope));
+        when(runs.findByRunId("image-unknown-schema")).thenReturn(java.util.Optional.of(unknown));
+
+        RunDetail unknownDetail = service.getRun("image-unknown-schema");
+        assertThat(unknownDetail.agentSnapshotSchemaVersion()).isNull();
+        assertThat(unknownDetail.agentSnapshots()).isEmpty();
+        assertThat(unknownDetail.agentSnapshotError()).isEqualTo("Agent 运行快照无法读取");
+    }
+
+    @Test
+    void capsUnpagedRunAndSourceHistoryAtOneHundredDefensively() {
+        List<ImageRun> imageRuns = new ArrayList<>();
+        List<StoryRun> sourceRuns = new ArrayList<>();
+        for (int index = 0; index < 105; index++) {
+            imageRuns.add(imageRun("image-" + index, "[]", "2026-08-15T10:00:00+08:00"));
+            sourceRuns.add(story("story-" + index, "COMPLETED", "Story " + index, "[]",
+                    "2026-08-15T10:00:00+08:00"));
+        }
+        when(runs.findAllByOrderByCreatedAtDesc(any(Pageable.class))).thenReturn(imageRuns);
+        when(stories.findImageSourceStories(any(), eq(20_000), any(Pageable.class))).thenReturn(sourceRuns);
+
+        assertThat(service.listRuns()).hasSize(100);
+        assertThat(service.listSourceStories()).hasSize(100);
+    }
+
+    @Test
+    void boundsDetailCollectionsAndRejectsOversizedHistory() {
+        ImageRun corruptSteps = imageRun("image-corrupt-steps", "[]", "2026-08-15T10:00:00+08:00");
+        when(runs.findByRunId("image-corrupt-steps")).thenReturn(java.util.Optional.of(corruptSteps));
+        when(steps.findAllByRunIdOrderBySequenceAsc(eq("image-corrupt-steps"), any(Pageable.class)))
+                .thenReturn(java.util.Collections.nCopies(13, step(1, "image-story-analyst")));
+        assertThatThrownBy(() -> service.getRun("image-corrupt-steps"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("图片运行历史步骤数量超限");
+
+        ImageRun corruptShots = imageRun("image-corrupt-shots", "[]", "2026-08-15T10:00:00+08:00");
+        when(runs.findByRunId("image-corrupt-shots")).thenReturn(java.util.Optional.of(corruptShots));
+        when(shots.findAllByRunIdOrderBySequenceAsc(eq("image-corrupt-shots"), any(Pageable.class)))
+                .thenReturn(java.util.Collections.nCopies(21, shot(1, "scene-1-shot-1")));
+        assertThatThrownBy(() -> service.getRun("image-corrupt-shots"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("图片运行历史分镜数量超限");
+
+        ImageRun corruptAssets = imageRun("image-corrupt-assets", "[]", "2026-08-15T10:00:00+08:00");
+        when(runs.findByRunId("image-corrupt-assets")).thenReturn(java.util.Optional.of(corruptAssets));
+        when(assets.findAllByRunIdOrderByAssetTypeAscAssetKeyAsc(eq("image-corrupt-assets"), any(Pageable.class)))
+                .thenReturn(java.util.Collections.nCopies(61, asset(1L, "FINAL", "scene-1-shot-1", "safe/a.png")));
+        assertThatThrownBy(() -> service.getRun("image-corrupt-assets"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("图片运行历史资产数量超限");
     }
 
     @Test
@@ -315,7 +420,10 @@ class ImageRunQueryServiceTest {
 
     private String agentSnapshotsJson() {
         try {
-            return new ObjectMapper().writeValueAsString(agentSnapshotsNode());
+            ObjectNode envelope = new ObjectMapper().createObjectNode();
+            envelope.put("schemaVersion", 1);
+            envelope.set("agents", agentSnapshotsNode());
+            return new ObjectMapper().writeValueAsString(envelope);
         } catch (Exception exception) {
             throw new AssertionError(exception);
         }
@@ -325,12 +433,7 @@ class ImageRunQueryServiceTest {
         ObjectMapper mapper = new ObjectMapper();
         ArrayNode snapshots = mapper.createArrayNode();
         int sequence = 1;
-        for (ImageAgentCatalog.NodeDefinition agent : ImageAgentCatalog.agents()) {
-            String stageKey = ImageAgentCatalog.stages().stream()
-                    .filter(stage -> stage.nodes().stream().anyMatch(node -> node.key().equals(agent.key())))
-                    .findFirst()
-                    .orElseThrow()
-                    .key();
+        for (ImageAgentSnapshotContract.AgentDefinition agent : ImageAgentSnapshotContract.v1Agents()) {
             ObjectNode provider = mapper.createObjectNode();
             provider.put("id", "text-provider");
             provider.put("label", "Text Provider");
@@ -341,7 +444,7 @@ class ImageRunQueryServiceTest {
             provider.putObject("options");
             ObjectNode snapshot = snapshots.addObject();
             snapshot.put("sequence", sequence);
-            snapshot.put("stageKey", stageKey);
+            snapshot.put("stageKey", agent.stageKey());
             snapshot.put("key", agent.key());
             snapshot.put("name", "历史显示名 " + sequence);
             snapshot.put("systemPrompt", sequence == 1

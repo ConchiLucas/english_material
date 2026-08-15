@@ -1,6 +1,6 @@
 package com.aitaskcenter.service;
 
-import com.aitaskcenter.config.ImageAgentCatalog;
+import com.aitaskcenter.config.ImageAgentSnapshotContract;
 import com.aitaskcenter.dto.ImageRunDtos.AssetView;
 import com.aitaskcenter.dto.ImageRunDtos.AgentSnapshotView;
 import com.aitaskcenter.dto.ImageRunDtos.RunDetail;
@@ -28,11 +28,10 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Set;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -43,6 +42,11 @@ public class ImageRunQueryService {
     private static final int MAX_WORD_LENGTH = 120;
     private static final int MAX_MEANING_LENGTH = 500;
     private static final int MAX_METADATA_LENGTH = 32_000;
+    private static final int MAX_HISTORY_ITEMS = 100;
+    private static final int MAX_SOURCE_STORY_LENGTH = 20_000;
+    private static final int MAX_RUN_STEPS = 12;
+    private static final int MAX_RUN_SHOTS = 20;
+    private static final int MAX_RUN_ASSETS = 60;
     private static final int MAX_AGENT_SNAPSHOT_LENGTH = 256_000;
     private static final int MAX_AGENT_PROMPT_LENGTH = 20_000;
     private static final Set<String> AGENT_SNAPSHOT_FIELDS = Set.of(
@@ -50,9 +54,8 @@ public class ImageRunQueryService {
     private static final Set<String> PROVIDER_SNAPSHOT_FIELDS = Set.of(
             "id", "label", "type", "model", "maxTokens", "capabilities", "options");
     private static final Set<String> SOURCE_STATUSES = Set.of("COMPLETED", "LIMIT_REACHED");
-    private static final Set<String> SAFE_METADATA_KEYS = Set.of(
-            "responseFormat", "quality", "size", "referenceType", "target",
-            "referenceAssetKeys", "compositor", "usage");
+    private static final Set<String> IMAGE_QUALITIES = Set.of("auto", "low", "medium", "high", "standard", "hd");
+    private static final Set<String> REFERENCE_TYPES = Set.of("CHARACTER", "LOCATION");
     private static final Comparator<OffsetDateTime> NEWEST_TIME =
             Comparator.nullsLast(Comparator.reverseOrder());
     private static final Comparator<String> SAFE_TEXT =
@@ -82,18 +85,22 @@ public class ImageRunQueryService {
 
     @Transactional(readOnly = true)
     public List<SourceStoryView> listSourceStories() {
-        return storyRepository.findAllByOrderByCreatedAtDesc().stream()
+        return storyRepository.findImageSourceStories(
+                        SOURCE_STATUSES, MAX_SOURCE_STORY_LENGTH, PageRequest.of(0, MAX_HISTORY_ITEMS)).stream()
                 .filter(run -> SOURCE_STATUSES.contains(clean(run.getStatus()).toUpperCase(Locale.ROOT)))
                 .filter(run -> StringUtils.hasText(run.getFinalStory()))
+                .filter(run -> run.getFinalStory().length() <= MAX_SOURCE_STORY_LENGTH)
                 .sorted(Comparator.comparing(StoryRun::getCreatedAt, NEWEST_TIME))
+                .limit(MAX_HISTORY_ITEMS)
                 .map(this::toSourceStory)
                 .toList();
     }
 
     @Transactional(readOnly = true)
     public List<RunSummary> listRuns() {
-        return runRepository.findAllByOrderByCreatedAtDesc().stream()
+        return runRepository.findAllByOrderByCreatedAtDesc(PageRequest.of(0, MAX_HISTORY_ITEMS)).stream()
                 .sorted(Comparator.comparing(ImageRun::getCreatedAt, NEWEST_TIME))
+                .limit(MAX_HISTORY_ITEMS)
                 .map(this::toSummary)
                 .toList();
     }
@@ -106,17 +113,26 @@ public class ImageRunQueryService {
         }
         ImageRun run = runRepository.findByRunId(safeRunId)
                 .orElseThrow(() -> new IllegalArgumentException("图片运行批次不存在"));
-        List<RunStepView> steps = stepRepository.findAllByRunIdOrderBySequenceAsc(safeRunId).stream()
+        List<ImageRunStep> stepRows = stepRepository.findAllByRunIdOrderBySequenceAsc(
+                safeRunId, PageRequest.of(0, MAX_RUN_STEPS + 1));
+        List<ImageShot> shotRows = shotRepository.findAllByRunIdOrderBySequenceAsc(
+                safeRunId, PageRequest.of(0, MAX_RUN_SHOTS + 1));
+        List<ImageAsset> assetRows = assetRepository.findAllByRunIdOrderByAssetTypeAscAssetKeyAsc(
+                safeRunId, PageRequest.of(0, MAX_RUN_ASSETS + 1));
+        if (stepRows.size() > MAX_RUN_STEPS) throw new IllegalArgumentException("图片运行历史步骤数量超限");
+        if (shotRows.size() > MAX_RUN_SHOTS) throw new IllegalArgumentException("图片运行历史分镜数量超限");
+        if (assetRows.size() > MAX_RUN_ASSETS) throw new IllegalArgumentException("图片运行历史资产数量超限");
+        List<RunStepView> steps = stepRows.stream()
                 .sorted(Comparator.comparingInt(ImageRunStep::getSequence).thenComparing(ImageRunStep::getId,
                         Comparator.nullsLast(Comparator.naturalOrder())))
                 .map(this::toStep)
                 .toList();
-        List<ShotView> shots = shotRepository.findAllByRunIdOrderBySequenceAsc(safeRunId).stream()
+        List<ShotView> shots = shotRows.stream()
                 .sorted(Comparator.comparingInt(ImageShot::getSequence).thenComparing(ImageShot::getId,
                         Comparator.nullsLast(Comparator.naturalOrder())))
                 .map(this::toShot)
                 .toList();
-        List<AssetView> assets = assetRepository.findAllByRunIdOrderByAssetTypeAscAssetKeyAsc(safeRunId).stream()
+        List<AssetView> assets = assetRows.stream()
                 .sorted(Comparator.comparing(ImageAsset::getAssetType, SAFE_TEXT)
                         .thenComparing(ImageAsset::getAssetKey, SAFE_TEXT)
                         .thenComparing(ImageAsset::getId, Comparator.nullsLast(Comparator.naturalOrder())))
@@ -126,7 +142,8 @@ public class ImageRunQueryService {
         ParsedAgentSnapshots agentSnapshots = parseAgentSnapshotsSafely(run.getAgentSnapshotJson());
         return new RunDetail(run.getRunId(), run.getStoryRunId(), words.values(), words.error(), run.getTargetGrade(),
                 run.getStatus(), run.getStorySnapshot(), run.getStylePresetId(), styleName(run.getStyleSnapshotJson()),
-                run.getStyleSnapshotJson(), run.getFlowSnapshotJson(), agentSnapshots.values(), agentSnapshots.error(),
+                run.getStyleSnapshotJson(), run.getFlowSnapshotJson(), agentSnapshots.schemaVersion(),
+                agentSnapshots.values(), agentSnapshots.error(),
                 run.getExpectedImageCount(),
                 run.getGeneratedImageCount(), run.getTotalTextTokens(), run.getErrorMessage(), run.getCreatedAt(),
                 run.getStartedAt(), run.getFinishedAt(), steps, shots, assets);
@@ -210,11 +227,28 @@ public class ImageRunQueryService {
                 root = objectMapper.readTree(parser);
                 if (parser.nextToken() != null) throw invalidAgentSnapshots();
             }
-            if (root == null || !root.isArray() || root.size() != 9) throw invalidAgentSnapshots();
+            int schemaVersion;
+            JsonNode agentsNode;
+            if (root != null && root.isArray()) {
+                schemaVersion = ImageAgentSnapshotContract.V1_SCHEMA_VERSION;
+                agentsNode = root;
+            } else if (root != null && root.isObject()
+                    && fieldNames(root).equals(Set.of("schemaVersion", "agents"))
+                    && root.path("schemaVersion").isIntegralNumber()
+                    && root.path("schemaVersion").canConvertToInt()) {
+                schemaVersion = root.path("schemaVersion").intValue();
+                agentsNode = root.get("agents");
+            } else {
+                throw invalidAgentSnapshots();
+            }
+            if (schemaVersion != ImageAgentSnapshotContract.V1_SCHEMA_VERSION
+                    || agentsNode == null || !agentsNode.isArray() || agentsNode.size() != 9) {
+                throw invalidAgentSnapshots();
+            }
             List<AgentSnapshotView> result = new ArrayList<>();
             Set<Integer> sequences = new HashSet<>();
             Set<String> keys = new HashSet<>();
-            for (JsonNode item : root) {
+            for (JsonNode item : agentsNode) {
                 if (!item.isObject() || !fieldNames(item).equals(AGENT_SNAPSHOT_FIELDS)) {
                     throw invalidAgentSnapshots();
                 }
@@ -242,10 +276,10 @@ public class ImageRunQueryService {
                         temperature, providerId, providerLabel, providerType, providerModel, maxTokens, capabilities));
             }
             result.sort(Comparator.comparingInt(AgentSnapshotView::sequence));
-            validateCompleteAgentCatalog(result);
-            return new ParsedAgentSnapshots(List.copyOf(result), null);
+            validateV1AgentContract(result);
+            return new ParsedAgentSnapshots(schemaVersion, List.copyOf(result), null);
         } catch (Exception exception) {
-            return new ParsedAgentSnapshots(List.of(), "Agent 运行快照无法读取");
+            return new ParsedAgentSnapshots(null, List.of(), "Agent 运行快照无法读取");
         }
     }
 
@@ -255,19 +289,14 @@ public class ImageRunQueryService {
         return names;
     }
 
-    private static void validateCompleteAgentCatalog(List<AgentSnapshotView> snapshots) {
-        List<ImageAgentCatalog.NodeDefinition> expected = ImageAgentCatalog.agents();
+    private static void validateV1AgentContract(List<AgentSnapshotView> snapshots) {
+        List<ImageAgentSnapshotContract.AgentDefinition> expected = ImageAgentSnapshotContract.v1Agents();
         if (expected.size() != 9 || snapshots.size() != expected.size()) throw invalidAgentSnapshots();
         for (int index = 0; index < expected.size(); index++) {
             AgentSnapshotView actual = snapshots.get(index);
-            ImageAgentCatalog.NodeDefinition definition = expected.get(index);
-            String expectedStage = ImageAgentCatalog.stages().stream()
-                    .filter(stage -> stage.nodes().stream().anyMatch(node -> node.key().equals(definition.key())))
-                    .findFirst()
-                    .orElseThrow(ImageRunQueryService::invalidAgentSnapshots)
-                    .key();
-            if (actual.sequence() != index + 1 || !actual.key().equals(definition.key())
-                    || !actual.stageKey().equals(expectedStage)) {
+            ImageAgentSnapshotContract.AgentDefinition definition = expected.get(index);
+            if (actual.sequence() != definition.sequence() || !actual.key().equals(definition.key())
+                    || !actual.stageKey().equals(definition.stageKey())) {
                 throw invalidAgentSnapshots();
             }
         }
@@ -324,47 +353,67 @@ public class ImageRunQueryService {
     private String safeMetadata(String json) {
         if (!StringUtils.hasText(json) || json.length() > MAX_METADATA_LENGTH) return null;
         try {
-            JsonNode root = objectMapper.readTree(json);
+            JsonNode root;
+            try (JsonParser parser = objectMapper.createParser(json)) {
+                parser.enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION.mappedFeature());
+                root = objectMapper.readTree(parser);
+                if (parser.nextToken() != null) return null;
+            }
             if (root == null || !root.isObject()) return null;
             ObjectNode safe = objectMapper.createObjectNode();
-            Iterator<Map.Entry<String, JsonNode>> fields = root.fields();
-            while (fields.hasNext()) {
-                Map.Entry<String, JsonNode> field = fields.next();
-                if (SAFE_METADATA_KEYS.contains(field.getKey()) && safeMetadataValue(field.getValue(), 0)) {
-                    safe.set(field.getKey(), field.getValue());
-                }
-            }
+            putExactText(safe, root, "responseFormat", Set.of("b64_json"));
+            putExactText(safe, root, "quality", IMAGE_QUALITIES);
+            putMatchingText(safe, root, "size", "[1-9][0-9]{0,4}x[1-9][0-9]{0,4}");
+            putExactText(safe, root, "referenceType", REFERENCE_TYPES);
+            putSafeIdentifier(safe, root, "target");
+            putReferenceAssetKeys(safe, root);
+            putExactText(safe, root, "compositor", Set.of("java2d"));
             return safe.isEmpty() ? null : objectMapper.writeValueAsString(safe);
         } catch (Exception exception) {
             return null;
         }
     }
 
-    private boolean safeMetadataValue(JsonNode value, int depth) {
-        if (value == null || depth > 3) return false;
-        if (value.isTextual()) return value.textValue().length() <= 500;
-        if (value.isNumber() || value.isBoolean() || value.isNull()) return true;
-        if (value.isArray()) {
-            if (value.size() > 20) return false;
-            for (JsonNode child : value) if (!safeMetadataValue(child, depth + 1)) return false;
-            return true;
+    private static void putExactText(ObjectNode target, JsonNode source, String field, Set<String> allowed) {
+        JsonNode value = source.get(field);
+        if (value != null && value.isTextual() && allowed.contains(value.textValue())) {
+            target.put(field, value.textValue());
         }
-        if (value.isObject()) {
-            if (value.size() > 20) return false;
-            Iterator<Map.Entry<String, JsonNode>> fields = value.fields();
-            while (fields.hasNext()) {
-                Map.Entry<String, JsonNode> field = fields.next();
-                if (sensitiveKey(field.getKey()) || !safeMetadataValue(field.getValue(), depth + 1)) return false;
-            }
-            return true;
-        }
-        return false;
     }
 
-    private static boolean sensitiveKey(String key) {
-        String value = clean(key).toLowerCase(Locale.ROOT);
-        return value.contains("key") || value.contains("secret") || value.contains("auth")
-                || value.contains("header") || value.contains("cookie") || value.contains("credential");
+    private static void putMatchingText(ObjectNode target, JsonNode source, String field, String pattern) {
+        JsonNode value = source.get(field);
+        if (value != null && value.isTextual() && value.textValue().matches(pattern)) {
+            target.put(field, value.textValue());
+        }
+    }
+
+    private static void putSafeIdentifier(ObjectNode target, JsonNode source, String field) {
+        JsonNode value = source.get(field);
+        if (value != null && value.isTextual() && safeMetadataIdentifier(value.textValue())) {
+            target.put(field, value.textValue());
+        }
+    }
+
+    private static void putReferenceAssetKeys(ObjectNode target, JsonNode source) {
+        JsonNode values = source.get("referenceAssetKeys");
+        if (values == null || !values.isArray() || values.size() > 8) return;
+        List<String> projected = new ArrayList<>();
+        for (JsonNode value : values) {
+            if (!value.isTextual() || !safeMetadataIdentifier(value.textValue())) return;
+            projected.add(value.textValue());
+        }
+        var array = target.putArray("referenceAssetKeys");
+        projected.forEach(array::add);
+    }
+
+    private static boolean safeMetadataIdentifier(String value) {
+        if (value == null || value.contains("..") || !value.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,119}")) return false;
+        String normalized = value.toLowerCase(Locale.ROOT);
+        return !normalized.startsWith("sk-") && !normalized.contains("token")
+                && !normalized.contains("secret") && !normalized.contains("authorization")
+                && !normalized.contains("credential") && !normalized.contains("bearer")
+                && !normalized.contains("cookie");
     }
 
     private String styleName(String snapshot) {
@@ -402,6 +451,6 @@ public class ImageRunQueryService {
     private record ParsedWords(List<StoryWord> values, String error) {
     }
 
-    private record ParsedAgentSnapshots(List<AgentSnapshotView> values, String error) {
+    private record ParsedAgentSnapshots(Integer schemaVersion, List<AgentSnapshotView> values, String error) {
     }
 }

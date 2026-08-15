@@ -146,6 +146,7 @@ public final class ImageRunDtos {
             String stylePresetName,
             String styleSnapshotJson,
             String flowSnapshotJson,
+            Integer agentSnapshotSchemaVersion,
             List<AgentSnapshotView> agentSnapshots,
             String agentSnapshotError,
             int expectedImageCount,
@@ -181,7 +182,7 @@ public final class ImageRunDtos {
                 List<ShotView> shots,
                 List<AssetView> assets) {
             this(runId, storyRunId, words, wordsError, targetGrade, status, storySnapshot, stylePresetId,
-                    stylePresetName, styleSnapshotJson, flowSnapshotJson, List.of(), null, expectedImageCount,
+                    stylePresetName, styleSnapshotJson, flowSnapshotJson, null, List.of(), null, expectedImageCount,
                     generatedImageCount, totalTextTokens, errorMessage, createdAt, startedAt, finishedAt,
                     steps, shots, assets);
         }

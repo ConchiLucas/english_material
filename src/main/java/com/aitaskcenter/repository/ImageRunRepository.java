@@ -4,12 +4,15 @@ import com.aitaskcenter.model.ImageRun;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface ImageRunRepository extends JpaRepository<ImageRun, Long> {
     Optional<ImageRun> findByRunId(String runId);
 
     List<ImageRun> findAllByOrderByCreatedAtDesc();
+
+    List<ImageRun> findAllByOrderByCreatedAtDesc(Pageable pageable);
 
     List<ImageRun> findAllByStatusIn(Collection<String> statuses);
 

@@ -25,8 +25,13 @@ public class ImageAssetController {
 
     @GetMapping("/{assetId}/content")
     public ResponseEntity<byte[]> content(@PathVariable String assetId) {
-        if (assetId == null || !assetId.matches("[1-9][0-9]{0,17}")) return ResponseEntity.notFound().build();
-        long id = Long.parseLong(assetId);
+        if (assetId == null || !assetId.matches("[1-9][0-9]{0,18}")) return ResponseEntity.notFound().build();
+        long id;
+        try {
+            id = Long.parseLong(assetId);
+        } catch (NumberFormatException exception) {
+            return ResponseEntity.notFound().build();
+        }
         ImageAsset asset = repository.findById(id).orElse(null);
         if (asset == null || !("image/png".equals(asset.getMime()) || "image/jpeg".equals(asset.getMime()))) {
             return ResponseEntity.notFound().build();

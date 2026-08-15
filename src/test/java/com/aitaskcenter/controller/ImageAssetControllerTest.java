@@ -69,6 +69,14 @@ class ImageAssetControllerTest {
         mockMvc.perform(get("/api/image-assets/not-a-number/content"))
                 .andExpect(status().isNotFound())
                 .andExpect(content().string(""));
+
+        when(repository.findById(Long.MAX_VALUE)).thenReturn(Optional.empty());
+        mockMvc.perform(get("/api/image-assets/9223372036854775807/content"))
+                .andExpect(status().isNotFound());
+        verify(repository).findById(Long.MAX_VALUE);
+        mockMvc.perform(get("/api/image-assets/9223372036854775808/content"))
+                .andExpect(status().isNotFound())
+                .andExpect(content().string(""));
     }
 
     private ImageAsset asset() {

@@ -193,7 +193,7 @@ class ImageRunExecutionServiceTest {
     }
 
     @Test
-    void snapshotsValidatedInputsBeforeEnqueueing() {
+    void snapshotsValidatedInputsBeforeEnqueueing() throws Exception {
         AtomicBoolean persistedBeforeEnqueue = new AtomicBoolean();
         TaskExecutor queueOnly = command -> persistedBeforeEnqueue.set(
                 org.mockito.Mockito.mockingDetails(runs).getInvocations().stream()
@@ -215,6 +215,10 @@ class ImageRunExecutionServiceTest {
         assertFalse(run.getAgentSnapshotJson().isBlank());
         assertFalse(run.getAgentSnapshotJson().contains("secret-key"));
         assertTrue(run.getAgentSnapshotJson().contains("text-model"));
+        var agentSnapshot = mapper.readTree(run.getAgentSnapshotJson());
+        assertEquals(1, agentSnapshot.path("schemaVersion").asInt());
+        assertTrue(agentSnapshot.path("agents").isArray());
+        assertEquals(9, agentSnapshot.path("agents").size());
         assertTrue(run.getFlowSnapshotJson().contains("image-model"));
         assertTrue(run.getFlowSnapshotJson().contains("\"responseFormat\":\"b64_json\""));
         assertTrue(run.getFlowSnapshotJson().contains("\"quality\":\"high\""));

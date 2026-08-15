@@ -1,6 +1,7 @@
 package com.aitaskcenter.service;
 
 import com.aitaskcenter.config.ImageAgentCatalog;
+import com.aitaskcenter.config.ImageAgentSnapshotContract;
 import com.aitaskcenter.config.ImageAgentCatalog.NodeDefinition;
 import com.aitaskcenter.dto.AiConfigRequest;
 import com.aitaskcenter.dto.AiProviderConfigItem;
@@ -193,11 +194,13 @@ public class ImageRunExecutionService {
                     execution.systemPrompt(), execution.promptVersion(), execution.temperature(),
                     textProviderSnapshot(provider)));
         }
+        validateV1AgentSnapshotContract(agentSnapshots);
 
         readTree(story.getInputWordsJson(), "故事单词快照无效");
         RunSnapshot run = new RunSnapshot(UUID.randomUUID().toString(), storyRunId, finalStory,
                 story.getInputWordsJson(), clean(story.getTargetGrade()), String.valueOf(style.getId()),
-                writeJson(styleSnapshot), writeJson(flowSnapshot), writeJson(agentSnapshots));
+                writeJson(styleSnapshot), writeJson(flowSnapshot),
+                writeJson(ImageAgentSnapshotContract.v1Envelope(agentSnapshots)));
         Map<String, AgentExecution> executionSnapshot = executionAgents.stream()
                 .collect(java.util.stream.Collectors.toUnmodifiableMap(AgentExecution::key, Function.identity()));
         return new PreparedRun(run, style.getId(), style.getName(), styleSnapshot, flowSnapshot,
@@ -828,6 +831,19 @@ public class ImageRunExecutionService {
                 .map(ImageAgentCatalog.StageDefinition::key)
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("图片 Agent 阶段不存在"));
+    }
+
+    private static void validateV1AgentSnapshotContract(List<AgentSnapshot> snapshots) {
+        List<ImageAgentSnapshotContract.AgentDefinition> expected = ImageAgentSnapshotContract.v1Agents();
+        if (snapshots.size() != expected.size()) throw new IllegalArgumentException("图片 Agent 快照目录与 v1 不一致");
+        for (int index = 0; index < expected.size(); index++) {
+            AgentSnapshot actual = snapshots.get(index);
+            ImageAgentSnapshotContract.AgentDefinition definition = expected.get(index);
+            if (actual.sequence() != definition.sequence() || !actual.key().equals(definition.key())
+                    || !actual.stageKey().equals(definition.stageKey())) {
+                throw new IllegalArgumentException("图片 Agent 快照目录与 v1 不一致");
+            }
+        }
     }
 
     private String writeJson(Object value) {
