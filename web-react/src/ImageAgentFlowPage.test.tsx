@@ -15,11 +15,11 @@ const historyMocks = vi.hoisted(() => ({ render: vi.fn() }));
 
 vi.mock('./api', async (importOriginal) => ({ ...await importOriginal<typeof import('./api')>(), ...apiMocks }));
 vi.mock('./ImageRunHistory', () => ({
-  default: (props: { open: boolean; initialRunId?: string; onClose: () => void }) => {
+  default: (props: { open: boolean; initialRunId?: string; onClose: () => void; afterClose?: () => void }) => {
     historyMocks.render(props);
     return props.open ? <div role="dialog" aria-label="图片运行记录测试替身">
       <span>{props.initialRunId || '无初始批次'}</span>
-      <button type="button" onClick={props.onClose}>关闭记录测试替身</button>
+      <button type="button" onClick={() => { props.onClose(); props.afterClose?.(); }}>关闭记录测试替身</button>
     </div> : null;
   },
 }));
@@ -281,12 +281,13 @@ describe('ImageAgentFlowPage', () => {
   it('opens read-only image records from the header without discarding a dirty configuration draft', async () => {
     const modal = installConfirmHarness(); const dirty = vi.fn(); const user = userEvent.setup(); renderPage(makeFlow(), dirty);
     const prompt = await screen.findByLabelText('System Prompt'); await user.type(prompt, ' unsaved history-safe draft');
-    await user.click(screen.getByRole('button', { name: '图片记录' }));
+    const historyButton = screen.getByRole('button', { name: '图片记录' }); await user.click(historyButton);
 
     expect(modal.confirm).not.toHaveBeenCalled();
     expect(screen.getByRole('dialog', { name: '图片运行记录测试替身' })).toHaveTextContent('无初始批次');
     await user.click(screen.getByRole('button', { name: '关闭记录测试替身' }));
     expect(screen.queryByRole('dialog', { name: '图片运行记录测试替身' })).not.toBeInTheDocument();
+    expect(historyButton).toHaveFocus();
     expect(prompt).toHaveValue('image-story-analyst prompt unsaved history-safe draft');
     expect(dirty).toHaveBeenLastCalledWith(true);
   });

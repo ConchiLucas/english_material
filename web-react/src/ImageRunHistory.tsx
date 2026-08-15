@@ -1,12 +1,14 @@
-import { Alert, Button, Empty, Skeleton } from 'antd';
+import { Alert, Button, Empty, Modal, Skeleton } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getImageRun, getImageRuns } from './api';
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { getImageRun, getImageRuns, imageAssetUrl } from './api';
 import type { ImageAsset, ImageRunDetail, ImageRunStep, ImageRunSummary, ImageShot } from './image-story-types';
 
 interface ImageRunHistoryProps {
   open: boolean;
   onClose: () => void;
   initialRunId?: string;
+  afterClose?: () => void;
 }
 
 type GalleryTab = 'final' | 'reference';
@@ -23,9 +25,10 @@ const stepOrder = (values: ImageRunStep[]) => [...values].sort((left, right) =>
 const shotOrder = (values: ImageShot[]) => [...values].sort((left, right) =>
   left.sequence - right.sequence || left.id - right.id);
 const errorText = (error: unknown) => error instanceof Error ? error.message.slice(0, 240) : '图片记录加载失败';
+const boundedRunError = (value: string) => value.slice(0, 1_000);
 const wordsText = (run?: Pick<ImageRunSummary, 'words'> | null) => run?.words.map((word) => word.word).join(' ') || '没有记录输入单词';
 
-export default function ImageRunHistory({ open, onClose, initialRunId }: ImageRunHistoryProps) {
+export default function ImageRunHistory({ open, onClose, initialRunId, afterClose }: ImageRunHistoryProps) {
   const [runs, setRuns] = useState<ImageRunSummary[]>([]);
   const [selectedRunId, setSelectedRunId] = useState('');
   const [detail, setDetail] = useState<ImageRunDetail | null>(null);
@@ -38,6 +41,17 @@ export default function ImageRunHistory({ open, onClose, initialRunId }: ImageRu
   const listRequestRef = useRef(0);
   const detailRequestRef = useRef(0);
   const selectedRunRef = useRef('');
+  const historyCloseRef = useRef<HTMLButtonElement>(null);
+  const previewCloseRef = useRef<HTMLButtonElement>(null);
+  const previewTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const finalTabRef = useRef<HTMLButtonElement>(null);
+  const referenceTabRef = useRef<HTMLButtonElement>(null);
+  const wasOpenRef = useRef(open);
+
+  const closePreview = useCallback(() => {
+    setPreview(null);
+    window.setTimeout(() => previewTriggerRef.current?.focus(), 0);
+  }, []);
 
   const loadDetail = useCallback(async (runId: string, preserveStep = false) => {
     const requestId = ++detailRequestRef.current;
@@ -53,7 +67,7 @@ export default function ImageRunHistory({ open, onClose, initialRunId }: ImageRu
     return loaded;
   }, []);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (preferredRunId?: string) => {
     const requestId = ++listRequestRef.current;
     setLoading(true); setError('');
     try {
@@ -61,7 +75,7 @@ export default function ImageRunHistory({ open, onClose, initialRunId }: ImageRu
       if (requestId !== listRequestRef.current) return;
       setRuns(loaded);
       const current = selectedRunRef.current;
-      const runId = loaded.some((run) => run.runId === current) ? current : initialRunId || loaded[0]?.runId || '';
+      const runId = loaded.some((run) => run.runId === current) ? current : preferredRunId || loaded[0]?.runId || '';
       selectedRunRef.current = runId;
       setSelectedRunId(runId);
       setGalleryTab('final'); setPreview(null); setBrokenAssets(new Set());
@@ -72,7 +86,7 @@ export default function ImageRunHistory({ open, onClose, initialRunId }: ImageRu
     } finally {
       if (requestId === listRequestRef.current) setLoading(false);
     }
-  }, [initialRunId, loadDetail]);
+  }, [loadDetail]);
 
   const switchRun = (runId: string) => {
     if (runId === selectedRunRef.current) return;
@@ -85,8 +99,11 @@ export default function ImageRunHistory({ open, onClose, initialRunId }: ImageRu
   };
 
   useEffect(() => {
-    if (open) void load();
-    else { listRequestRef.current += 1; detailRequestRef.current += 1; }
+    if (open) void load(initialRunId);
+    else {
+      listRequestRef.current += 1; detailRequestRef.current += 1; selectedRunRef.current = '';
+      setRuns([]); setSelectedRunId(''); setDetail(null); setSelectedStepId(null); setGalleryTab('final'); setPreview(null); setBrokenAssets(new Set()); setError('');
+    }
   }, [load, open]);
 
   useEffect(() => {
@@ -108,11 +125,21 @@ export default function ImageRunHistory({ open, onClose, initialRunId }: ImageRu
   useEffect(() => () => { listRequestRef.current += 1; detailRequestRef.current += 1; }, []);
   useEffect(() => {
     if (!open) return undefined;
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') preview ? setPreview(null) : onClose(); };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose, open, preview]);
-
+    const timer = window.setTimeout(() => historyCloseRef.current?.focus(), 0);
+    return () => window.clearTimeout(timer);
+  }, [open]);
+  useEffect(() => {
+    const wasOpen = wasOpenRef.current;
+    wasOpenRef.current = open;
+    if (!wasOpen || open) return undefined;
+    const timer = window.setTimeout(() => afterClose?.(), 0);
+    return () => window.clearTimeout(timer);
+  }, [afterClose, open]);
+  useEffect(() => {
+    if (!preview) return undefined;
+    const timer = window.setTimeout(() => previewCloseRef.current?.focus(), 0);
+    return () => window.clearTimeout(timer);
+  }, [preview]);
   const selectedStep = detail?.steps.find((step) => step.id === selectedStepId) ?? null;
   const finalAssets = useMemo(() => new Map((detail?.assets ?? [])
     .filter((asset) => asset.assetType === 'FINAL' && asset.shotKey)
@@ -120,34 +147,57 @@ export default function ImageRunHistory({ open, onClose, initialRunId }: ImageRu
   const referenceAssets = useMemo(() => (detail?.assets ?? []).filter((asset) => asset.assetType === 'REFERENCE'), [detail]);
   const markBroken = (assetId: number) => setBrokenAssets((current) => new Set(current).add(assetId));
 
-  if (!open) return null;
-
   const renderImage = (asset: ImageAsset, label: string) => brokenAssets.has(asset.id)
     ? <div className="image-story-history-asset-error">图片文件加载失败</div>
-    : <button type="button" className="image-story-history-image-button" aria-label={`查看 ${label}大图`} onClick={() => setPreview({ asset, label })}>
-      <img src={asset.contentUrl} alt={label} onError={() => markBroken(asset.id)} />
+    : <button type="button" className="image-story-history-image-button" aria-label={`查看 ${label}大图`} onClick={(event) => { previewTriggerRef.current = event.currentTarget; setPreview({ asset, label }); }}>
+      <img src={imageAssetUrl(asset.id)} alt={label} onError={() => markBroken(asset.id)} />
     </button>;
 
-  return <div className="image-story-history" role="dialog" aria-modal="true" aria-label="图片运行记录">
+  const selectGalleryTab = (next: GalleryTab) => {
+    setGalleryTab(next);
+    (next === 'final' ? finalTabRef : referenceTabRef).current?.focus();
+  };
+  const onGalleryKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    selectGalleryTab(event.key === 'ArrowLeft' || event.key === 'Home' ? 'final' : 'reference');
+  };
+
+  return <>
+    <Modal
+      rootClassName="image-story-history-modal"
+      title={<span className="image-story-history-sr-only">图片运行记录</span>}
+      open={open}
+      footer={null}
+      closable={false}
+      maskClosable={false}
+      keyboard
+      width="100vw"
+      destroyOnHidden
+      onCancel={() => preview ? closePreview() : onClose()}
+      afterOpenChange={(visible) => { if (visible) window.requestAnimationFrame(() => historyCloseRef.current?.focus()); }}
+    >
+      <div className="image-story-history">
     <section className="image-story-history-upper">
       <header className="image-story-history-controls">
         <span>{detail ? `${detail.targetGrade} · ${detail.stylePresetName ?? '未命名画风'}` : '图片批次'}</span>
-        <div><Button onClick={() => void load()}>刷新</Button><Button onClick={onClose}>关闭图片记录</Button></div>
+        <div><Button onClick={() => void load()}>刷新</Button><Button ref={historyCloseRef} onClick={onClose}>关闭图片记录</Button></div>
       </header>
       {error && <Alert className="image-story-history-error" type="error" showIcon message={error} />}
       {loading && runs.length === 0 && !detail ? <div className="image-story-history-state"><Skeleton active paragraph={{ rows: 5 }} /></div> : runs.length === 0 && !detail ? <Empty description="暂无图片批次" /> : <>
         <div className="image-story-history-batches" role="list" aria-label="图片批次列表">
-          {runs.map((run) => <button key={run.runId} type="button" aria-label={`批次 ${run.runId} ${formatDate(run.createdAt)}`} className={run.runId === selectedRunId ? 'is-selected' : ''} onClick={() => switchRun(run.runId)}>
+          {runs.map((run) => <div key={run.runId} role="listitem"><button type="button" aria-label={`批次 ${run.runId} ${formatDate(run.createdAt)}`} aria-current={run.runId === selectedRunId ? 'true' : undefined} className={run.runId === selectedRunId ? 'is-selected' : ''} onClick={() => switchRun(run.runId)}>
             <span><strong>{formatDate(run.createdAt)}</strong><small>{run.runId}</small></span>
             <span className="image-story-history-batch-words" style={{ whiteSpace: 'nowrap' }}>{wordsText(run)}</span>
-          </button>)}
+          </button></div>)}
         </div>
         <div className="image-story-history-words" role="region" aria-label="当前批次单词"><strong>输入单词</strong><span>{wordsText(detail)}</span></div>
-        {detail ? <div className="image-story-history-audit">
+        {detail ? <div className={`image-story-history-audit${detail.errorMessage ? ' has-run-error' : ''}`}>
+          {detail.errorMessage && <Alert className="image-story-history-run-error" role="region" aria-label="批次执行错误" type="error" showIcon message="批次执行失败" description={boundedRunError(detail.errorMessage)} />}
           <aside className="image-story-history-steps" role="list" aria-label="已执行步骤">
-            {detail.steps.length ? detail.steps.map((step) => <button key={step.id} type="button" className={step.id === selectedStepId ? 'is-selected' : ''} aria-label={`${step.nodeName} 第 ${step.sequence} 步`} onClick={() => setSelectedStepId(step.id)}>
+            {detail.steps.length ? detail.steps.map((step) => <div key={step.id} role="listitem"><button type="button" className={step.id === selectedStepId ? 'is-selected' : ''} aria-pressed={step.id === selectedStepId} aria-label={`${step.nodeName} 第 ${step.sequence} 步`} onClick={() => setSelectedStepId(step.id)}>
               <span>{String(step.sequence).padStart(2, '0')}</span><strong>{step.nodeName}</strong><small>{step.nodeKind}</small><em>{step.status}</em>
-            </button>) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前批次还没有执行步骤" />}
+            </button></div>) : <div role="listitem"><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前批次还没有执行步骤" /></div>}
           </aside>
           <section className="image-story-history-io" role="region" aria-label="完整输入">
             <header><strong>完整输入</strong>{selectedStep && <span>{selectedStep.nodeName}</span>}</header>
@@ -164,10 +214,10 @@ export default function ImageRunHistory({ open, onClose, initialRunId }: ImageRu
 
     <section className="image-story-history-gallery" role="region" aria-label="图片结果">
       <header><div role="tablist" aria-label="图片结果类型">
-        <button type="button" role="tab" aria-selected={galleryTab === 'final'} className={galleryTab === 'final' ? 'is-active' : ''} onClick={() => setGalleryTab('final')}>最终分镜图</button>
-        <button type="button" role="tab" aria-selected={galleryTab === 'reference'} className={galleryTab === 'reference' ? 'is-active' : ''} onClick={() => setGalleryTab('reference')}>参考设定图</button>
+        <button ref={finalTabRef} id="image-story-final-tab" type="button" role="tab" aria-selected={galleryTab === 'final'} aria-controls="image-story-final-panel" tabIndex={galleryTab === 'final' ? 0 : -1} className={galleryTab === 'final' ? 'is-active' : ''} onKeyDown={onGalleryKeyDown} onClick={() => setGalleryTab('final')}>最终分镜图</button>
+        <button ref={referenceTabRef} id="image-story-reference-tab" type="button" role="tab" aria-selected={galleryTab === 'reference'} aria-controls="image-story-reference-panel" tabIndex={galleryTab === 'reference' ? 0 : -1} className={galleryTab === 'reference' ? 'is-active' : ''} onKeyDown={onGalleryKeyDown} onClick={() => setGalleryTab('reference')}>参考设定图</button>
       </div></header>
-      <div className="image-story-history-gallery-scroll">
+      <div id={`image-story-${galleryTab}-panel`} role="tabpanel" aria-labelledby={`image-story-${galleryTab}-tab`} className="image-story-history-gallery-scroll">
         {galleryTab === 'final' ? detail?.shots.length ? detail.shots.map((shot) => {
           const asset = finalAssets.get(shot.shotKey); const label = `Scene ${shot.sceneIndex} Shot ${shot.shotIndex} 最终分镜图`;
           return <article className="image-story-history-shot" key={shot.id}>
@@ -181,8 +231,28 @@ export default function ImageRunHistory({ open, onClose, initialRunId }: ImageRu
       </div>
     </section>
 
-    {preview && <div className="image-story-history-preview" role="dialog" aria-modal="true" aria-label="图片大图预览" onClick={() => setPreview(null)}>
-      <div onClick={(event) => event.stopPropagation()}><img src={preview.asset.contentUrl} alt={`${preview.label}大图`} onError={() => markBroken(preview.asset.id)} /><Button onClick={() => setPreview(null)}>关闭大图</Button></div>
-    </div>}
-  </div>;
+      </div>
+    </Modal>
+    <Modal
+      rootClassName="image-story-history-preview-modal"
+      title={<span className="image-story-history-sr-only">图片大图预览</span>}
+      open={!!preview}
+      footer={null}
+      closable={false}
+      maskClosable
+      keyboard
+      destroyOnHidden
+      width="min(96vw, 1640px)"
+      onCancel={closePreview}
+      afterClose={() => previewTriggerRef.current?.focus()}
+      afterOpenChange={(visible) => { if (visible) window.requestAnimationFrame(() => previewCloseRef.current?.focus()); }}
+    >
+      <div className="image-story-history-preview">
+        {preview && (brokenAssets.has(preview.asset.id)
+          ? <div className="image-story-history-preview-error">大图文件加载失败</div>
+          : <img src={imageAssetUrl(preview.asset.id)} alt={`${preview.label}大图`} onError={() => markBroken(preview.asset.id)} />)}
+        <Button ref={previewCloseRef} onClick={closePreview}>关闭大图</Button>
+      </div>
+    </Modal>
+  </>;
 }

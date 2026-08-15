@@ -1,11 +1,12 @@
 import { App as AntApp } from 'antd';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useRef, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import ImageRunHistory from './ImageRunHistory';
 import type { ImageRunDetail, ImageRunSummary } from './image-story-types';
 
-const apiMocks = vi.hoisted(() => ({ getImageRuns: vi.fn(), getImageRun: vi.fn() }));
+const apiMocks = vi.hoisted(() => ({ getImageRuns: vi.fn(), getImageRun: vi.fn(), imageAssetUrl: vi.fn() }));
 vi.mock('./api', async (importOriginal) => ({
   ...await importOriginal<typeof import('./api')>(),
   ...apiMocks,
@@ -78,6 +79,7 @@ const detail = (runId: string, words: string[], status = 'COMPLETED'): ImageRunD
 
 describe('ImageRunHistory', () => {
   beforeEach(() => {
+    apiMocks.imageAssetUrl.mockReset().mockImplementation((assetId: number | string) => `/api/image-assets/${assetId}/content`);
     apiMocks.getImageRuns.mockReset().mockResolvedValue([
       summary('run-old', '2026-08-13T03:00:00Z', ['friend']),
       summary('run-new', '2026-08-15T03:00:00Z', ['book', 'green', 'cake']),
@@ -151,12 +153,14 @@ describe('ImageRunHistory', () => {
   it('opens an image preview and closes it without changing the selected batch', async () => {
     const user = userEvent.setup();
     render(<AntApp><ImageRunHistory open initialRunId="run-new" onClose={vi.fn()} /></AntApp>);
-    await user.click(await screen.findByRole('button', { name: '查看 Scene 2 Shot 3 最终分镜图大图' }));
+    const previewTrigger = await screen.findByRole('button', { name: '查看 Scene 2 Shot 3 最终分镜图大图' });
+    await user.click(previewTrigger);
 
-    const preview = await screen.findByRole('dialog', { name: '图片大图预览' });
+    const previewClose = await screen.findByRole('button', { name: '关闭大图' });
+    const preview = previewClose.closest('[role="dialog"]') as HTMLElement;
     expect(within(preview).getByRole('img', { name: 'Scene 2 Shot 3 最终分镜图大图' })).toHaveAttribute('src', '/api/image-assets/42/content');
     await user.click(within(preview).getByRole('button', { name: '关闭大图' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: '图片大图预览' })).not.toBeInTheDocument());
+    await waitFor(() => expect(previewTrigger).toHaveFocus());
     expect(screen.getByRole('region', { name: '当前批次单词' })).toHaveTextContent('book');
   });
 
@@ -244,7 +248,113 @@ describe('ImageRunHistory', () => {
     await user.click(await screen.findByRole('button', { name: '关闭图片记录' }));
     expect(onClose).toHaveBeenCalledTimes(1);
     view.rerender(<AntApp><ImageRunHistory open initialRunId="run-new" onClose={onClose} /></AntApp>);
-    fireEvent.keyDown(window, { key: 'Escape' });
+    const dialog = screen.getByRole('dialog', { name: '图片运行记录' });
+    fireEvent.keyDown(dialog.parentElement as HTMLElement, { key: 'Escape', keyCode: 27 });
     expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses a new initial run only on the next open and preserves a user switch during one open session', async () => {
+    const user = userEvent.setup();
+    apiMocks.getImageRuns.mockResolvedValue([
+      summary('run-1', '2026-08-15T03:00:00Z', ['book']),
+      summary('run-2', '2026-08-14T03:00:00Z', ['friend']),
+      summary('run-3', '2026-08-13T03:00:00Z', ['cake']),
+    ]);
+    apiMocks.getImageRun.mockImplementation(async (runId: string) => detail(runId, [
+      runId === 'run-1' ? 'book' : runId === 'run-2' ? 'friend' : 'cake',
+    ]));
+    const view = render(<AntApp><ImageRunHistory open initialRunId="run-1" onClose={vi.fn()} /></AntApp>);
+    expect(await screen.findByRole('region', { name: '当前批次单词' })).toHaveTextContent('book');
+    await user.click(screen.getByRole('button', { name: /run-2/ }));
+    expect(await screen.findByRole('region', { name: '当前批次单词' })).toHaveTextContent('friend');
+
+    view.rerender(<AntApp><ImageRunHistory open initialRunId="run-3" onClose={vi.fn()} /></AntApp>);
+    await act(async () => Promise.resolve());
+    expect(screen.getByRole('region', { name: '当前批次单词' })).toHaveTextContent('friend');
+    view.rerender(<AntApp><ImageRunHistory open={false} initialRunId="run-3" onClose={vi.fn()} /></AntApp>);
+    view.rerender(<AntApp><ImageRunHistory open initialRunId="run-3" onClose={vi.fn()} /></AntApp>);
+    await waitFor(() => expect(screen.getByRole('region', { name: '当前批次单词' })).toHaveTextContent('cake'));
+  });
+
+  it('shows a bounded run failure reason in the upper audit even when no steps or assets exist', async () => {
+    const longReason = `<script>alert("x")</script>${'x'.repeat(1_200)}`;
+    apiMocks.getImageRuns.mockResolvedValue([summary('run-empty-failed', '2026-08-15T03:00:00Z', ['book'], 'FAILED')]);
+    apiMocks.getImageRun.mockResolvedValue({
+      ...detail('run-empty-failed', ['book'], 'FAILED'), errorMessage: longReason, steps: [], shots: [], assets: [],
+    });
+    render(<AntApp><ImageRunHistory open onClose={vi.fn()} /></AntApp>);
+
+    const audit = await screen.findByRole('region', { name: '批次执行错误' });
+    expect(audit).toHaveTextContent('<script>alert("x")</script>');
+    expect(audit.textContent?.length).toBeLessThanOrEqual(1_020);
+    expect(audit.querySelector('script')).toBeNull();
+    const emptySteps = screen.getByRole('list', { name: '已执行步骤' });
+    expect(Array.from(emptySteps.children).every((child) => child.getAttribute('role') === 'listitem')).toBe(true);
+    expect(screen.getByRole('tab', { name: '最终分镜图' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('derives thumbnail and preview URLs only from the controlled asset id', async () => {
+    const user = userEvent.setup();
+    const unsafe = detail('run-new', ['book']);
+    unsafe.assets = unsafe.assets.map((asset) => ({ ...asset, contentUrl: 'https://evil.example/steal.png' }));
+    apiMocks.getImageRuns.mockResolvedValue([summary('run-new', '2026-08-15T03:00:00Z', ['book'])]);
+    apiMocks.getImageRun.mockResolvedValue(unsafe);
+    apiMocks.imageAssetUrl.mockImplementation((assetId: number | string) => `https://trusted.example/api/image-assets/${assetId}/content`);
+    render(<AntApp><ImageRunHistory open onClose={vi.fn()} /></AntApp>);
+
+    const thumbnail = await screen.findByRole('img', { name: 'Scene 2 Shot 3 最终分镜图' });
+    expect(thumbnail).toHaveAttribute('src', 'https://trusted.example/api/image-assets/42/content');
+    expect(thumbnail).not.toHaveAttribute('src', expect.stringContaining('evil.example'));
+    await user.click(screen.getByRole('button', { name: '查看 Scene 2 Shot 3 最终分镜图大图' }));
+    expect(await screen.findByRole('img', { name: 'Scene 2 Shot 3 最终分镜图大图' })).toHaveAttribute('src', 'https://trusted.example/api/image-assets/42/content');
+    expect(apiMocks.imageAssetUrl).toHaveBeenCalledWith(42);
+  });
+
+  it('uses modal focus containment and restores history and preview triggers', async () => {
+    const Harness = () => {
+      const [open, setOpen] = useState(false); const opener = useRef<HTMLButtonElement>(null);
+      return <AntApp><button ref={opener} type="button" onClick={() => setOpen(true)}>打开图片记录</button><ImageRunHistory open={open} initialRunId="run-new" onClose={() => setOpen(false)} afterClose={() => opener.current?.focus()} /></AntApp>;
+    };
+    const user = userEvent.setup(); render(<Harness />);
+    const opener = screen.getByRole('button', { name: '打开图片记录' }); await user.click(opener);
+    const dialog = await screen.findByRole('dialog', { name: '图片运行记录' });
+    const historyClose = await screen.findByRole('button', { name: '关闭图片记录' });
+    await waitFor(() => expect(historyClose).toHaveFocus());
+    for (let index = 0; index < 12; index += 1) await user.tab();
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+
+    const previewTrigger = screen.getByRole('button', { name: '查看 Scene 2 Shot 3 最终分镜图大图' });
+    await user.click(previewTrigger);
+    const previewClose = await screen.findByRole('button', { name: '关闭大图' });
+    const preview = previewClose.closest('[role="dialog"]') as HTMLElement;
+    expect(preview).toContainElement(document.activeElement as HTMLElement);
+    await user.click(previewClose);
+    await waitFor(() => expect(previewTrigger).toHaveFocus());
+    await user.click(historyClose);
+    await waitFor(() => expect(opener).toHaveFocus());
+  });
+
+  it('uses listitem selection semantics, linked tabpanels, keyboard tabs, and a preview image error state', async () => {
+    render(<AntApp><ImageRunHistory open initialRunId="run-new" onClose={vi.fn()} /></AntApp>);
+    const batches = await screen.findByRole('list', { name: '图片批次列表' });
+    expect(within(batches).getAllByRole('listitem')).toHaveLength(2);
+    expect(within(batches).getByRole('button', { name: /run-new/ })).toHaveAttribute('aria-current', 'true');
+    const steps = screen.getByRole('list', { name: '已执行步骤' });
+    expect(within(steps).getAllByRole('listitem')).toHaveLength(2);
+    expect(within(steps).getByRole('button', { name: /故事结构分析/ })).toHaveAttribute('aria-pressed', 'true');
+
+    const finalTab = screen.getByRole('tab', { name: '最终分镜图' });
+    const finalPanel = screen.getByRole('tabpanel', { name: '最终分镜图' });
+    expect(finalTab).toHaveAttribute('aria-controls', finalPanel.id);
+    fireEvent.keyDown(finalTab, { key: 'ArrowRight' });
+    const referenceTab = screen.getByRole('tab', { name: '参考设定图' });
+    expect(referenceTab).toHaveFocus();
+    expect(referenceTab).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tabpanel', { name: '参考设定图' })).toHaveAttribute('aria-labelledby', referenceTab.id);
+
+    fireEvent.click(screen.getByRole('button', { name: '查看 toby-character 参考设定图大图' }));
+    const largeImage = await screen.findByRole('img', { name: 'toby-character 参考设定图大图' });
+    fireEvent.error(largeImage);
+    expect(await screen.findByText('大图文件加载失败')).toBeInTheDocument();
   });
 });
