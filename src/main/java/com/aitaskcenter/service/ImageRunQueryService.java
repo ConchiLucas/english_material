@@ -1,0 +1,260 @@
+package com.aitaskcenter.service;
+
+import com.aitaskcenter.dto.ImageRunDtos.AssetView;
+import com.aitaskcenter.dto.ImageRunDtos.RunDetail;
+import com.aitaskcenter.dto.ImageRunDtos.RunStepView;
+import com.aitaskcenter.dto.ImageRunDtos.RunSummary;
+import com.aitaskcenter.dto.ImageRunDtos.ShotView;
+import com.aitaskcenter.dto.ImageRunDtos.SourceStoryView;
+import com.aitaskcenter.dto.StoryRunDtos.StoryWord;
+import com.aitaskcenter.model.ImageAsset;
+import com.aitaskcenter.model.ImageRun;
+import com.aitaskcenter.model.ImageRunStep;
+import com.aitaskcenter.model.ImageShot;
+import com.aitaskcenter.model.StoryRun;
+import com.aitaskcenter.repository.ImageAssetRepository;
+import com.aitaskcenter.repository.ImageRunRepository;
+import com.aitaskcenter.repository.ImageRunStepRepository;
+import com.aitaskcenter.repository.ImageShotRepository;
+import com.aitaskcenter.repository.StoryRunRepository;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
+
+@Service
+public class ImageRunQueryService {
+    private static final int MAX_WORDS = 50;
+    private static final int MAX_WORD_LENGTH = 120;
+    private static final int MAX_MEANING_LENGTH = 500;
+    private static final int MAX_METADATA_LENGTH = 32_000;
+    private static final Set<String> SOURCE_STATUSES = Set.of("COMPLETED", "LIMIT_REACHED");
+    private static final Set<String> SAFE_METADATA_KEYS = Set.of(
+            "responseFormat", "quality", "size", "referenceType", "target",
+            "referenceAssetKeys", "compositor", "usage");
+    private static final Comparator<OffsetDateTime> NEWEST_TIME =
+            Comparator.nullsLast(Comparator.reverseOrder());
+    private static final Comparator<String> SAFE_TEXT =
+            Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER);
+
+    private final StoryRunRepository storyRepository;
+    private final ImageRunRepository runRepository;
+    private final ImageRunStepRepository stepRepository;
+    private final ImageShotRepository shotRepository;
+    private final ImageAssetRepository assetRepository;
+    private final ObjectMapper objectMapper;
+
+    public ImageRunQueryService(
+            StoryRunRepository storyRepository,
+            ImageRunRepository runRepository,
+            ImageRunStepRepository stepRepository,
+            ImageShotRepository shotRepository,
+            ImageAssetRepository assetRepository,
+            ObjectMapper objectMapper) {
+        this.storyRepository = storyRepository;
+        this.runRepository = runRepository;
+        this.stepRepository = stepRepository;
+        this.shotRepository = shotRepository;
+        this.assetRepository = assetRepository;
+        this.objectMapper = objectMapper;
+    }
+
+    @Transactional(readOnly = true)
+    public List<SourceStoryView> listSourceStories() {
+        return storyRepository.findAllByOrderByCreatedAtDesc().stream()
+                .filter(run -> SOURCE_STATUSES.contains(clean(run.getStatus()).toUpperCase(Locale.ROOT)))
+                .filter(run -> StringUtils.hasText(run.getFinalStory()))
+                .sorted(Comparator.comparing(StoryRun::getCreatedAt, NEWEST_TIME))
+                .map(this::toSourceStory)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<RunSummary> listRuns() {
+        return runRepository.findAllByOrderByCreatedAtDesc().stream()
+                .sorted(Comparator.comparing(ImageRun::getCreatedAt, NEWEST_TIME))
+                .map(this::toSummary)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public RunDetail getRun(String runId) {
+        String safeRunId = clean(runId);
+        if (!StringUtils.hasText(safeRunId) || safeRunId.length() > 64) {
+            throw new IllegalArgumentException("图片运行批次不存在");
+        }
+        ImageRun run = runRepository.findByRunId(safeRunId)
+                .orElseThrow(() -> new IllegalArgumentException("图片运行批次不存在"));
+        List<RunStepView> steps = stepRepository.findAllByRunIdOrderBySequenceAsc(safeRunId).stream()
+                .sorted(Comparator.comparingInt(ImageRunStep::getSequence).thenComparing(ImageRunStep::getId,
+                        Comparator.nullsLast(Comparator.naturalOrder())))
+                .map(this::toStep)
+                .toList();
+        List<ShotView> shots = shotRepository.findAllByRunIdOrderBySequenceAsc(safeRunId).stream()
+                .sorted(Comparator.comparingInt(ImageShot::getSequence).thenComparing(ImageShot::getId,
+                        Comparator.nullsLast(Comparator.naturalOrder())))
+                .map(this::toShot)
+                .toList();
+        List<AssetView> assets = assetRepository.findAllByRunIdOrderByAssetTypeAscAssetKeyAsc(safeRunId).stream()
+                .sorted(Comparator.comparing(ImageAsset::getAssetType, SAFE_TEXT)
+                        .thenComparing(ImageAsset::getAssetKey, SAFE_TEXT)
+                        .thenComparing(ImageAsset::getId, Comparator.nullsLast(Comparator.naturalOrder())))
+                .map(this::toAsset)
+                .toList();
+        ParsedWords words = parseWordsSafely(run.getInputWordsJson());
+        return new RunDetail(run.getRunId(), run.getStoryRunId(), words.values(), words.error(), run.getTargetGrade(),
+                run.getStatus(), run.getStorySnapshot(), run.getStylePresetId(), styleName(run.getStyleSnapshotJson()),
+                run.getStyleSnapshotJson(), run.getFlowSnapshotJson(), run.getExpectedImageCount(),
+                run.getGeneratedImageCount(), run.getTotalTextTokens(), run.getErrorMessage(), run.getCreatedAt(),
+                run.getStartedAt(), run.getFinishedAt(), steps, shots, assets);
+    }
+
+    private SourceStoryView toSourceStory(StoryRun run) {
+        ParsedWords words = parseWordsSafely(run.getInputWordsJson());
+        return new SourceStoryView(run.getRunId(), words.values(), words.error(), run.getTargetGrade(), run.getStatus(),
+                run.getFinalStory(), run.getCreatedAt(), run.getFinishedAt());
+    }
+
+    private RunSummary toSummary(ImageRun run) {
+        ParsedWords words = parseWordsSafely(run.getInputWordsJson());
+        return new RunSummary(run.getRunId(), run.getStoryRunId(), styleId(run.getStylePresetId()),
+                styleName(run.getStyleSnapshotJson()), run.getTargetGrade(), words.values(), words.error(),
+                run.getStatus(), run.getExpectedImageCount(), run.getGeneratedImageCount(), run.getTotalTextTokens(),
+                run.getErrorMessage(), run.getCreatedAt(), run.getStartedAt(), run.getFinishedAt());
+    }
+
+    private RunStepView toStep(ImageRunStep step) {
+        return new RunStepView(step.getId(), step.getSequence(), step.getStageKey(), step.getNodeKey(),
+                step.getNodeName(), step.getNodeKind(), step.getPromptVersion(), step.getProviderId(),
+                step.getProviderModel(), step.getInputJson(), step.getRawOutput(), step.getParsedOutputJson(),
+                step.getErrorMessage(), step.getStatus(), step.getInputTokens(), step.getOutputTokens(),
+                step.getTotalTokens(), step.getDurationMs(), step.getStartedAt(), step.getFinishedAt(),
+                step.getCreatedAt());
+    }
+
+    private ShotView toShot(ImageShot shot) {
+        return new ShotView(shot.getId(), shot.getShotKey(), shot.getSceneIndex(), shot.getShotIndex(),
+                shot.getSequence(), shot.getSourceExcerpt(), shot.getVisualGoal(), shot.getSpeaker(),
+                shot.getDialogue(), shot.getCaption(), shot.getTextAnchorJson(), shot.getPrompt(),
+                shot.getNegativePrompt(), shot.getReferenceAssetKeysJson(), shot.getStatus(), shot.getCreatedAt());
+    }
+
+    private AssetView toAsset(ImageAsset asset) {
+        return new AssetView(asset.getId(), asset.getAssetType(), asset.getAssetKey(), asset.getShotKey(),
+                asset.getMime(), asset.getWidth(), asset.getHeight(), asset.getSha256(), asset.getProviderId(),
+                asset.getProviderModel(), asset.getProviderRequestId(), asset.getPrompt(), asset.getNegativePrompt(),
+                safeMetadata(asset.getMetadataJson()), "/api/image-assets/" + asset.getId() + "/content",
+                asset.getCreatedAt());
+    }
+
+    private ParsedWords parseWordsSafely(String json) {
+        try {
+            JsonNode root = objectMapper.readTree(json);
+            if (root == null || !root.isArray() || root.size() > MAX_WORDS) throw invalidWords();
+            List<StoryWord> result = new ArrayList<>();
+            for (JsonNode item : root) {
+                if (!item.isObject() || item.size() != 2 || !item.has("word") || !item.has("meaning")
+                        || !item.path("word").isTextual() || !item.path("meaning").isTextual()) {
+                    throw invalidWords();
+                }
+                String word = item.path("word").textValue().trim();
+                String meaning = item.path("meaning").textValue().trim();
+                if (!StringUtils.hasText(word) || word.length() > MAX_WORD_LENGTH
+                        || !StringUtils.hasText(meaning) || meaning.length() > MAX_MEANING_LENGTH) {
+                    throw invalidWords();
+                }
+                result.add(new StoryWord(word, meaning));
+            }
+            return new ParsedWords(List.copyOf(result), null);
+        } catch (Exception exception) {
+            return new ParsedWords(List.of(), "单词快照无法读取");
+        }
+    }
+
+    private String safeMetadata(String json) {
+        if (!StringUtils.hasText(json) || json.length() > MAX_METADATA_LENGTH) return null;
+        try {
+            JsonNode root = objectMapper.readTree(json);
+            if (root == null || !root.isObject()) return null;
+            ObjectNode safe = objectMapper.createObjectNode();
+            Iterator<Map.Entry<String, JsonNode>> fields = root.fields();
+            while (fields.hasNext()) {
+                Map.Entry<String, JsonNode> field = fields.next();
+                if (SAFE_METADATA_KEYS.contains(field.getKey()) && safeMetadataValue(field.getValue(), 0)) {
+                    safe.set(field.getKey(), field.getValue());
+                }
+            }
+            return safe.isEmpty() ? null : objectMapper.writeValueAsString(safe);
+        } catch (Exception exception) {
+            return null;
+        }
+    }
+
+    private boolean safeMetadataValue(JsonNode value, int depth) {
+        if (value == null || depth > 3) return false;
+        if (value.isTextual()) return value.textValue().length() <= 500;
+        if (value.isNumber() || value.isBoolean() || value.isNull()) return true;
+        if (value.isArray()) {
+            if (value.size() > 20) return false;
+            for (JsonNode child : value) if (!safeMetadataValue(child, depth + 1)) return false;
+            return true;
+        }
+        if (value.isObject()) {
+            if (value.size() > 20) return false;
+            Iterator<Map.Entry<String, JsonNode>> fields = value.fields();
+            while (fields.hasNext()) {
+                Map.Entry<String, JsonNode> field = fields.next();
+                if (sensitiveKey(field.getKey()) || !safeMetadataValue(field.getValue(), depth + 1)) return false;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private static boolean sensitiveKey(String key) {
+        String value = clean(key).toLowerCase(Locale.ROOT);
+        return value.contains("key") || value.contains("secret") || value.contains("auth")
+                || value.contains("header") || value.contains("cookie") || value.contains("credential");
+    }
+
+    private String styleName(String snapshot) {
+        if (!StringUtils.hasText(snapshot) || snapshot.length() > MAX_METADATA_LENGTH) return null;
+        try {
+            JsonNode root = objectMapper.readTree(snapshot);
+            JsonNode name = root == null ? null : root.get("name");
+            return name != null && name.isTextual() && name.textValue().length() <= 200 ? name.textValue() : null;
+        } catch (Exception exception) {
+            return null;
+        }
+    }
+
+    private static Long styleId(String value) {
+        try {
+            long id = Long.parseLong(clean(value));
+            return id > 0 ? id : null;
+        } catch (Exception exception) {
+            return null;
+        }
+    }
+
+    private static IllegalArgumentException invalidWords() {
+        return new IllegalArgumentException("单词快照无法读取");
+    }
+
+    private static String clean(String value) {
+        return value == null ? "" : value.trim();
+    }
+
+    private record ParsedWords(List<StoryWord> values, String error) {
+    }
+}
