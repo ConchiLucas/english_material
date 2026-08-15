@@ -20,3 +20,6 @@ spring:
 logging:
   level:
     org.hibernate.SQL: warn
+
+image-story:
+  storage-root: ${IMAGE_STORY_STORAGE_ROOT:./runtime/image-story}
