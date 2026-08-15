@@ -2,6 +2,7 @@ package com.aitaskcenter.service;
 
 import com.aitaskcenter.config.ImageAgentCatalog;
 import com.aitaskcenter.config.ImageAgentSnapshotContract;
+import com.aitaskcenter.config.StorySnapshotLimits;
 import com.aitaskcenter.config.ImageAgentCatalog.NodeDefinition;
 import com.aitaskcenter.dto.AiConfigRequest;
 import com.aitaskcenter.dto.AiProviderConfigItem;
@@ -156,8 +157,14 @@ public class ImageRunExecutionService {
                 .orElseThrow(() -> new IllegalArgumentException("故事批次不存在"));
         String finalStory = clean(story.getFinalStory());
         if (!StringUtils.hasText(finalStory)) throw new IllegalArgumentException("故事批次没有可用的最终故事");
+        if (finalStory.length() > StorySnapshotLimits.MAX_FINAL_STORY_CHARS) {
+            throw new IllegalArgumentException("最终故事超过最大长度");
+        }
         if (!StringUtils.hasText(story.getInputWordsJson()) || !StringUtils.hasText(story.getTargetGrade())) {
             throw new IllegalArgumentException("故事批次快照不完整");
+        }
+        if (story.getInputWordsJson().length() > StorySnapshotLimits.MAX_WORD_SNAPSHOT_CHARS) {
+            throw new IllegalArgumentException("故事单词快照超过最大长度");
         }
 
         ImageStylePreset style = styleRepository.findById(request.stylePresetId())

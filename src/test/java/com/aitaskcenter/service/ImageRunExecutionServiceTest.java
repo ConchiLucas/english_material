@@ -249,6 +249,46 @@ class ImageRunExecutionServiceTest {
     }
 
     @Test
+    void rejectsOversizedStorySnapshotsBeforePersistenceOrModelCalls() {
+        story.setFinalStory("s".repeat(20_001));
+
+        IllegalArgumentException storyError = assertThrows(IllegalArgumentException.class,
+                () -> service(command -> { }, new SyncTaskExecutor())
+                        .createRun(new StartImageRunRequest("story-run-1", 7L)));
+
+        assertEquals("最终故事超过最大长度", storyError.getMessage());
+        verify(runs, never()).saveAndFlush(any());
+        verifyNoInteractions(textGeneration, imageGeneration);
+    }
+
+    @Test
+    void rejectsOversizedWordSnapshotsBeforePersistenceOrModelCalls() {
+        story.setInputWordsJson("[" + " ".repeat(64 * 1024 - 1) + "]");
+
+        IllegalArgumentException wordsError = assertThrows(IllegalArgumentException.class,
+                () -> service(command -> { }, new SyncTaskExecutor())
+                        .createRun(new StartImageRunRequest("story-run-1", 7L)));
+
+        assertEquals("故事单词快照超过最大长度", wordsError.getMessage());
+        verify(runs, never()).saveAndFlush(any());
+        verifyNoInteractions(textGeneration, imageGeneration);
+    }
+
+    @Test
+    void acceptsStoryAndWordSnapshotsAtExactCharacterLimits() {
+        story.setFinalStory("s".repeat(20_000));
+        story.setInputWordsJson("[" + " ".repeat(64 * 1024 - 2) + "]");
+
+        service(command -> { }, new SyncTaskExecutor())
+                .createRun(new StartImageRunRequest("story-run-1", 7L));
+
+        verify(runs).saveAndFlush(any(ImageRun.class));
+        assertEquals(20_000, currentRun.get().getStorySnapshot().length());
+        assertEquals(64 * 1024, currentRun.get().getInputWordsJson().length());
+        verifyNoInteractions(textGeneration, imageGeneration);
+    }
+
+    @Test
     void rejectsCredentialBearingImageProviderUrlBeforePersistence() {
         imageProvider.setBaseUrl("https://provider.invalid/v1?token=hidden-query-secret");
 

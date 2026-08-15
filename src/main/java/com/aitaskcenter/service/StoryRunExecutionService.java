@@ -1,5 +1,6 @@
 package com.aitaskcenter.service;
 
+import com.aitaskcenter.config.StorySnapshotLimits;
 import com.aitaskcenter.dto.AiProviderConfigItem;
 import com.aitaskcenter.dto.StoryAgentDtos.AgentView;
 import com.aitaskcenter.dto.StoryAgentDtos.BudgetView;
@@ -104,9 +105,13 @@ public class StoryRunExecutionService {
         if (!StringUtils.hasText(targetGrade)) {
             throw new IllegalArgumentException("请填写目标年级");
         }
+        String inputWordsJson = writeJson(words);
+        if (inputWordsJson.length() > StorySnapshotLimits.MAX_WORD_SNAPSHOT_CHARS) {
+            throw new IllegalArgumentException("单词快照超过最大长度");
+        }
         StoryRun run = new StoryRun();
         run.setRunId(UUID.randomUUID().toString());
-        run.setInputWordsJson(writeJson(words));
+        run.setInputWordsJson(inputWordsJson);
         run.setTargetGrade(targetGrade);
         run.setStatus("QUEUED");
         runRepository.save(run);

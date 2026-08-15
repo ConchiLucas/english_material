@@ -1,5 +1,6 @@
 package com.aitaskcenter.service;
 
+import com.aitaskcenter.config.StorySnapshotLimits;
 import com.aitaskcenter.dto.StoryRunDtos.StoryWord;
 import com.aitaskcenter.dto.StoryRunDtos.WordLibraryView;
 import java.sql.Connection;
@@ -25,16 +26,13 @@ public class StoryWordSourceService {
         if (requested == null || requested.isEmpty()) {
             throw new IllegalArgumentException("请至少输入 1 个单词");
         }
-        if (requested.size() > 50) {
+        if (requested.size() > StorySnapshotLimits.MAX_WORDS) {
             throw new IllegalArgumentException("一次最多使用 50 个单词");
         }
         Map<String, StoryWord> unique = new LinkedHashMap<>();
         for (StoryWord item : requested) {
-            String word = item == null ? "" : clean(item.word());
-            if (!StringUtils.hasText(word)) {
-                throw new IllegalArgumentException("单词不能为空");
-            }
-            unique.putIfAbsent(word.toLowerCase(Locale.ROOT), new StoryWord(word, clean(item.meaning())));
+            StoryWord normalized = normalizeWord(item);
+            unique.putIfAbsent(normalized.word().toLowerCase(Locale.ROOT), normalized);
         }
         return List.copyOf(unique.values());
     }
@@ -71,7 +69,7 @@ public class StoryWordSourceService {
         if (libraryId == null || libraryId <= 0) {
             throw new IllegalArgumentException("请选择词库");
         }
-        if (count == null || count < 1 || count > 50) {
+        if (count == null || count < 1 || count > StorySnapshotLimits.MAX_WORDS) {
             throw new IllegalArgumentException("随机数量必须在 1 到 50 之间");
         }
         String librarySql = "SELECT 1 FROM word_library WHERE id = ? AND status = 1";
@@ -90,7 +88,8 @@ public class StoryWordSourceService {
                 try (ResultSet rows = words.executeQuery()) {
                     List<StoryWord> result = new ArrayList<>();
                     while (rows.next()) {
-                        result.add(new StoryWord(rows.getString("word"), rows.getString("meaning")));
+                        result.add(normalizeWord(new StoryWord(
+                                rows.getString("word"), rows.getString("meaning"))));
                     }
                     if (result.isEmpty()) {
                         throw new IllegalArgumentException("所选词库没有可用单词");
@@ -133,6 +132,21 @@ public class StoryWordSourceService {
         if (connectionId == null || connectionId <= 0) {
             throw new IllegalArgumentException("请选择数据库连接");
         }
+    }
+
+    private static StoryWord normalizeWord(StoryWord item) {
+        String word = item == null ? "" : clean(item.word());
+        if (!StringUtils.hasText(word)) {
+            throw new IllegalArgumentException("单词不能为空");
+        }
+        if (word.length() > StorySnapshotLimits.MAX_WORD_LENGTH) {
+            throw new IllegalArgumentException("单词长度不能超过 120 个字符");
+        }
+        String meaning = item == null ? "" : clean(item.meaning());
+        if (meaning.length() > StorySnapshotLimits.MAX_MEANING_LENGTH) {
+            throw new IllegalArgumentException("单词释义长度不能超过 500 个字符");
+        }
+        return new StoryWord(word, meaning);
     }
 
     private static String clean(String value) {

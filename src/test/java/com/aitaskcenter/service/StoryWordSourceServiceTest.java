@@ -56,6 +56,24 @@ class StoryWordSourceServiceTest {
     }
 
     @Test
+    void rejectsOversizedManualFieldsAfterTrimmingAndAcceptsExactLimits() {
+        assertEquals("单词长度不能超过 120 个字符", assertThrows(
+                IllegalArgumentException.class,
+                () -> service.normalizeManualWords(List.of(new StoryWord(" " + "w".repeat(121) + " ", "meaning"))))
+                .getMessage());
+        assertEquals("单词释义长度不能超过 500 个字符", assertThrows(
+                IllegalArgumentException.class,
+                () -> service.normalizeManualWords(List.of(new StoryWord("word", " " + "m".repeat(501) + " "))))
+                .getMessage());
+
+        List<StoryWord> boundary = service.normalizeManualWords(List.of(
+                new StoryWord(" " + "w".repeat(120) + " ", " " + "m".repeat(500) + " ")));
+
+        assertEquals(120, boundary.get(0).word().length());
+        assertEquals(500, boundary.get(0).meaning().length());
+    }
+
+    @Test
     void selectsRandomWordsWithParameterizedLibraryAndLimit() throws Exception {
         PreparedStatement libraryStatement = mock(PreparedStatement.class);
         PreparedStatement wordStatement = mock(PreparedStatement.class);
@@ -79,6 +97,25 @@ class StoryWordSourceServiceTest {
         verify(connection, org.mockito.Mockito.times(2)).prepareStatement(sql.capture());
         assertTrue(sql.getAllValues().get(1).contains("ORDER BY RANDOM()"));
         assertTrue(sql.getAllValues().get(1).contains("LIMIT ?"));
+    }
+
+    @Test
+    void appliesTheSameFieldLimitsToRandomDatabaseWords() throws Exception {
+        PreparedStatement libraryStatement = mock(PreparedStatement.class);
+        PreparedStatement wordStatement = mock(PreparedStatement.class);
+        ResultSet libraryRows = mock(ResultSet.class);
+        ResultSet wordRows = mock(ResultSet.class);
+        when(connection.prepareStatement(anyString())).thenReturn(libraryStatement, wordStatement);
+        when(libraryStatement.executeQuery()).thenReturn(libraryRows);
+        when(libraryRows.next()).thenReturn(true);
+        when(wordStatement.executeQuery()).thenReturn(wordRows);
+        when(wordRows.next()).thenReturn(true, false);
+        when(wordRows.getString("word")).thenReturn("w".repeat(121));
+        when(wordRows.getString("meaning")).thenReturn("meaning");
+
+        assertEquals("单词长度不能超过 120 个字符", assertThrows(
+                IllegalArgumentException.class,
+                () -> service.randomWords(9L, 21L, 1)).getMessage());
     }
 
     @Test

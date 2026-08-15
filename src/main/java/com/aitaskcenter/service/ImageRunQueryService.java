@@ -1,6 +1,7 @@
 package com.aitaskcenter.service;
 
 import com.aitaskcenter.config.ImageAgentSnapshotContract;
+import com.aitaskcenter.config.StorySnapshotLimits;
 import com.aitaskcenter.dto.ImageRunDtos.AssetView;
 import com.aitaskcenter.dto.ImageRunDtos.AgentSnapshotView;
 import com.aitaskcenter.dto.ImageRunDtos.RunDetail;
@@ -38,12 +39,8 @@ import org.springframework.util.StringUtils;
 
 @Service
 public class ImageRunQueryService {
-    private static final int MAX_WORDS = 50;
-    private static final int MAX_WORD_LENGTH = 120;
-    private static final int MAX_MEANING_LENGTH = 500;
     private static final int MAX_METADATA_LENGTH = 32_000;
     private static final int MAX_HISTORY_ITEMS = 100;
-    private static final int MAX_SOURCE_STORY_LENGTH = 20_000;
     private static final int MAX_RUN_STEPS = 12;
     private static final int MAX_RUN_SHOTS = 20;
     private static final int MAX_RUN_ASSETS = 60;
@@ -86,10 +83,11 @@ public class ImageRunQueryService {
     @Transactional(readOnly = true)
     public List<SourceStoryView> listSourceStories() {
         return storyRepository.findImageSourceStories(
-                        SOURCE_STATUSES, MAX_SOURCE_STORY_LENGTH, PageRequest.of(0, MAX_HISTORY_ITEMS)).stream()
+                        SOURCE_STATUSES, StorySnapshotLimits.MAX_FINAL_STORY_CHARS,
+                        PageRequest.of(0, MAX_HISTORY_ITEMS)).stream()
                 .filter(run -> SOURCE_STATUSES.contains(clean(run.getStatus()).toUpperCase(Locale.ROOT)))
                 .filter(run -> StringUtils.hasText(run.getFinalStory()))
-                .filter(run -> run.getFinalStory().length() <= MAX_SOURCE_STORY_LENGTH)
+                .filter(run -> run.getFinalStory().length() <= StorySnapshotLimits.MAX_FINAL_STORY_CHARS)
                 .sorted(Comparator.comparing(StoryRun::getCreatedAt, NEWEST_TIME))
                 .limit(MAX_HISTORY_ITEMS)
                 .map(this::toSourceStory)
@@ -189,13 +187,18 @@ public class ImageRunQueryService {
 
     private ParsedWords parseWordsSafely(String json) {
         try {
+            if (!StringUtils.hasText(json) || json.length() > StorySnapshotLimits.MAX_WORD_SNAPSHOT_CHARS) {
+                throw invalidWords();
+            }
             JsonNode root;
             try (JsonParser parser = objectMapper.createParser(json)) {
                 parser.enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION.mappedFeature());
                 root = objectMapper.readTree(parser);
                 if (parser.nextToken() != null) throw invalidWords();
             }
-            if (root == null || !root.isArray() || root.size() > MAX_WORDS) throw invalidWords();
+            if (root == null || !root.isArray() || root.size() > StorySnapshotLimits.MAX_WORDS) {
+                throw invalidWords();
+            }
             List<StoryWord> result = new ArrayList<>();
             for (JsonNode item : root) {
                 if (!item.isObject() || item.size() != 2 || !item.has("word") || !item.has("meaning")
@@ -204,8 +207,9 @@ public class ImageRunQueryService {
                 }
                 String word = item.path("word").textValue().trim();
                 String meaning = item.path("meaning").textValue().trim();
-                if (!StringUtils.hasText(word) || word.length() > MAX_WORD_LENGTH
-                        || !StringUtils.hasText(meaning) || meaning.length() > MAX_MEANING_LENGTH) {
+                if (!StringUtils.hasText(word) || word.length() > StorySnapshotLimits.MAX_WORD_LENGTH
+                        || !StringUtils.hasText(meaning)
+                        || meaning.length() > StorySnapshotLimits.MAX_MEANING_LENGTH) {
                     throw invalidWords();
                 }
                 result.add(new StoryWord(word, meaning));

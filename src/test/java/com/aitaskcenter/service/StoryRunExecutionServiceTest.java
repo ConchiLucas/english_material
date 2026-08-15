@@ -202,6 +202,35 @@ class StoryRunExecutionServiceTest {
     }
 
     @Test
+    void rejectsSerializedWordSnapshotsOverSixtyFourKiBBeforePersistence() throws Exception {
+        ObjectMapper oversizedMapper = mock(ObjectMapper.class);
+        when(oversizedMapper.writeValueAsString(any())).thenReturn("x".repeat(64 * 1024 + 1));
+        StoryRunExecutionService bounded = new StoryRunExecutionService(
+                runRepository, stepRepository, agentService, aiConfigService, generationService,
+                wordSourceService, oversizedMapper, command -> { }, new SyncTaskExecutor());
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> bounded.createRun(new StartRunRequest(List.of(new StoryWord("book", "书")), "三年级上册")));
+
+        assertEquals("单词快照超过最大长度", error.getMessage());
+        verify(runRepository, never()).save(any());
+    }
+
+    @Test
+    void acceptsSerializedWordSnapshotAtExactSixtyFourKiBBoundary() throws Exception {
+        ObjectMapper boundaryMapper = mock(ObjectMapper.class);
+        when(boundaryMapper.writeValueAsString(any())).thenReturn("[]" + " ".repeat(64 * 1024 - 2));
+        StoryRunExecutionService bounded = new StoryRunExecutionService(
+                runRepository, stepRepository, agentService, aiConfigService, generationService,
+                wordSourceService, boundaryMapper, command -> { }, new SyncTaskExecutor());
+
+        bounded.createRun(new StartRunRequest(List.of(new StoryWord("book", "书")), "三年级上册"));
+
+        verify(runRepository).save(any());
+        assertEquals(64 * 1024, persisted.getInputWordsJson().length());
+    }
+
+    @Test
     void appendsRuntimeContractAndPassesOnlyExtractedStoryToReviewers() {
         ArrayDeque<String> outputs = successfulOutputs("FINAL_DECISION: PASS");
         List<String> systemPrompts = new ArrayList<>();

@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.aitaskcenter.config.ImageAgentSnapshotContract;
@@ -75,6 +76,45 @@ class ImageRunQueryServiceTest {
         ArgumentCaptor<Pageable> page = ArgumentCaptor.forClass(Pageable.class);
         verify(stories).findImageSourceStories(any(), eq(20_000), page.capture());
         assertThat(page.getValue().getPageSize()).isLessThanOrEqualTo(100);
+    }
+
+    @Test
+    void rejectsOversizedWordSnapshotBeforeInvokingJsonParser() {
+        ObjectMapper guardedMapper = mock(ObjectMapper.class);
+        ImageRunQueryService guarded = new ImageRunQueryService(
+                stories, runs, steps, shots, assets, guardedMapper);
+        StoryRun oversizedWords = story("story-oversized-words", "COMPLETED", "A story.",
+                "x".repeat(64 * 1024 + 1), "2026-08-15T10:00:00+08:00");
+        when(stories.findImageSourceStories(any(), eq(20_000), any(Pageable.class)))
+                .thenReturn(List.of(oversizedWords));
+
+        List<SourceStoryView> result = guarded.listSourceStories();
+
+        assertThat(result).singleElement().satisfies(item -> {
+            assertThat(item.words()).isEmpty();
+            assertThat(item.wordsError()).isEqualTo("单词快照无法读取");
+        });
+        verifyNoInteractions(guardedMapper);
+    }
+
+    @Test
+    void acceptsExactWordSnapshotLimitAndIsolatesOversizeAlongsideNormalHistory() {
+        StoryRun boundary = story("story-boundary", "COMPLETED", "Boundary story.",
+                "[" + " ".repeat(64 * 1024 - 2) + "]", "2026-08-15T12:00:00+08:00");
+        StoryRun oversized = story("story-oversized", "COMPLETED", "Oversized words story.",
+                "x".repeat(64 * 1024 + 1), "2026-08-15T11:00:00+08:00");
+        StoryRun normal = story("story-normal", "COMPLETED", "Normal story.",
+                "[{\"word\":\"book\",\"meaning\":\"书\"}]", "2026-08-15T10:00:00+08:00");
+        when(stories.findImageSourceStories(any(), eq(20_000), any(Pageable.class)))
+                .thenReturn(List.of(normal, oversized, boundary));
+
+        List<SourceStoryView> result = service.listSourceStories();
+
+        assertThat(result).extracting(SourceStoryView::runId)
+                .containsExactly("story-boundary", "story-oversized", "story-normal");
+        assertThat(result.get(0).wordsError()).isNull();
+        assertThat(result.get(1).wordsError()).isEqualTo("单词快照无法读取");
+        assertThat(result.get(2).words()).singleElement().satisfies(word -> assertThat(word.word()).isEqualTo("book"));
     }
 
     @Test
