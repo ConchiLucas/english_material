@@ -118,6 +118,22 @@ public final class ImageRunDtos {
             OffsetDateTime createdAt) {
     }
 
+    public record AgentSnapshotView(
+            int sequence,
+            String stageKey,
+            String key,
+            String name,
+            String systemPrompt,
+            int promptVersion,
+            double temperature,
+            String providerId,
+            String providerLabel,
+            String providerType,
+            String providerModel,
+            Integer maxTokens,
+            List<String> capabilities) {
+    }
+
     public record RunDetail(
             String runId,
             String storyRunId,
@@ -130,6 +146,8 @@ public final class ImageRunDtos {
             String stylePresetName,
             String styleSnapshotJson,
             String flowSnapshotJson,
+            List<AgentSnapshotView> agentSnapshots,
+            String agentSnapshotError,
             int expectedImageCount,
             int generatedImageCount,
             long totalTextTokens,
@@ -140,5 +158,32 @@ public final class ImageRunDtos {
             List<RunStepView> steps,
             List<ShotView> shots,
             List<AssetView> assets) {
+        public RunDetail(
+                String runId,
+                String storyRunId,
+                List<StoryWord> words,
+                String wordsError,
+                String targetGrade,
+                String status,
+                String storySnapshot,
+                String stylePresetId,
+                String stylePresetName,
+                String styleSnapshotJson,
+                String flowSnapshotJson,
+                int expectedImageCount,
+                int generatedImageCount,
+                long totalTextTokens,
+                String errorMessage,
+                OffsetDateTime createdAt,
+                OffsetDateTime startedAt,
+                OffsetDateTime finishedAt,
+                List<RunStepView> steps,
+                List<ShotView> shots,
+                List<AssetView> assets) {
+            this(runId, storyRunId, words, wordsError, targetGrade, status, storySnapshot, stylePresetId,
+                    stylePresetName, styleSnapshotJson, flowSnapshotJson, List.of(), null, expectedImageCount,
+                    generatedImageCount, totalTextTokens, errorMessage, createdAt, startedAt, finishedAt,
+                    steps, shots, assets);
+        }
     }
 }

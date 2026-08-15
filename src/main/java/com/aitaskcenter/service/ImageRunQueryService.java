@@ -1,6 +1,7 @@
 package com.aitaskcenter.service;
 
 import com.aitaskcenter.dto.ImageRunDtos.AssetView;
+import com.aitaskcenter.dto.ImageRunDtos.AgentSnapshotView;
 import com.aitaskcenter.dto.ImageRunDtos.RunDetail;
 import com.aitaskcenter.dto.ImageRunDtos.RunStepView;
 import com.aitaskcenter.dto.ImageRunDtos.RunSummary;
@@ -17,12 +18,15 @@ import com.aitaskcenter.repository.ImageRunRepository;
 import com.aitaskcenter.repository.ImageRunStepRepository;
 import com.aitaskcenter.repository.ImageShotRepository;
 import com.aitaskcenter.repository.StoryRunRepository;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.StreamReadFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
@@ -38,6 +42,12 @@ public class ImageRunQueryService {
     private static final int MAX_WORD_LENGTH = 120;
     private static final int MAX_MEANING_LENGTH = 500;
     private static final int MAX_METADATA_LENGTH = 32_000;
+    private static final int MAX_AGENT_SNAPSHOT_LENGTH = 256_000;
+    private static final int MAX_AGENT_PROMPT_LENGTH = 20_000;
+    private static final Set<String> AGENT_SNAPSHOT_FIELDS = Set.of(
+            "sequence", "stageKey", "key", "name", "systemPrompt", "promptVersion", "temperature", "provider");
+    private static final Set<String> PROVIDER_SNAPSHOT_FIELDS = Set.of(
+            "id", "label", "type", "model", "maxTokens", "capabilities", "options");
     private static final Set<String> SOURCE_STATUSES = Set.of("COMPLETED", "LIMIT_REACHED");
     private static final Set<String> SAFE_METADATA_KEYS = Set.of(
             "responseFormat", "quality", "size", "referenceType", "target",
@@ -112,9 +122,11 @@ public class ImageRunQueryService {
                 .map(this::toAsset)
                 .toList();
         ParsedWords words = parseWordsSafely(run.getInputWordsJson());
+        ParsedAgentSnapshots agentSnapshots = parseAgentSnapshotsSafely(run.getAgentSnapshotJson());
         return new RunDetail(run.getRunId(), run.getStoryRunId(), words.values(), words.error(), run.getTargetGrade(),
                 run.getStatus(), run.getStorySnapshot(), run.getStylePresetId(), styleName(run.getStyleSnapshotJson()),
-                run.getStyleSnapshotJson(), run.getFlowSnapshotJson(), run.getExpectedImageCount(),
+                run.getStyleSnapshotJson(), run.getFlowSnapshotJson(), agentSnapshots.values(), agentSnapshots.error(),
+                run.getExpectedImageCount(),
                 run.getGeneratedImageCount(), run.getTotalTextTokens(), run.getErrorMessage(), run.getCreatedAt(),
                 run.getStartedAt(), run.getFinishedAt(), steps, shots, assets);
     }
@@ -159,7 +171,12 @@ public class ImageRunQueryService {
 
     private ParsedWords parseWordsSafely(String json) {
         try {
-            JsonNode root = objectMapper.readTree(json);
+            JsonNode root;
+            try (JsonParser parser = objectMapper.createParser(json)) {
+                parser.enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION.mappedFeature());
+                root = objectMapper.readTree(parser);
+                if (parser.nextToken() != null) throw invalidWords();
+            }
             if (root == null || !root.isArray() || root.size() > MAX_WORDS) throw invalidWords();
             List<StoryWord> result = new ArrayList<>();
             for (JsonNode item : root) {
@@ -179,6 +196,109 @@ public class ImageRunQueryService {
         } catch (Exception exception) {
             return new ParsedWords(List.of(), "单词快照无法读取");
         }
+    }
+
+    private ParsedAgentSnapshots parseAgentSnapshotsSafely(String json) {
+        try {
+            if (!StringUtils.hasText(json) || json.length() > MAX_AGENT_SNAPSHOT_LENGTH) {
+                throw invalidAgentSnapshots();
+            }
+            JsonNode root;
+            try (JsonParser parser = objectMapper.createParser(json)) {
+                parser.enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION.mappedFeature());
+                root = objectMapper.readTree(parser);
+                if (parser.nextToken() != null) throw invalidAgentSnapshots();
+            }
+            if (root == null || !root.isArray() || root.size() > 9) throw invalidAgentSnapshots();
+            List<AgentSnapshotView> result = new ArrayList<>();
+            Set<Integer> sequences = new HashSet<>();
+            Set<String> keys = new HashSet<>();
+            for (JsonNode item : root) {
+                if (!item.isObject() || !fieldNames(item).equals(AGENT_SNAPSHOT_FIELDS)) {
+                    throw invalidAgentSnapshots();
+                }
+                int sequence = requiredInt(item.get("sequence"), 1, 9);
+                String stageKey = requiredText(item.get("stageKey"), 80, true);
+                String key = requiredText(item.get("key"), 80, true);
+                String name = requiredText(item.get("name"), 120, false);
+                String systemPrompt = requiredPrompt(item.get("systemPrompt"));
+                int promptVersion = requiredInt(item.get("promptVersion"), 1, Integer.MAX_VALUE);
+                double temperature = requiredTemperature(item.get("temperature"));
+                JsonNode provider = item.get("provider");
+                if (provider == null || !provider.isObject() || !fieldNames(provider).equals(PROVIDER_SNAPSHOT_FIELDS)) {
+                    throw invalidAgentSnapshots();
+                }
+                JsonNode options = provider.get("options");
+                if (options == null || !options.isObject() || !options.isEmpty()) throw invalidAgentSnapshots();
+                String providerId = requiredText(provider.get("id"), 120, false);
+                String providerLabel = requiredText(provider.get("label"), 200, false);
+                String providerType = requiredText(provider.get("type"), 80, false);
+                String providerModel = requiredText(provider.get("model"), 180, false);
+                Integer maxTokens = optionalPositiveInt(provider.get("maxTokens"));
+                List<String> capabilities = requiredCapabilities(provider.get("capabilities"));
+                if (!sequences.add(sequence) || !keys.add(key)) throw invalidAgentSnapshots();
+                result.add(new AgentSnapshotView(sequence, stageKey, key, name, systemPrompt, promptVersion,
+                        temperature, providerId, providerLabel, providerType, providerModel, maxTokens, capabilities));
+            }
+            result.sort(Comparator.comparingInt(AgentSnapshotView::sequence));
+            return new ParsedAgentSnapshots(List.copyOf(result), null);
+        } catch (Exception exception) {
+            return new ParsedAgentSnapshots(List.of(), "Agent 运行快照无法读取");
+        }
+    }
+
+    private static Set<String> fieldNames(JsonNode node) {
+        Set<String> names = new HashSet<>();
+        node.fieldNames().forEachRemaining(names::add);
+        return names;
+    }
+
+    private static String requiredText(JsonNode node, int maxLength, boolean identifier) {
+        if (node == null || !node.isTextual()) throw invalidAgentSnapshots();
+        String value = node.textValue().trim();
+        if (!StringUtils.hasText(value) || value.length() > maxLength
+                || (identifier && !value.matches("[a-z0-9][a-z0-9-]*"))) {
+            throw invalidAgentSnapshots();
+        }
+        return value;
+    }
+
+    private static int requiredInt(JsonNode node, int minimum, int maximum) {
+        if (node == null || !node.isIntegralNumber() || !node.canConvertToInt()) throw invalidAgentSnapshots();
+        int value = node.intValue();
+        if (value < minimum || value > maximum) throw invalidAgentSnapshots();
+        return value;
+    }
+
+    private static String requiredPrompt(JsonNode node) {
+        if (node == null || !node.isTextual()) throw invalidAgentSnapshots();
+        String value = node.textValue();
+        if (!StringUtils.hasText(value) || value.length() > MAX_AGENT_PROMPT_LENGTH) throw invalidAgentSnapshots();
+        return value;
+    }
+
+    private static double requiredTemperature(JsonNode node) {
+        if (node == null || !node.isNumber()) throw invalidAgentSnapshots();
+        double value = node.doubleValue();
+        if (!Double.isFinite(value) || value < 0.0d || value > 2.0d) throw invalidAgentSnapshots();
+        return value;
+    }
+
+    private static Integer optionalPositiveInt(JsonNode node) {
+        if (node == null || node.isNull()) return null;
+        return requiredInt(node, 1, 1_000_000);
+    }
+
+    private static List<String> requiredCapabilities(JsonNode node) {
+        if (node == null || !node.isArray() || node.size() > 16) throw invalidAgentSnapshots();
+        List<String> values = new ArrayList<>();
+        Set<String> unique = new HashSet<>();
+        for (JsonNode item : node) {
+            String capability = requiredText(item, 80, false);
+            if (!unique.add(capability)) throw invalidAgentSnapshots();
+            values.add(capability);
+        }
+        return List.copyOf(values);
     }
 
     private String safeMetadata(String json) {
@@ -251,10 +371,17 @@ public class ImageRunQueryService {
         return new IllegalArgumentException("单词快照无法读取");
     }
 
+    private static IllegalArgumentException invalidAgentSnapshots() {
+        return new IllegalArgumentException("Agent 运行快照无法读取");
+    }
+
     private static String clean(String value) {
         return value == null ? "" : value.trim();
     }
 
     private record ParsedWords(List<StoryWord> values, String error) {
+    }
+
+    private record ParsedAgentSnapshots(List<AgentSnapshotView> values, String error) {
     }
 }

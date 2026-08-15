@@ -108,12 +108,65 @@ class ImageRunQueryServiceTest {
         assertThat(detail.steps().get(0).parsedOutputJson()).isEqualTo("{\"parsed\":true}");
         assertThat(detail.shots().get(0).dialogue()).isEqualTo("Hello!");
         assertThat(detail.shots().get(0).caption()).isEqualTo("Toby opens the book.");
+        assertThat(detail.agentSnapshots()).singleElement().satisfies(snapshot -> {
+            assertThat(snapshot.key()).isEqualTo("image-story-analyst");
+            assertThat(snapshot.systemPrompt()).isEqualTo("Analyze the saved story into visual beats.");
+            assertThat(snapshot.temperature()).isEqualTo(0.35d);
+            assertThat(snapshot.providerModel()).isEqualTo("text-model-v1");
+            assertThat(snapshot.capabilities()).containsExactly("TEXT_GENERATION");
+        });
+        assertThat(detail.agentSnapshotError()).isNull();
         assertThat(detail.assets().get(1).contentUrl()).isEqualTo("/api/image-assets/11/content");
         assertThat(detail.assets().get(1).providerMetadataJson()).isEqualTo("{\"usage\":3}");
         assertThat(detail.toString()).doesNotContain("absolute", "secret.png", "Bearer secret", "Authorization", "headers");
         verify(steps).findAllByRunIdOrderBySequenceAsc("image-1");
         verify(shots).findAllByRunIdOrderBySequenceAsc("image-1");
         verify(assets).findAllByRunIdOrderByAssetTypeAscAssetKeyAsc("image-1");
+    }
+
+    @Test
+    void isolatesUnsafeOrMalformedAgentSnapshotsWithoutSerializingSecrets() throws Exception {
+        ImageRun unsafe = imageRun("image-unsafe", "[]", "2026-08-15T10:00:00+08:00");
+        unsafe.setAgentSnapshotJson("""
+                [{
+                  "sequence": 1,
+                  "stageKey": "story-understanding",
+                  "key": "image-story-analyst",
+                  "name": "故事结构分析",
+                  "systemPrompt": "Analyze the story.",
+                  "promptVersion": 1,
+                  "temperature": 0.3,
+                  "provider": {
+                    "id": "text-provider",
+                    "label": "Text Provider",
+                    "type": "OPENAI_COMPATIBLE",
+                    "model": "text-model-v1",
+                    "maxTokens": 4096,
+                    "capabilities": ["TEXT_GENERATION"],
+                    "options": {},
+                    "apiKey": "sk-do-not-leak",
+                    "baseUrl": "/Users/private/provider",
+                    "unknownSecret": "hidden"
+                  }
+                }]
+                """);
+        when(runs.findByRunId("image-unsafe")).thenReturn(java.util.Optional.of(unsafe));
+
+        RunDetail detail = service.getRun("image-unsafe");
+        String serialized = new ObjectMapper().findAndRegisterModules().writeValueAsString(detail);
+
+        assertThat(detail.agentSnapshots()).isEmpty();
+        assertThat(detail.agentSnapshotError()).isEqualTo("Agent 运行快照无法读取");
+        assertThat(serialized).doesNotContain("sk-do-not-leak", "/Users/private/provider",
+                "apiKey", "baseUrl", "unknownSecret");
+
+        ImageRun malformed = imageRun("image-malformed-agent", "[]", "2026-08-15T10:00:00+08:00");
+        malformed.setAgentSnapshotJson("[{broken]");
+        when(runs.findByRunId("image-malformed-agent")).thenReturn(java.util.Optional.of(malformed));
+
+        RunDetail malformedDetail = service.getRun("image-malformed-agent");
+        assertThat(malformedDetail.agentSnapshots()).isEmpty();
+        assertThat(malformedDetail.agentSnapshotError()).isEqualTo("Agent 运行快照无法读取");
     }
 
     @Test
@@ -146,7 +199,26 @@ class ImageRunQueryServiceTest {
         run.setStylePresetId("7");
         run.setStyleSnapshotJson("{\"id\":7,\"name\":\"Paper Cut\",\"positivePrompt\":\"paper\"}");
         run.setFlowSnapshotJson("{\"width\":1536,\"height\":864,\"imageProvider\":{\"id\":\"image-provider\",\"model\":\"image-v1\"}}");
-        run.setAgentSnapshotJson("[]");
+        run.setAgentSnapshotJson("""
+                [{
+                  "sequence": 1,
+                  "stageKey": "story-understanding",
+                  "key": "image-story-analyst",
+                  "name": "故事结构分析",
+                  "systemPrompt": "Analyze the saved story into visual beats.",
+                  "promptVersion": 3,
+                  "temperature": 0.35,
+                  "provider": {
+                    "id": "text-provider",
+                    "label": "Text Provider",
+                    "type": "OPENAI_COMPATIBLE",
+                    "model": "text-model-v1",
+                    "maxTokens": 4096,
+                    "capabilities": ["TEXT_GENERATION"],
+                    "options": {}
+                  }
+                }]
+                """);
         run.setStatus("COMPLETED");
         run.setExpectedImageCount(2);
         run.setGeneratedImageCount(2);
