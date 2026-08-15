@@ -140,10 +140,48 @@ class ImageAgentServiceTest {
 
         IllegalArgumentException providerError = assertThrows(IllegalArgumentException.class, () -> service.updateFlow(
                 new FlowUpdateRequest("text", 1536, 864, 5, 20, UPDATED)));
-        assertEquals("请选择支持图片生成和多参考图的 Provider", providerError.getMessage());
+        assertEquals("请选择支持图片生成和多参考图的 OpenAI-compatible Provider", providerError.getMessage());
         IllegalArgumentException fixedError = assertThrows(IllegalArgumentException.class, () -> service.updateFlow(
                 new FlowUpdateRequest("text", 1024, 864, 5, 20, UPDATED)));
         assertTrue(fixedError.getMessage().contains("1536"));
+    }
+
+    @Test
+    void flowRejectsNonOpenAiCompatibleProviderEvenWithBothImageCapabilities() {
+        ImageFlowConfig flow = ImageFlowConfig.defaults();
+        ReflectionTestUtils.setField(flow, "updatedAt", UPDATED);
+        AiProviderConfigItem unsupported = provider("anthropic-image", true,
+                "IMAGE_GENERATION", "IMAGE_REFERENCE");
+        unsupported.setType("  anthropic-compatible  ");
+        when(flows.findByFlowKey("default")).thenReturn(Optional.of(flow));
+        when(providers.getProviders()).thenReturn(providerConfig("", unsupported));
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () -> service.updateFlow(
+                new FlowUpdateRequest("anthropic-image", 1536, 864, 5, 20, UPDATED)));
+
+        assertEquals("请选择支持图片生成和多参考图的 OpenAI-compatible Provider", error.getMessage());
+        verify(flows, never()).save(any());
+    }
+
+    @Test
+    void initializationSelectsOnlyOpenAiCompatibleImageProvider() {
+        when(agents.findByAgentKey(any())).thenReturn(Optional.of(agent(
+                "image-story-analyst", "existing", "text", 1, UPDATED)));
+        when(flows.findByFlowKey("default")).thenReturn(Optional.empty());
+        when(styles.findByPresetKey(any())).thenReturn(Optional.of(style(1L, "existing", true, UPDATED)));
+        AiProviderConfigItem unsupported = provider("anthropic-image", true,
+                "IMAGE_GENERATION", "IMAGE_REFERENCE");
+        unsupported.setType("anthropic-compatible");
+        AiProviderConfigItem supported = provider("openai-image", true,
+                "IMAGE_GENERATION", "IMAGE_REFERENCE");
+        supported.setType("  OPENAI-COMPATIBLE  ");
+        when(providers.getProviders()).thenReturn(providerConfig("", unsupported, supported));
+
+        service.initializeDefaults();
+
+        ArgumentCaptor<ImageFlowConfig> capture = ArgumentCaptor.forClass(ImageFlowConfig.class);
+        verify(flows).save(capture.capture());
+        assertEquals("openai-image", capture.getValue().getImageProviderId());
     }
 
     @Test

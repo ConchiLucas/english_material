@@ -60,6 +60,8 @@ const providers: AIProviderConfigItem[] = [
   { id: 'image-two', label: 'Image Two', type: 'openai-compatible', base_url: '', api_key: '', model: 'image-two-model', max_tokens: 4096, capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'], enabled: true },
   { id: 'image-three', label: 'Image Three', type: 'openai-compatible', base_url: '', api_key: '', model: 'image-three-model', max_tokens: 4096, capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'], enabled: true },
   { id: 'image-no-ref', label: 'No refs', type: 'openai-compatible', base_url: '', api_key: '', model: 'bad', max_tokens: 4096, capabilities: ['IMAGE_GENERATION'], enabled: true },
+  { id: 'anthropic-image', label: 'Anthropic Image', type: 'anthropic-compatible', base_url: '', api_key: '', model: 'anthropic-image-model', max_tokens: 4096, capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'], enabled: true },
+  { id: 'normalized-image', label: 'Normalized Image', type: ' OPENAI-COMPATIBLE ' as AIProviderConfigItem['type'], base_url: '', api_key: '', model: 'normalized-image-model', max_tokens: 4096, capabilities: [' IMAGE_GENERATION ', 'image_reference'], enabled: true },
 ];
 const renderPage = (flow = makeFlow(), onDirtyChange = vi.fn()) => { apiMocks.getImageAgentFlow.mockResolvedValue(flow); apiMocks.getImageStylePresets.mockResolvedValue(flow.stylePresets); return render(<AntApp><ImageAgentFlowPage providers={providers} onDirtyChange={onDirtyChange} /></AntApp>); };
 
@@ -179,15 +181,35 @@ describe('ImageAgentFlowPage', () => {
 
   it('creates styles and permits editing a built-in preset', async () => {
     apiMocks.createImageStylePreset.mockResolvedValue(style({ id: 8, key: 'new', name: '新画风', builtIn: false })); const user = userEvent.setup(); renderPage(); await user.click(await screen.findByRole('tab', { name: '画风预设' }));
-    await user.click(screen.getByRole('button', { name: '新增画风' })); await user.type(screen.getByLabelText('画风名称'), '新画风'); await user.type(screen.getByLabelText('正向风格约束'), 'bright'); await user.click(screen.getByRole('button', { name: '保存画风' }));
-    expect(apiMocks.createImageStylePreset).toHaveBeenCalledWith(expect.objectContaining({ name: '新画风', positivePrompt: 'bright', enabled: true })); await user.click(screen.getByRole('button', { name: '编辑 水彩绘本' })); expect(screen.getByLabelText('画风名称')).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: '新增画风' })); await user.type(screen.getByLabelText('画风名称'), '新画风'); await user.type(screen.getByLabelText('正向风格约束'), 'bright'); await user.type(screen.getByLabelText('负向约束'), '  text  '); await user.type(screen.getByLabelText('画风说明'), '  明亮说明  '); await user.click(screen.getByRole('button', { name: '保存画风' }));
+    expect(apiMocks.createImageStylePreset).toHaveBeenCalledWith(expect.objectContaining({ name: '新画风', positivePrompt: 'bright', negativePrompt: 'text', description: '明亮说明', enabled: true })); await user.click(screen.getByRole('button', { name: '编辑 水彩绘本' })); expect(screen.getByLabelText('画风名称')).toBeEnabled();
+  });
+
+  it('blocks saving a style when negative constraints are blank', async () => {
+    const user = userEvent.setup(); renderPage(); await user.click(await screen.findByRole('tab', { name: '画风预设' }));
+    await user.click(screen.getByRole('button', { name: '编辑 水彩绘本' }));
+    await user.clear(screen.getByLabelText('负向约束')); await user.type(screen.getByLabelText('负向约束'), '   ');
+    await user.click(screen.getByRole('button', { name: '保存画风' }));
+
+    expect(apiMocks.updateImageStylePreset).not.toHaveBeenCalled();
+    expect((await screen.findAllByText('负向约束不能为空')).length).toBeGreaterThan(0);
+  });
+
+  it('blocks saving a style when its description is blank', async () => {
+    const user = userEvent.setup(); renderPage(); await user.click(await screen.findByRole('tab', { name: '画风预设' }));
+    await user.click(screen.getByRole('button', { name: '编辑 水彩绘本' }));
+    await user.clear(screen.getByLabelText('画风说明')); await user.type(screen.getByLabelText('画风说明'), '   ');
+    await user.click(screen.getByRole('button', { name: '保存画风' }));
+
+    expect(apiMocks.updateImageStylePreset).not.toHaveBeenCalled();
+    expect((await screen.findAllByText('画风说明不能为空')).length).toBeGreaterThan(0);
   });
 
   it('merges a late style create identity into a newer draft and next saves with PUT', async () => {
     const pending = deferred<ImageStylePreset>(); apiMocks.createImageStylePreset.mockReturnValue(pending.promise);
     apiMocks.updateImageStylePreset.mockResolvedValue(style({ id: 8, key: 'new', name: '用户继续修改', builtIn: false, updatedAt: '2026-08-15T03:00:00Z' }));
     const user = userEvent.setup(); renderPage(); await user.click(await screen.findByRole('tab', { name: '画风预设' })); await user.click(screen.getByRole('button', { name: '新增画风' }));
-    await user.type(screen.getByLabelText('画风名称'), '初稿'); await user.type(screen.getByLabelText('正向风格约束'), 'bright'); await user.click(screen.getByRole('button', { name: '保存画风' }));
+    await user.type(screen.getByLabelText('画风名称'), '初稿'); await user.type(screen.getByLabelText('正向风格约束'), 'bright'); await user.type(screen.getByLabelText('负向约束'), 'text'); await user.type(screen.getByLabelText('画风说明'), '初稿说明'); await user.click(screen.getByRole('button', { name: '保存画风' }));
     await user.clear(screen.getByLabelText('画风名称')); await user.type(screen.getByLabelText('画风名称'), '用户继续修改');
     await act(async () => { pending.resolve(style({ id: 8, key: 'new', name: '初稿', positivePrompt: 'bright', builtIn: false, updatedAt: '2026-08-15T02:00:00Z' })); await pending.promise; });
     expect(screen.getByLabelText('画风名称')).toHaveValue('用户继续修改');
@@ -226,16 +248,24 @@ describe('ImageAgentFlowPage', () => {
   it('keeps a late created style identity away from a newly selected draft', async () => {
     const modal = installConfirmHarness(); const pending = deferred<ImageStylePreset>(); apiMocks.createImageStylePreset.mockReturnValueOnce(pending.promise).mockResolvedValueOnce(style({ id: 9, key: 'second', name: '第二个', builtIn: false }));
     const user = userEvent.setup(); renderPage(); await user.click(await screen.findByRole('tab', { name: '画风预设' })); await user.click(screen.getByRole('button', { name: '新增画风' }));
-    await user.type(screen.getByLabelText('画风名称'), '第一个'); await user.type(screen.getByLabelText('正向风格约束'), 'bright'); await user.click(screen.getByRole('button', { name: '保存画风' }));
+    await user.type(screen.getByLabelText('画风名称'), '第一个'); await user.type(screen.getByLabelText('正向风格约束'), 'bright'); await user.type(screen.getByLabelText('负向约束'), 'text'); await user.type(screen.getByLabelText('画风说明'), '第一个说明'); await user.click(screen.getByRole('button', { name: '保存画风' }));
     await user.click(screen.getByRole('button', { name: '新增画风' })); act(() => { modal.confirms[0]?.onOk?.(); modal.confirms[0]?.afterClose?.(); });
     await act(async () => { pending.resolve(style({ id: 8, key: 'first', name: '第一个', positivePrompt: 'bright', builtIn: false, updatedAt: '2026-08-15T02:00:00Z' })); await pending.promise; });
-    expect(screen.getByLabelText('画风名称')).toHaveValue(''); await user.type(screen.getByLabelText('画风名称'), '第二个'); await user.type(screen.getByLabelText('正向风格约束'), 'clean'); await waitFor(() => expect(screen.getByRole('button', { name: /保存画风/ })).not.toBeDisabled()); await user.click(screen.getByRole('button', { name: /保存画风/ }));
+    expect(screen.getByLabelText('画风名称')).toHaveValue(''); await user.type(screen.getByLabelText('画风名称'), '第二个'); await user.type(screen.getByLabelText('正向风格约束'), 'clean'); await user.type(screen.getByLabelText('负向约束'), 'words'); await user.type(screen.getByLabelText('画风说明'), '第二个说明'); await waitFor(() => expect(screen.getByRole('button', { name: /保存画风/ })).not.toBeDisabled()); await user.click(screen.getByRole('button', { name: /保存画风/ }));
     await waitFor(() => expect(apiMocks.createImageStylePreset).toHaveBeenCalledTimes(2)); expect(apiMocks.updateImageStylePreset).not.toHaveBeenCalled();
   });
 
   it('filters image providers by both capabilities and keeps fixed limits read-only', async () => {
     const user = userEvent.setup(); renderPage(); await user.click(await screen.findByRole('tab', { name: '图片模型' })); expect(screen.getByText('1536 × 864')).toBeInTheDocument(); expect(screen.getByText('每 Scene 最多 5 张')).toBeInTheDocument(); expect(screen.getByText('全篇最多 20 张')).toBeInTheDocument();
-    await user.click(screen.getByRole('combobox', { name: '图片 Provider' })); expect(screen.getAllByText('Image · image-model').length).toBeGreaterThan(0); expect(screen.queryByText('No refs · bad')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('combobox', { name: '图片 Provider' })); expect(screen.getAllByText('Image · image-model').length).toBeGreaterThan(0); expect(screen.getByText('Normalized Image · normalized-image-model')).toBeInTheDocument(); expect(screen.queryByText('No refs · bad')).not.toBeInTheDocument(); expect(screen.queryByText('Anthropic Image · anthropic-image-model')).not.toBeInTheDocument();
+  });
+
+  it('treats a saved non-openai-compatible image provider as invalid', async () => {
+    const flow = makeFlow(); flow.config.imageProviderId = 'anthropic-image'; const user = userEvent.setup(); renderPage(flow);
+    await user.click(await screen.findByRole('tab', { name: '图片模型' }));
+
+    expect(screen.getByText('当前图片 Provider 已不可用')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '保存图片模型' })).toBeDisabled();
   });
 
   it('saves image flow config with optimistic timestamp', async () => {
@@ -341,7 +371,7 @@ describe('ImageAgentFlowPage', () => {
     expect(screen.getByText('当前图片 Provider 已不可用')).toBeInTheDocument(); expect(screen.getByRole('button', { name: '保存图片模型' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: /评分|审核|重绘|重新生成/ })).not.toBeInTheDocument();
     view.unmount(); const emptyFlow = makeFlow(); emptyFlow.config.imageProviderId = null; apiMocks.getImageAgentFlow.mockResolvedValue(emptyFlow);
-    render(<AntApp><ImageAgentFlowPage providers={providers.filter((item) => !item.capabilities?.includes('IMAGE_GENERATION'))} onDirtyChange={vi.fn()} /></AntApp>); await user.click(await screen.findByRole('tab', { name: '图片模型' }));
-    expect(screen.getByText('没有同时支持图片生成和多参考图的 Provider')).toBeInTheDocument(); expect(screen.getByRole('button', { name: '保存图片模型' })).toBeDisabled();
+    render(<AntApp><ImageAgentFlowPage providers={providers.filter((item) => item.id === 'text-ok')} onDirtyChange={vi.fn()} /></AntApp>); await user.click(await screen.findByRole('tab', { name: '图片模型' }));
+    expect(screen.getByText('没有可执行的 OpenAI-compatible 图片 Provider')).toBeInTheDocument(); expect(screen.getByRole('button', { name: '保存图片模型' })).toBeDisabled();
   });
 });

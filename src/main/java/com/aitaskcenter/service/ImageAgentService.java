@@ -45,7 +45,7 @@ public class ImageAgentService {
     private static final int MAX_STYLE_PROMPT_LENGTH = 20_000;
     private static final int MAX_STYLE_DESCRIPTION_LENGTH = 2_000;
     private static final String STALE_MESSAGE = "图片 Agent 配置已被更新，请刷新页面后重试";
-    private static final String IMAGE_PROVIDER_MESSAGE = "请选择支持图片生成和多参考图的 Provider";
+    private static final String IMAGE_PROVIDER_MESSAGE = "请选择支持图片生成和多参考图的 OpenAI-compatible Provider";
 
     private final ImageAgentConfigRepository agentRepository;
     private final ImageAgentPromptVersionRepository versionRepository;
@@ -256,14 +256,21 @@ public class ImageAgentService {
         if (!supports(provider, "TEXT_GENERATION")) throw new IllegalArgumentException("AI 配置「" + clean(id) + "」不支持文本生成");
     }
     private void requireImageProvider(String id) {
-        AiProviderConfigItem provider = findProvider(id).filter(value -> value.isEnabled() && supports(value, "IMAGE_GENERATION") && supports(value, "IMAGE_REFERENCE"))
+        AiProviderConfigItem provider = findProvider(id).filter(this::isExecutableImageProvider)
                 .orElseThrow(() -> new IllegalArgumentException(IMAGE_PROVIDER_MESSAGE));
     }
     private Optional<AiProviderConfigItem> findProvider(String id) { String expected = clean(id); return providers(aiConfigService.getProviders()).stream().filter(value -> expected.equals(clean(value.getId()))).findFirst(); }
     private boolean supports(AiProviderConfigItem provider, String capability) { return provider != null && provider.getCapabilities() != null && provider.getCapabilities().stream().filter(Objects::nonNull).anyMatch(value -> capability.equalsIgnoreCase(value.trim())); }
     private List<AiProviderConfigItem> providers(AiConfigRequest request) { return request == null || request.getProviders() == null ? List.of() : new ArrayList<>(request.getProviders()); }
     private String selectTextProvider(String preference, List<AiProviderConfigItem> values, String active) { List<AiProviderConfigItem> valid = values.stream().filter(p -> p != null && p.isEnabled() && supports(p, "TEXT_GENERATION") && StringUtils.hasText(p.getId())).toList(); return valid.stream().filter(p -> matchesPreference(p, preference)).findFirst().or(() -> valid.stream().filter(p -> clean(p.getId()).equals(active)).findFirst()).or(() -> valid.stream().findFirst()).map(p -> clean(p.getId())).orElse(""); }
-    private String selectImageProvider(List<AiProviderConfigItem> values) { return values.stream().filter(p -> p != null && p.isEnabled() && supports(p, "IMAGE_GENERATION") && supports(p, "IMAGE_REFERENCE") && StringUtils.hasText(p.getId())).findFirst().map(p -> clean(p.getId())).orElse(null); }
+    private String selectImageProvider(List<AiProviderConfigItem> values) { return values.stream().filter(this::isExecutableImageProvider).filter(p -> StringUtils.hasText(p.getId())).findFirst().map(p -> clean(p.getId())).orElse(null); }
+    private boolean isExecutableImageProvider(AiProviderConfigItem provider) {
+        return provider != null
+                && "openai-compatible".equals(clean(provider.getType()).toLowerCase(Locale.ROOT))
+                && provider.isEnabled()
+                && supports(provider, "IMAGE_GENERATION")
+                && supports(provider, "IMAGE_REFERENCE");
+    }
     private boolean matchesPreference(AiProviderConfigItem provider, String preference) {
         String normalizedPreference = normalizeCompact(preference);
         List<String> fields = List.of(clean(provider.getId()), clean(provider.getLabel()), clean(provider.getModel()));

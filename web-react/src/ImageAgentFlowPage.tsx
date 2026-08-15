@@ -38,9 +38,9 @@ const sameDraft = (a: AgentDraft, b: AgentDraft) => a.systemPrompt === b.systemP
 const sameModelDraft = (a: ModelDraft, b: ModelDraft) => a.providerId === b.providerId && a.updatedAt === b.updatedAt;
 const fromStyle = (preset?: ImageStylePreset): StyleDraft => preset ? ({ id: preset.id, name: preset.name, positivePrompt: preset.positivePrompt, negativePrompt: preset.negativePrompt, description: preset.description, enabled: preset.enabled, updatedAt: preset.updatedAt }) : ({ id: null, name: '', positivePrompt: '', negativePrompt: '', description: '', enabled: true, updatedAt: null });
 const sameStyle = (a: StyleDraft, b: StyleDraft) => JSON.stringify(a) === JSON.stringify(b);
-const hasCapability = (provider: AIProviderConfigItem, capability: string) => (provider.capabilities ?? []).some((item) => item.toUpperCase() === capability);
+const hasCapability = (provider: AIProviderConfigItem, capability: string) => (provider.capabilities ?? []).some((item) => item.trim().toUpperCase() === capability);
 const textProvider = (provider: AIProviderConfigItem) => provider.enabled !== false && hasCapability(provider, 'TEXT_GENERATION');
-const imageProvider = (provider: AIProviderConfigItem) => provider.enabled !== false && hasCapability(provider, 'IMAGE_GENERATION') && hasCapability(provider, 'IMAGE_REFERENCE');
+const imageProvider = (provider: AIProviderConfigItem) => provider.type?.trim().toLowerCase() === 'openai-compatible' && provider.enabled !== false && hasCapability(provider, 'IMAGE_GENERATION') && hasCapability(provider, 'IMAGE_REFERENCE');
 const providerLabel = (provider: AIProviderConfigItem) => `${provider.label || provider.id}${provider.model ? ` · ${provider.model}` : ''}`;
 const errorText = (error: unknown) => error instanceof Error ? error.message.slice(0, 240) : '请求失败，请稍后重试';
 const formatDate = (value?: string | null) => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '未记录';
@@ -77,6 +77,8 @@ export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAg
   const selectedStyleValid = stylePresetId !== null && enabledStyles.some((item) => item.id === stylePresetId);
   const savedStyle = styleDraft?.id === null ? null : flow?.stylePresets.find((item) => item.id === styleDraft?.id) ?? null;
   const styleDirty = !!styleDraft && (styleDraft.id === null || !savedStyle || !sameStyle(styleDraft, fromStyle(savedStyle)));
+  const styleNegativeMissing = !!styleDraft && !styleDraft.negativePrompt.trim();
+  const styleDescriptionMissing = !!styleDraft && !styleDraft.description.trim();
   const modelDirty = !!flow && modelProviderId !== (flow.config.imageProviderId ?? '');
   const pageDirty = dirty || styleDirty || modelDirty;
   const nodeNames = useMemo(() => new Map(nodes.map((item) => [item.key, item.name])), [nodes]);
@@ -181,7 +183,10 @@ export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAg
   };
   const saveStyle = async () => {
     if (!styleDraft || styleSaving) return; const submitted = { ...styleDraft }; const generation = styleDraftGenerationRef.current; const name = submitted.name.trim(); const positivePrompt = submitted.positivePrompt.trim();
-    if (!name || !positivePrompt) return void message.error('画风名称和正向风格约束不能为空'); setStyleSaving(true);
+    if (!name || !positivePrompt) return void message.error('画风名称和正向风格约束不能为空');
+    if (!submitted.negativePrompt.trim()) return void message.error('负向约束不能为空');
+    if (!submitted.description.trim()) return void message.error('画风说明不能为空');
+    setStyleSaving(true);
     try {
       const saved = submitted.id === null ? await createImageStylePreset({ name, positivePrompt, negativePrompt: submitted.negativePrompt.trim(), description: submitted.description.trim(), enabled: submitted.enabled }) : await updateImageStylePreset(submitted.id, { name, positivePrompt, negativePrompt: submitted.negativePrompt.trim(), description: submitted.description.trim(), enabled: submitted.enabled, updatedAt: submitted.updatedAt });
       const currentStyles = flowRef.current?.stylePresets ?? []; const nextStyles = submitted.id === null ? [...currentStyles, saved] : currentStyles.map((item) => item.id === saved.id ? saved : item); replaceStyles(nextStyles);
@@ -256,17 +261,17 @@ export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAg
     {styleDraft && <Form layout="vertical" className="image-story-style-form">
       <Form.Item label="画风名称" required><Input aria-label="画风名称" value={styleDraft.name} onChange={(event) => setStyleDraft({ ...styleDraft, name: event.target.value })} /></Form.Item>
       <Form.Item label="正向风格约束" required><Input.TextArea aria-label="正向风格约束" rows={4} value={styleDraft.positivePrompt} onChange={(event) => setStyleDraft({ ...styleDraft, positivePrompt: event.target.value })} /></Form.Item>
-      <Form.Item label="负向约束"><Input.TextArea aria-label="负向约束" rows={3} value={styleDraft.negativePrompt} onChange={(event) => setStyleDraft({ ...styleDraft, negativePrompt: event.target.value })} /></Form.Item>
-      <Form.Item label="说明"><Input.TextArea aria-label="画风说明" rows={2} value={styleDraft.description} onChange={(event) => setStyleDraft({ ...styleDraft, description: event.target.value })} /></Form.Item>
+      <Form.Item label="负向约束" required validateStatus={styleNegativeMissing ? 'error' : undefined} help={styleNegativeMissing ? '负向约束不能为空' : undefined}><Input.TextArea aria-label="负向约束" rows={3} value={styleDraft.negativePrompt} onChange={(event) => setStyleDraft({ ...styleDraft, negativePrompt: event.target.value })} /></Form.Item>
+      <Form.Item label="说明" required validateStatus={styleDescriptionMissing ? 'error' : undefined} help={styleDescriptionMissing ? '画风说明不能为空' : undefined}><Input.TextArea aria-label="画风说明" rows={2} value={styleDraft.description} onChange={(event) => setStyleDraft({ ...styleDraft, description: event.target.value })} /></Form.Item>
       <Form.Item label="启用"><Switch aria-label="启用画风" checked={styleDraft.enabled} onChange={(value) => setStyleDraft({ ...styleDraft, enabled: value })} /></Form.Item>
       <div><Button onClick={() => setStyleDraft(null)}>取消</Button><Button type="primary" loading={styleSaving} onClick={() => void saveStyle()}>保存画风</Button></div>
     </Form>}
   </section>;
 
   const renderModelTab = () => <section className="image-story-model-panel">
-    <h3>图片模型</h3><p>只显示已启用、同时支持图片生成和多参考图的 Provider。</p>
+    <h3>图片模型</h3><p>只显示已启用、使用 OpenAI-compatible 协议且同时支持图片生成和多参考图的 Provider。</p>
     {!currentImageProviderValid && modelProviderId && <Alert type="warning" showIcon message="当前图片 Provider 已不可用" />}
-    {imageProviders.length === 0 && <Alert type="warning" showIcon message="没有同时支持图片生成和多参考图的 Provider" />}
+    {imageProviders.length === 0 && <Alert type="warning" showIcon message="没有可执行的 OpenAI-compatible 图片 Provider" />}
     <Form layout="vertical"><Form.Item label="图片 Provider" validateStatus={currentImageProviderValid ? undefined : 'error'}><Select aria-label="图片 Provider" value={modelProviderId || undefined} placeholder="选择图片 Provider" onChange={(providerId) => { modelDraftRef.current = { ...modelDraftRef.current, providerId }; setModelProviderId(providerId); }} options={[...(!currentImageProviderValid && modelProviderId ? [{ value: modelProviderId, label: `${modelProviderId}（不可用）`, disabled: true }] : []), ...imageProviders.map((item) => ({ value: item.id, label: providerLabel(item) }))]} /></Form.Item><div className="image-story-fixed-spec"><strong>1536 × 864</strong><span>16:9 横版</span><strong>每 Scene 最多 5 张</strong><strong>全篇最多 20 张</strong></div><Button type="primary" loading={modelSaving} disabled={!currentImageProviderValid} onClick={() => void saveModel()}>保存图片模型</Button></Form>
   </section>;
 
