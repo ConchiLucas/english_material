@@ -36,12 +36,11 @@ public class ImageRunRecoveryInitializer implements ApplicationRunner {
             activeRun.setStatus("FAILED");
             activeRun.setErrorMessage(RESTART_ERROR);
             activeRun.setFinishedAt(finishedAt);
-        }
-        try {
-            runRepository.saveAll(activeRuns);
-            runRepository.flush();
-        } catch (ObjectOptimisticLockingFailureException ex) {
-            LOGGER.warn("图片批次重启恢复遇到并发更新，保留较新的批次状态");
+            try {
+                runRepository.saveAndFlush(activeRun);
+            } catch (ObjectOptimisticLockingFailureException ex) {
+                LOGGER.warn("图片批次重启恢复遇到并发更新，保留较新的批次状态");
+            }
         }
     }
 }

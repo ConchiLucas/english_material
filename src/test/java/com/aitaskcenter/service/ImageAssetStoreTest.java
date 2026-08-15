@@ -54,7 +54,7 @@ class ImageAssetStoreTest {
         assertEquals(16, stored.width());
         assertEquals(9, stored.height());
         assertEquals(sha256(png), stored.sha256());
-        assertArrayEquals(png, store.read(stored.relativePath()));
+        assertArrayEquals(png, store.read(stored.relativePath(), stored.sha256()));
     }
 
     @Test
@@ -65,8 +65,8 @@ class ImageAssetStoreTest {
         assertThrows(IllegalArgumentException.class, () -> store.store("../run", "asset", "image/png", png));
         assertThrows(IllegalArgumentException.class, () -> store.store("run", "a/b", "image/png", png));
         assertThrows(IllegalArgumentException.class, () -> store.store("run", "asset..copy", "image/png", png));
-        assertThrows(IllegalArgumentException.class, () -> store.read("../secret.png"));
-        assertThrows(IllegalArgumentException.class, () -> store.read(tempDir.resolve("secret.png").toString()));
+        assertThrows(IllegalArgumentException.class, () -> store.read("../secret.png", sha256(png)));
+        assertThrows(IllegalArgumentException.class, () -> store.read(tempDir.resolve("secret.png").toString(), sha256(png)));
     }
 
     @Test
@@ -75,6 +75,16 @@ class ImageAssetStoreTest {
 
         assertThrows(IllegalArgumentException.class,
                 () -> store.store("run-123", "shot-001", "image/jpeg", png(3, 2)));
+        assertThrows(IllegalArgumentException.class,
+                () -> store.store("run-123", "shot-002", "image/webp", png(3, 2)));
+    }
+
+    @Test
+    void rejectsRunIdsLongerThanThePersistedColumn() throws Exception {
+        ImageAssetStore store = new ImageAssetStore(tempDir.toString());
+
+        assertThrows(IllegalArgumentException.class,
+                () -> store.store("r".repeat(65), "shot-001", "image/png", png(3, 2)));
     }
 
     @Test
@@ -86,7 +96,7 @@ class ImageAssetStoreTest {
         assertThrows(IllegalStateException.class,
                 () -> store.store("run-123", "shot-001", "image/png", png(5, 3)));
 
-        assertArrayEquals(original, store.read(stored.relativePath()));
+        assertArrayEquals(original, store.read(stored.relativePath(), stored.sha256()));
         try (var files = Files.list(tempDir.resolve("run-123"))) {
             assertFalse(files.anyMatch(path -> path.getFileName().toString().contains(".tmp")));
         }
@@ -97,7 +107,7 @@ class ImageAssetStoreTest {
         byte[] first = png(4, 3);
         byte[] second = png(5, 3);
         CyclicBarrier beforePublish = new CyclicBarrier(2);
-        ImageAssetStore store = new ImageAssetStore(tempDir.toString(), () -> awaitBarrier(beforePublish));
+        ImageAssetStore store = new BarrierStore(tempDir.toString(), beforePublish);
         ExecutorService workers = Executors.newFixedThreadPool(2);
         try {
             List<Future<StoreAttempt>> attempts = workers.invokeAll(List.of(
@@ -108,7 +118,8 @@ class ImageAssetStoreTest {
             StoreAttempt rejected = results.stream().filter(attempt -> !attempt.succeeded()).findFirst().orElseThrow();
             assertTrue(rejected.error() instanceof IllegalStateException);
             assertEquals("图片资产已存在，不能覆盖审计记录", rejected.error().getMessage());
-            byte[] published = store.read("run-123/shot-001.png");
+            StoreAttempt winner = results.stream().filter(StoreAttempt::succeeded).findFirst().orElseThrow();
+            byte[] published = store.read("run-123/shot-001.png", winner.stored().sha256());
             assertTrue(java.util.Arrays.equals(first, published) || java.util.Arrays.equals(second, published));
             assertTrue(ImageIO.read(new java.io.ByteArrayInputStream(published)) != null);
             try (var files = Files.list(tempDir.resolve("run-123"))) {
@@ -133,6 +144,18 @@ class ImageAssetStoreTest {
 
         assertThrows(IllegalArgumentException.class,
                 () -> store.store("run-123", "shot-001", "image/png", png(4, 3)));
+    }
+
+    @Test
+    void rejectsTamperedBytesAndOversizedFilesAgainstThePersistedHash() throws Exception {
+        ImageAssetStore store = new ImageAssetStore(tempDir.toString());
+        ImageAssetStore.StoredAsset stored = store.store("run-123", "shot-001", "image/png", png(4, 3));
+
+        Files.write(tempDir.resolve(stored.relativePath()), png(5, 3));
+        assertThrows(IllegalArgumentException.class, () -> store.read(stored.relativePath(), stored.sha256()));
+        Files.write(tempDir.resolve("run-123/oversized.png"), new byte[26 * 1024 * 1024]);
+        assertThrows(IllegalArgumentException.class,
+                () -> store.read("run-123/oversized.png", "a".repeat(64)));
     }
 
     private static byte[] png(int width, int height) throws IOException {
@@ -181,6 +204,20 @@ class ImageAssetStoreTest {
     private record StoreAttempt(ImageAssetStore.StoredAsset stored, Exception error) {
         boolean succeeded() {
             return stored != null;
+        }
+    }
+
+    private static final class BarrierStore extends ImageAssetStore {
+        private final CyclicBarrier beforePublish;
+
+        private BarrierStore(String storageRoot, CyclicBarrier beforePublish) {
+            super(storageRoot);
+            this.beforePublish = beforePublish;
+        }
+
+        @Override
+        void beforePublish() {
+            awaitBarrier(beforePublish);
         }
     }
 }

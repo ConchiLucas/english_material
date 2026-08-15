@@ -2,13 +2,14 @@ package com.aitaskcenter.model;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
 @Entity
 @Table(name = "tb_image_asset", uniqueConstraints = {
         @UniqueConstraint(name = "uk_image_asset_run_type_key", columnNames = {"run_id", "asset_type", "asset_key"})
-})
+}, indexes = @Index(name = "idx_image_asset_run_created", columnList = "run_id,created_at"))
 public class ImageAsset extends BaseEntity {
     @Column(name = "run_id", nullable = false, length = 64) private String runId;
     @Column(name = "asset_type", nullable = false, length = 40) private String assetType;

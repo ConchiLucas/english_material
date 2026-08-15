@@ -25,6 +25,7 @@ services:
       TASK_CENTER_DB_USER: ${TASK_CENTER_DB_USER:?Set TASK_CENTER_DB_USER in .env.local}
       TASK_CENTER_DB_PASSWORD: ${TASK_CENTER_DB_PASSWORD:?Set TASK_CENTER_DB_PASSWORD in .env.local}
       TASK_CENTER_EXTERNAL_HOST_ALIAS: host.docker.internal
+      IMAGE_STORY_STORAGE_ROOT: /app/runtime/image-story
       JAVA_TOOL_OPTIONS: >-
         -XX:MaxRAMPercentage=${JAVA_MAX_RAM_PERCENTAGE:-75.0}
         -XX:+ExitOnOutOfMemoryError
@@ -37,6 +38,7 @@ services:
       - "${WORKSPACE_HOST_ROOT}:/workspace:ro"
       - "${CODEX_HOST_HOME}:/home/app/.codex"
       - english-material-backend-dumps:/home/app/dumps
+      - english-material-image-story:/app/runtime/image-story
     healthcheck:
       test:
         - CMD-SHELL
@@ -56,3 +58,4 @@ networks:
 
 volumes:
   english-material-backend-dumps:
+  english-material-image-story:

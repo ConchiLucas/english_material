@@ -37,8 +37,8 @@ class ImageRunRecoveryInitializerTest {
         verify(runs).findAllByStatusIn(statuses.capture());
         assertEquals(List.of("QUEUED", "PLANNING", "GENERATING_REFERENCES", "GENERATING_SHOTS", "COMPOSITING"),
                 List.copyOf(statuses.getValue()));
-        verify(runs).saveAll(List.of(queued, generating));
-        verify(runs).flush();
+        verify(runs).saveAndFlush(queued);
+        verify(runs).saveAndFlush(generating);
         assertFailedForRestart(queued);
         assertFailedForRestart(generating);
         assertEquals("COMPLETED", completed.getStatus());
@@ -54,8 +54,7 @@ class ImageRunRecoveryInitializerTest {
 
         new ImageRunRecoveryInitializer(runs).run(new DefaultApplicationArguments());
 
-        verify(runs, never()).saveAll(org.mockito.ArgumentMatchers.any());
-        verify(runs, never()).flush();
+        verify(runs, never()).saveAndFlush(org.mockito.ArgumentMatchers.any());
     }
 
     @Test
@@ -63,9 +62,25 @@ class ImageRunRecoveryInitializerTest {
         ImageRunRepository runs = mock(ImageRunRepository.class);
         when(runs.findAllByStatusIn(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(List.of(run("PLANNING")));
         org.mockito.Mockito.doThrow(new ObjectOptimisticLockingFailureException(ImageRun.class, 1L))
-                .when(runs).flush();
+                .when(runs).saveAndFlush(org.mockito.ArgumentMatchers.any());
 
         assertDoesNotThrow(() -> new ImageRunRecoveryInitializer(runs).run(new DefaultApplicationArguments()));
+    }
+
+    @Test
+    void continuesRecoveringLaterRunsAfterAnOptimisticConflict() throws Exception {
+        ImageRunRepository runs = mock(ImageRunRepository.class);
+        ImageRun first = run("QUEUED");
+        ImageRun second = run("PLANNING");
+        when(runs.findAllByStatusIn(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(List.of(first, second));
+        org.mockito.Mockito.doThrow(new ObjectOptimisticLockingFailureException(ImageRun.class, 1L))
+                .when(runs).saveAndFlush(first);
+
+        new ImageRunRecoveryInitializer(runs).run(new DefaultApplicationArguments());
+
+        verify(runs).saveAndFlush(first);
+        verify(runs).saveAndFlush(second);
+        assertFailedForRestart(second);
     }
 
     private static ImageRun run(String status) {

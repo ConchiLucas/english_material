@@ -2,6 +2,7 @@ package com.aitaskcenter.model;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import jakarta.persistence.Version;
@@ -10,6 +11,9 @@ import java.time.OffsetDateTime;
 @Entity
 @Table(name = "tb_image_run", uniqueConstraints = {
         @UniqueConstraint(name = "uk_image_run_run_id", columnNames = "run_id")
+}, indexes = {
+        @Index(name = "idx_image_run_created", columnList = "created_at"),
+        @Index(name = "idx_image_run_status_created", columnList = "status,created_at")
 })
 public class ImageRun extends BaseEntity {
     @Column(name = "run_id", nullable = false, length = 64) private String runId;
