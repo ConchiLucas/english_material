@@ -347,11 +347,7 @@ export default function App() {
         okText: '确认离开',
         cancelText: '取消',
         autoFocusButton: 'cancel',
-        onCancel: () => {
-          leaveAgentConfirmOpen.current = false;
-        },
         onOk: () => {
-          leaveAgentConfirmOpen.current = false;
           setAgentDirty(false);
           setSection(nextSection);
         },
@@ -370,11 +366,7 @@ export default function App() {
         okText: '确认离开',
         cancelText: '取消',
         autoFocusButton: 'cancel',
-        onCancel: () => {
-          leaveImageAgentConfirmOpen.current = false;
-        },
         onOk: () => {
-          leaveImageAgentConfirmOpen.current = false;
           setImageAgentDirty(false);
           setSection(nextSection);
         },

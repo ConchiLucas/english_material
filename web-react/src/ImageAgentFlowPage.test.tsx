@@ -39,4 +39,18 @@ describe('ImageAgentFlowPage shell', () => {
   it('builds encoded image asset URLs from the configured API base', () => {
     expect(imageAssetUrl('12/34')).toBe('http://127.0.0.1:18744/api/image-assets/12%2F34/content');
   });
+
+  it('does not reload the flow when a parent replaces the dirty callback', () => {
+    apiMocks.getImageAgentFlow.mockReturnValue(new Promise(() => undefined));
+    const firstCallback = vi.fn();
+    const latestCallback = vi.fn();
+    const view = render(<ImageAgentFlowPage providers={[]} onDirtyChange={firstCallback} />);
+
+    view.rerender(<ImageAgentFlowPage providers={[]} onDirtyChange={latestCallback} />);
+
+    expect(apiMocks.getImageAgentFlow).toHaveBeenCalledTimes(1);
+    expect(firstCallback).not.toHaveBeenCalled();
+    view.unmount();
+    expect(latestCallback).toHaveBeenCalledWith(false);
+  });
 });

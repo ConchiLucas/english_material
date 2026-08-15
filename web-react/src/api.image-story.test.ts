@@ -141,7 +141,13 @@ describe('image story API contracts', () => {
     expect(requestMock.post).toHaveBeenCalledWith('/image-runs', body);
   });
 
-  it('builds an encoded asset URL from the same Axios base', () => {
-    expect(imageAssetUrl('asset/12')).toBe('https://api.example.test/root/image-assets/asset%2F12/content');
+  it.each([
+    ['https://api.example.test/root', 'https://api.example.test/root/image-assets/asset%20%2F12%3F%23/content'],
+    ['https://api.example.test/root/', 'https://api.example.test/root/image-assets/asset%20%2F12%3F%23/content'],
+    ['/api', '/api/image-assets/asset%20%2F12%3F%23/content'],
+    ['/api/', '/api/image-assets/asset%20%2F12%3F%23/content'],
+  ])('builds an encoded asset URL from Axios base %s', (baseUrl, expected) => {
+    requestMock.defaults.baseURL = baseUrl;
+    expect(imageAssetUrl('asset /12?#')).toBe(expected);
   });
 });

@@ -1,7 +1,7 @@
 import { App as AntApp } from 'antd';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 
 const apiMocks = vi.hoisted(() => ({
@@ -46,12 +46,37 @@ vi.mock('./ImageAgentFlowPage', () => ({
   ),
 }));
 
+interface ConfirmLifecycle {
+  title?: unknown;
+  onCancel?: () => void;
+  onOk?: () => void;
+  afterClose?: () => void;
+}
+
+const installConfirmHarness = () => {
+  const confirms: ConfirmLifecycle[] = [];
+  const confirm = vi.fn((config: ConfirmLifecycle) => {
+    confirms.push(config);
+    return { destroy: vi.fn(), update: vi.fn() };
+  });
+  vi.spyOn(AntApp, 'useApp').mockReturnValue({
+    message: {},
+    notification: {},
+    modal: { confirm },
+  } as never);
+  return { confirms, confirm };
+};
+
 describe('App primary navigation', () => {
   beforeEach(() => {
     apiMocks.getConnections.mockReset().mockResolvedValue([]);
     apiMocks.getAIConfig.mockReset().mockResolvedValue({ active: '', providers: [] });
     apiMocks.getLocalCliConfig.mockReset().mockResolvedValue({ active: '', configs: [] });
     apiMocks.getStoryAgentFlow.mockReset().mockResolvedValue({ stages: [], budget: {} });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('exposes all primary destinations in their fixed order', async () => {
@@ -128,6 +153,7 @@ describe('App primary navigation', () => {
 
   it('confirms before leaving a dirty Agent workbench', async () => {
     const user = userEvent.setup();
+    const modal = installConfirmHarness();
     render(<AntApp><App /></AntApp>);
 
     const navigation = await screen.findByRole('menu', { name: '主导航' });
@@ -135,21 +161,23 @@ describe('App primary navigation', () => {
     await user.click(await screen.findByRole('button', { name: '标记 Agent 修改' }));
     await user.click(within(navigation).getByRole('menuitem', { name: /配置管理/ }));
 
-    expect((await screen.findAllByText('离开 Agent 工作台？')).length).toBeGreaterThan(0);
-    expect(screen.getAllByRole('dialog')).toHaveLength(1);
-    await user.click(screen.getByRole('button', { name: /取\s*消/ }));
+    expect(modal.confirm).toHaveBeenCalledTimes(1);
+    expect(modal.confirms[0]?.title).toBe('离开 Agent 工作台？');
+    modal.confirms[0]?.onCancel?.();
     expect(screen.getByRole('region', { name: 'Agent 流程工作台' })).toBeInTheDocument();
+    modal.confirms[0]?.afterClose?.();
 
     await user.click(screen.getByRole('button', { name: '标记 Agent 修改' }));
     await user.click(within(navigation).getByRole('menuitem', { name: /配置管理/ }));
-    const confirmButtons = await screen.findAllByRole('button', { name: '确认离开' });
-    await user.click(confirmButtons.at(-1)!);
+    expect(modal.confirm).toHaveBeenCalledTimes(2);
+    modal.confirms[1]?.onOk?.();
 
     expect(await screen.findByRole('heading', { name: '环境数据库配置' })).toBeInTheDocument();
   });
 
   it('guards image workbench edits independently and preserves the page on cancel', async () => {
     const user = userEvent.setup();
+    const modal = installConfirmHarness();
     render(<AntApp><App /></AntApp>);
 
     const navigation = await screen.findByRole('menu', { name: '主导航' });
@@ -157,17 +185,67 @@ describe('App primary navigation', () => {
     await user.click(await screen.findByRole('button', { name: '标记图片 Agent 修改' }));
     await user.click(within(navigation).getByRole('menuitem', { name: /Agent 工作台/ }));
 
-    expect((await screen.findAllByText('离开图片工作台？')).length).toBeGreaterThan(0);
-    await user.click(screen.getByRole('button', { name: /取\s*消/ }));
+    expect(modal.confirm).toHaveBeenCalledTimes(1);
+    expect(modal.confirms[0]?.title).toBe('离开图片工作台？');
+    modal.confirms[0]?.onCancel?.();
     expect(screen.getByRole('region', { name: '图片 Agent 工作台' })).toBeInTheDocument();
+    modal.confirms[0]?.afterClose?.();
 
     await user.click(within(navigation).getByRole('menuitem', { name: /Agent 工作台/ }));
-    const confirmButtons = await screen.findAllByRole('button', { name: '确认离开' });
-    await user.click(confirmButtons.at(-1)!);
+    expect(modal.confirm).toHaveBeenCalledTimes(2);
+    modal.confirms[1]?.onOk?.();
     expect(await screen.findByRole('region', { name: 'Agent 流程工作台' })).toBeInTheDocument();
 
     await user.click(within(navigation).getByRole('menuitem', { name: /配置管理/ }));
     expect(await screen.findByRole('heading', { name: '环境数据库配置' })).toBeInTheDocument();
     expect(screen.queryByText('离开 Agent 工作台？')).not.toBeInTheDocument();
+  });
+
+  it('keeps the story dirty confirmation locked until its cancelled modal closes', async () => {
+    const user = userEvent.setup();
+    const modal = installConfirmHarness();
+    render(<AntApp><App /></AntApp>);
+
+    const navigation = await screen.findByRole('menu', { name: '主导航' });
+    await user.click(within(navigation).getByRole('menuitem', { name: /Agent 工作台/ }));
+    await user.click(screen.getByRole('button', { name: '标记 Agent 修改' }));
+    await user.click(within(navigation).getByRole('menuitem', { name: /配置管理/ }));
+    expect(modal.confirm).toHaveBeenCalledTimes(1);
+
+    modal.confirms[0]?.onCancel?.();
+    await user.click(within(navigation).getByRole('menuitem', { name: /图片工作台/ }));
+
+    expect(modal.confirm).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('region', { name: 'Agent 流程工作台' })).toBeInTheDocument();
+    modal.confirms[0]?.afterClose?.();
+
+    await user.click(within(navigation).getByRole('menuitem', { name: /去重单词表/ }));
+    expect(modal.confirm).toHaveBeenCalledTimes(2);
+    modal.confirms[1]?.onOk?.();
+    expect(await screen.findByRole('region', { name: '去重单词表' })).toBeInTheDocument();
+  });
+
+  it('keeps the image dirty confirmation locked until its cancelled modal closes', async () => {
+    const user = userEvent.setup();
+    const modal = installConfirmHarness();
+    render(<AntApp><App /></AntApp>);
+
+    const navigation = await screen.findByRole('menu', { name: '主导航' });
+    await user.click(within(navigation).getByRole('menuitem', { name: /图片工作台/ }));
+    await user.click(screen.getByRole('button', { name: '标记图片 Agent 修改' }));
+    await user.click(within(navigation).getByRole('menuitem', { name: /配置管理/ }));
+    expect(modal.confirm).toHaveBeenCalledTimes(1);
+
+    modal.confirms[0]?.onCancel?.();
+    await user.click(within(navigation).getByRole('menuitem', { name: /Agent 工作台/ }));
+
+    expect(modal.confirm).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('region', { name: '图片 Agent 工作台' })).toBeInTheDocument();
+    modal.confirms[0]?.afterClose?.();
+
+    await user.click(within(navigation).getByRole('menuitem', { name: /去重单词表/ }));
+    expect(modal.confirm).toHaveBeenCalledTimes(2);
+    modal.confirms[1]?.onOk?.();
+    expect(await screen.findByRole('region', { name: '去重单词表' })).toBeInTheDocument();
   });
 });

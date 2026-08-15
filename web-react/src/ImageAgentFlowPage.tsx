@@ -1,5 +1,5 @@
 import { Alert, Skeleton, Typography } from 'antd';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { AIProviderConfigItem } from './api';
 import { getImageAgentFlow } from './api';
 import type { ImageAgentFlow } from './image-story-types';
@@ -14,6 +14,8 @@ interface ImageAgentFlowPageProps {
 export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAgentFlowPageProps) {
   const [flow, setFlow] = useState<ImageAgentFlow | null>(null);
   const [loadError, setLoadError] = useState('');
+  const onDirtyChangeRef = useRef(onDirtyChange);
+  onDirtyChangeRef.current = onDirtyChange;
 
   useEffect(() => {
     let active = true;
@@ -28,9 +30,9 @@ export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAg
     );
     return () => {
       active = false;
-      onDirtyChange(false);
+      onDirtyChangeRef.current(false);
     };
-  }, [onDirtyChange]);
+  }, []);
 
   return (
     <section className="image-agent-workbench" aria-label="图片 Agent 工作台">
