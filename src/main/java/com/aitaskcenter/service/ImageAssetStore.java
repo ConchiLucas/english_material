@@ -3,11 +3,13 @@ package com.aitaskcenter.service;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Locale;
@@ -68,15 +70,14 @@ public class ImageAssetStore {
             }
 
             temporary = Files.createTempFile(realParent, "." + assetKey + "-", ".tmp");
-            Files.write(temporary, bytes);
+            writeAndSync(temporary, bytes);
             try {
-                Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE);
-            } catch (AtomicMoveNotSupportedException ex) {
-                throw new IllegalStateException("当前文件系统不支持原子保存图片资产", ex);
-            } catch (java.nio.file.FileAlreadyExistsException ex) {
+                Files.createLink(target, temporary);
+            } catch (FileAlreadyExistsException ex) {
                 throw new IllegalStateException("图片资产已存在，不能覆盖审计记录", ex);
+            } catch (UnsupportedOperationException | IOException ex) {
+                throw new IllegalStateException("当前文件系统不支持安全的硬链接发布图片资产", ex);
             }
-            temporary = null;
             return new StoredAsset(relativePath, mime, image.width(), image.height(), sha256(bytes));
         } catch (IOException ex) {
             throw new IllegalStateException("保存图片资产失败", ex);
@@ -88,6 +89,16 @@ public class ImageAssetStore {
                     // The write failure is retained as the primary outcome.
                 }
             }
+        }
+    }
+
+    private static void writeAndSync(Path temporary, byte[] bytes) throws IOException {
+        try (FileChannel channel = FileChannel.open(temporary, StandardOpenOption.WRITE)) {
+            ByteBuffer buffer = ByteBuffer.wrap(bytes);
+            while (buffer.hasRemaining()) {
+                channel.write(buffer);
+            }
+            channel.force(true);
         }
     }
 
