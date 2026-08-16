@@ -91,13 +91,36 @@ class AiImageGenerationServiceTest {
     }
 
     @Test
+    void postsGrokGenerationWithAspectRatioAndNoDalleOnlyFields() throws Exception {
+        AiProviderConfigItem provider = provider(baseUrl());
+        provider.setModel("grok-imagine-image");
+        provider.setOptions(Map.of(
+                "responseFormat", "b64_json",
+                "quality", "hd",
+                "size", "1536x864"));
+
+        service().generate(provider, "storybook scene", "no text", 1536, 864, List.of());
+
+        JsonNode body = objectMapper.readTree(requests.get(0).body());
+        assertEquals("grok-imagine-image", body.path("model").asText());
+        assertEquals("16:9", body.path("aspect_ratio").asText());
+        assertEquals("storybook scene\n\nAvoid: no text", body.path("prompt").asText());
+        assertEquals("b64_json", body.path("response_format").asText());
+        assertFalse(body.has("negative_prompt"));
+        assertFalse(body.has("quality"));
+        assertFalse(body.has("size"));
+    }
+
+    @Test
     void postsReferenceImagesWithAntigravityCompatibleFieldNames() {
         AiImageGenerationService service = service();
+        AiProviderConfigItem provider = provider(baseUrl() + "/v1");
+        provider.setModel("gemini-3.1-flash-image");
         ImageReference first = new ImageReference("first.png", "image/png", png(1, 1, Color.RED));
         ImageReference second = new ImageReference("second.png", "image/png", png(1, 1, Color.GREEN));
         ImageReference third = new ImageReference("third.png", "image/png", png(1, 1, Color.BLUE));
 
-        service.generate(provider(baseUrl() + "/v1"), "combine", "", 3, 2, List.of(first, second, third));
+        service.generate(provider, "combine", "", 3, 2, List.of(first, second, third));
 
         CapturedRequest request = requests.get(0);
         assertEquals("/v1/images/edits", request.path());
@@ -112,6 +135,108 @@ class AiImageGenerationServiceTest {
         assertTrue(body.contains("filename=\"second.png\""));
         assertTrue(body.contains("filename=\"third.png\""));
         assertTrue(body.contains("name=\"response_format\""));
+    }
+
+    @Test
+    void postsSingleGrokReferenceAsJsonImageDataUri() throws Exception {
+        AiProviderConfigItem provider = grokProvider();
+        byte[] referenceBytes = png(1, 1, Color.RED);
+
+        service().generate(provider, "keep the character", "no letters", 1536, 864,
+                List.of(new ImageReference("reference.png", "image/png", referenceBytes)));
+
+        CapturedRequest request = requests.get(0);
+        JsonNode body = objectMapper.readTree(request.body());
+        assertEquals("/v1/images/edits", request.path());
+        assertTrue(request.contentType().startsWith("application/json"));
+        assertEquals("image_url", body.path("image").path("type").asText());
+        assertEquals("data:image/png;base64," + Base64.getEncoder().encodeToString(referenceBytes),
+                body.path("image").path("url").asText());
+        assertEquals("16:9", body.path("aspect_ratio").asText());
+        assertEquals("keep the character\n\nAvoid: no letters", body.path("prompt").asText());
+        assertFalse(body.has("negative_prompt"));
+        assertFalse(body.has("quality"));
+        assertFalse(body.has("size"));
+    }
+
+    @Test
+    void postsThreeGrokReferencesAsOrderedJsonImages() throws Exception {
+        AiProviderConfigItem provider = grokProvider();
+        List<ImageReference> references = List.of(
+                new ImageReference("first.png", "image/png", png(1, 1, Color.RED)),
+                new ImageReference("second.png", "image/png", png(1, 1, Color.GREEN)),
+                new ImageReference("third.png", "image/png", png(1, 1, Color.BLUE)));
+
+        service().generate(provider, "combine", "", 3, 2, references);
+
+        CapturedRequest request = requests.get(0);
+        assertEquals("/v1/images/edits", request.path());
+        assertTrue(request.contentType().startsWith("application/json"));
+        JsonNode images = objectMapper.readTree(request.body()).path("images");
+        assertEquals(3, images.size());
+        for (int index = 0; index < references.size(); index++) {
+            ImageReference reference = references.get(index);
+            assertEquals("image_url", images.path(index).path("type").asText());
+            assertEquals("data:" + reference.mimeType() + ";base64,"
+                            + Base64.getEncoder().encodeToString(reference.bytes()),
+                    images.path(index).path("url").asText());
+        }
+    }
+
+    @Test
+    void combinesMoreThanThreeGrokReferencesIntoOneOrderedBoard() throws Exception {
+        AiProviderConfigItem provider = grokProvider();
+        provider.setOptions(Map.of("responseFormat", "b64_json"));
+        List<ImageReference> references = List.of(
+                new ImageReference("red.png", "image/png", solidPng(2, 2, Color.RED)),
+                new ImageReference("green.png", "image/png", solidPng(2, 2, Color.GREEN)),
+                new ImageReference("blue.png", "image/png", solidPng(2, 2, Color.BLUE)),
+                new ImageReference("yellow.png", "image/png", solidPng(2, 2, Color.YELLOW)));
+
+        service().generate(provider, "combine", "", 8, 4, references);
+
+        JsonNode body = objectMapper.readTree(requests.get(0).body());
+        assertTrue(body.has("image"));
+        assertFalse(body.has("images"));
+        String dataUri = body.path("image").path("url").asText();
+        assertTrue(dataUri.startsWith("data:image/png;base64,"));
+        BufferedImage board = ImageIO.read(new ByteArrayInputStream(
+                Base64.getDecoder().decode(dataUri.substring(dataUri.indexOf(',') + 1))));
+        assertEquals(8, board.getWidth());
+        assertEquals(4, board.getHeight());
+        assertEquals(Color.RED.getRGB(), board.getRGB(2, 1));
+        assertEquals(Color.GREEN.getRGB(), board.getRGB(6, 1));
+        assertEquals(Color.BLUE.getRGB(), board.getRGB(2, 3));
+        assertEquals(Color.YELLOW.getRGB(), board.getRGB(6, 3));
+    }
+
+    @Test
+    void combinesEightGrokReferencesIntoOneBoard() throws Exception {
+        List<ImageReference> references = new ArrayList<>();
+        for (int index = 0; index < 8; index++) {
+            references.add(new ImageReference("reference-" + index + ".png", "image/png",
+                    solidPng(2, 2, new Color(index * 20, index * 20, index * 20))));
+        }
+
+        service().generate(grokProvider(), "combine", "", 12, 8, references);
+
+        JsonNode body = objectMapper.readTree(requests.get(0).body());
+        assertTrue(body.has("image"));
+        assertFalse(body.has("images"));
+    }
+
+    @Test
+    void rejectsInvalidGrokCompositeReferenceBeforeRequest() {
+        List<ImageReference> references = List.of(
+                new ImageReference("one.png", "image/png", solidPng(2, 2, Color.RED)),
+                new ImageReference("two.png", "image/png", solidPng(2, 2, Color.GREEN)),
+                new ImageReference("bad.png", "image/png", new byte[] {1, 2, 3}),
+                new ImageReference("four.png", "image/png", solidPng(2, 2, Color.BLUE)));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> service().generate(grokProvider(), "combine", "", 8, 4, references));
+
+        assertTrue(requests.isEmpty());
     }
 
     @Test
@@ -234,14 +359,75 @@ class AiImageGenerationServiceTest {
     void reportsBoundedNon2xxErrorWithoutResponseOrApiKey() {
         AiImageGenerationService service = service();
         server.removeContext("/");
-        server.createContext("/", exchange -> write(exchange, 429,
-                "provider response including test-api-key that must not be exposed"));
+        server.createContext("/", exchange -> {
+            requests.add(new CapturedRequest(exchange));
+            write(exchange, 400, "provider response including test-api-key that must not be exposed");
+        });
 
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
                 () -> service.generate(provider(baseUrl()), "a", "", 3, 2, List.of()));
 
-        assertEquals("图片生成调用失败（HTTP 429）", exception.getMessage());
+        assertEquals("图片生成调用失败（HTTP 400）", exception.getMessage());
         assertFalse(exception.getMessage().contains("test-api-key"));
+        assertEquals(1, requests.size());
+    }
+
+    @Test
+    void retriesTransientHttpFailuresThenSucceeds() {
+        AiImageGenerationService service = service(millis -> { });
+        server.removeContext("/");
+        server.createContext("/", exchange -> {
+            requests.add(new CapturedRequest(exchange));
+            if (requests.size() < 3) {
+                write(exchange, 503, "temporary upstream failure");
+                return;
+            }
+            String body = "{\"id\":\"provider-request\",\"data\":[{\"b64_json\":\""
+                    + Base64.getEncoder().encodeToString(generatedImage) + "\"}]}";
+            write(exchange, 200, body);
+        });
+
+        ImageResult result = service.generate(provider(baseUrl()), "a", "", 3, 2, List.of());
+
+        assertEquals(3, requests.size());
+        assertArrayEquals(generatedImage, result.bytes());
+    }
+
+    @Test
+    void retriesClosedConnectionFailuresThenSucceeds() {
+        AiImageGenerationService service = service(millis -> { });
+        server.removeContext("/");
+        server.createContext("/", exchange -> {
+            requests.add(new CapturedRequest(exchange));
+            if (requests.size() == 1) {
+                exchange.close();
+                return;
+            }
+            String body = "{\"id\":\"provider-request\",\"data\":[{\"b64_json\":\""
+                    + Base64.getEncoder().encodeToString(generatedImage) + "\"}]}";
+            write(exchange, 200, body);
+        });
+
+        ImageResult result = service.generate(provider(baseUrl()), "a", "", 3, 2, List.of());
+
+        assertEquals(2, requests.size());
+        assertArrayEquals(generatedImage, result.bytes());
+    }
+
+    @Test
+    void stopsRetryingAfterTransientFailuresExhaustAttempts() {
+        AiImageGenerationService service = service(millis -> { });
+        server.removeContext("/");
+        server.createContext("/", exchange -> {
+            requests.add(new CapturedRequest(exchange));
+            write(exchange, 502, "bad gateway");
+        });
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                () -> service.generate(provider(baseUrl()), "a", "", 3, 2, List.of()));
+
+        assertEquals("图片生成调用失败（HTTP 502）", exception.getMessage());
+        assertEquals(3, requests.size());
     }
 
     @Test
@@ -270,7 +456,11 @@ class AiImageGenerationServiceTest {
     }
 
     private AiImageGenerationService service() {
-        return new AiImageGenerationService(objectMapper, HttpClient.newHttpClient());
+        return service(Thread::sleep);
+    }
+
+    private AiImageGenerationService service(AiImageGenerationService.Sleeper sleeper) {
+        return new AiImageGenerationService(objectMapper, HttpClient.newHttpClient(), sleeper);
     }
 
     private AiProviderConfigItem provider(String baseUrl) {
@@ -280,6 +470,16 @@ class AiImageGenerationServiceTest {
         provider.setModel("image-model");
         provider.setCapabilities(List.of("IMAGE_GENERATION", "IMAGE_REFERENCE"));
         provider.setOptions(Map.of());
+        return provider;
+    }
+
+    private AiProviderConfigItem grokProvider() {
+        AiProviderConfigItem provider = provider(baseUrl());
+        provider.setModel("grok-imagine-image-quality");
+        provider.setOptions(Map.of(
+                "responseFormat", "b64_json",
+                "quality", "hd",
+                "size", "1536x864"));
         return provider;
     }
 
@@ -327,6 +527,22 @@ class AiImageGenerationServiceTest {
         try {
             BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
             image.setRGB(0, 0, color.getRGB());
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            ImageIO.write(image, "png", bytes);
+            return bytes.toByteArray();
+        } catch (IOException exception) {
+            throw new IllegalStateException(exception);
+        }
+    }
+
+    private byte[] solidPng(int width, int height, Color color) {
+        try {
+            BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+            for (int x = 0; x < width; x++) {
+                for (int y = 0; y < height; y++) {
+                    image.setRGB(x, y, color.getRGB());
+                }
+            }
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
             ImageIO.write(image, "png", bytes);
             return bytes.toByteArray();

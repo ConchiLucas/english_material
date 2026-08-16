@@ -3,6 +3,7 @@ package com.aitaskcenter.service;
 import com.aitaskcenter.dto.AiProviderConfigItem;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
@@ -33,9 +34,12 @@ import org.springframework.util.StringUtils;
 @Service
 public class AiImageGenerationService {
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(120);
+    private static final int MAX_ATTEMPTS = 3;
+    private static final long RETRY_BACKOFF_MILLIS = 1_000L;
     private static final int DEFAULT_WIDTH = 1536;
     private static final int DEFAULT_HEIGHT = 864;
     private static final int MAX_REFERENCE_COUNT = 8;
+    private static final int GROK_MAX_EDIT_REFERENCES = 3;
     private static final long MAX_REFERENCE_BYTES = 10L * 1024 * 1024;
     private static final long MAX_TOTAL_REFERENCE_BYTES = 40L * 1024 * 1024;
     private static final long MAX_RESPONSE_BYTES = 64L * 1024 * 1024;
@@ -43,9 +47,16 @@ public class AiImageGenerationService {
     private static final long MAX_IMAGE_PIXELS = 40_000_000L;
     private static final Set<String> SUPPORTED_IMAGE_MIME_TYPES = Set.of(
             "image/png", "image/jpeg", "image/gif", "image/bmp");
+    private static final Set<Integer> RETRYABLE_STATUS_CODES = Set.of(429, 502, 503, 504);
 
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
+    private final Sleeper sleeper;
+
+    @FunctionalInterface
+    interface Sleeper {
+        void sleep(long millis) throws InterruptedException;
+    }
 
     @Autowired
     public AiImageGenerationService(ObjectMapper objectMapper) {
@@ -53,8 +64,13 @@ public class AiImageGenerationService {
     }
 
     AiImageGenerationService(ObjectMapper objectMapper, HttpClient httpClient) {
+        this(objectMapper, httpClient, Thread::sleep);
+    }
+
+    AiImageGenerationService(ObjectMapper objectMapper, HttpClient httpClient, Sleeper sleeper) {
         this.objectMapper = objectMapper;
         this.httpClient = httpClient;
+        this.sleeper = sleeper == null ? Thread::sleep : sleeper;
     }
 
     public ImageResult generate(AiProviderConfigItem provider, String prompt, String negativePrompt,
@@ -68,10 +84,34 @@ public class AiImageGenerationService {
 
         ImageOptions options = imageOptions(provider.getOptions(), width, height);
         URI baseUri = baseUri(provider.getBaseUrl());
+        IllegalArgumentException lastFailure = null;
+        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            try {
+                return generateOnce(provider, prompt, negativePrompt, options, safeReferences, baseUri);
+            } catch (IllegalArgumentException exception) {
+                lastFailure = exception;
+                if (!isRetryable(exception) || attempt >= MAX_ATTEMPTS) {
+                    throw exception;
+                }
+                sleepBeforeRetry(attempt);
+            }
+        }
+        throw lastFailure == null
+                ? new IllegalArgumentException("图片生成调用失败，请稍后重试")
+                : lastFailure;
+    }
+
+    private ImageResult generateOnce(AiProviderConfigItem provider, String prompt, String negativePrompt,
+                                     ImageOptions options, List<ImageReference> safeReferences, URI baseUri) {
         try {
-            HttpRequest request = safeReferences.isEmpty()
-                    ? jsonRequest(provider, prompt, negativePrompt, options, baseUri)
-                    : multipartRequest(provider, prompt, negativePrompt, options, safeReferences, baseUri);
+            HttpRequest request;
+            if (safeReferences.isEmpty()) {
+                request = jsonRequest(provider, prompt, negativePrompt, options, baseUri);
+            } else if (isGrokImagine(provider)) {
+                request = grokEditJsonRequest(provider, prompt, negativePrompt, options, safeReferences, baseUri);
+            } else {
+                request = multipartRequest(provider, prompt, negativePrompt, options, safeReferences, baseUri);
+            }
             HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
             try (InputStream responseBody = response.body()) {
                 if (response.statusCode() < 200 || response.statusCode() >= 300) {
@@ -81,8 +121,47 @@ public class AiImageGenerationService {
             }
         } catch (IllegalArgumentException exception) {
             throw exception;
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalArgumentException("图片生成调用失败，请稍后重试（InterruptedException）", exception);
         } catch (Exception exception) {
-            throw new IllegalArgumentException("图片生成调用失败，请稍后重试");
+            String detail = exception.getClass().getSimpleName();
+            if (exception.getMessage() != null && !exception.getMessage().isBlank()) {
+                detail = detail + ": " + exception.getMessage().replaceAll("[\\r\\n\\t]+", " ").trim();
+                if (detail.length() > 180) {
+                    detail = detail.substring(0, 180);
+                }
+            }
+            throw new IllegalArgumentException("图片生成调用失败，请稍后重试（" + detail + "）", exception);
+        }
+    }
+
+    private boolean isRetryable(IllegalArgumentException exception) {
+        String message = exception.getMessage() == null ? "" : exception.getMessage();
+        for (int status : RETRYABLE_STATUS_CODES) {
+            if (message.contains("HTTP " + status)) {
+                return true;
+            }
+        }
+        if (message.contains("请稍后重试")) {
+            return true;
+        }
+        Throwable cause = exception.getCause();
+        while (cause != null) {
+            if (cause instanceof IOException || cause instanceof InterruptedException) {
+                return true;
+            }
+            cause = cause.getCause();
+        }
+        return false;
+    }
+
+    private void sleepBeforeRetry(int attempt) {
+        try {
+            sleeper.sleep(RETRY_BACKOFF_MILLIS * attempt);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalArgumentException("图片生成调用失败，请稍后重试（InterruptedException）", exception);
         }
     }
 
@@ -112,6 +191,110 @@ public class AiImageGenerationService {
                 .build();
     }
 
+    private HttpRequest grokEditJsonRequest(AiProviderConfigItem provider, String prompt, String negativePrompt,
+                                            ImageOptions options, List<ImageReference> references, URI baseUri)
+            throws Exception {
+        Map<String, Object> body = commonFields(provider, prompt, negativePrompt, options);
+        List<ImageReference> effectiveReferences = references.size() <= GROK_MAX_EDIT_REFERENCES
+                ? references
+                : List.of(compositeReferenceBoard(references, options.size()));
+        List<Map<String, String>> encodedReferences = effectiveReferences.stream().map(this::grokReference).toList();
+        if (encodedReferences.size() == 1) {
+            body.put("image", encodedReferences.get(0));
+        } else {
+            body.put("images", encodedReferences);
+        }
+        return requestBuilder(provider, endpoint(baseUri, "/images/edits"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(body)))
+                .build();
+    }
+
+    private Map<String, String> grokReference(ImageReference reference) {
+        return Map.of(
+                "type", "image_url",
+                "url", "data:" + reference.mimeType() + ";base64,"
+                        + Base64.getEncoder().encodeToString(reference.bytes()));
+    }
+
+    private ImageReference compositeReferenceBoard(List<ImageReference> references, String requestedSize) {
+        Dimensions dimensions = dimensions(requestedSize);
+        int columns = (int) Math.ceil(Math.sqrt(references.size()));
+        int rows = (int) Math.ceil((double) references.size() / columns);
+        BufferedImage board = new BufferedImage(dimensions.width(), dimensions.height(), BufferedImage.TYPE_INT_RGB);
+        Graphics2D graphics = board.createGraphics();
+        try {
+            graphics.setColor(new Color(245, 245, 245));
+            graphics.fillRect(0, 0, board.getWidth(), board.getHeight());
+            graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
+                    RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            for (int index = 0; index < references.size(); index++) {
+                BufferedImage source = decodeReferenceImage(references.get(index));
+                drawLetterboxed(graphics, source, index % columns, index / columns,
+                        columns, rows, board.getWidth(), board.getHeight());
+            }
+        } finally {
+            graphics.dispose();
+        }
+        byte[] encoded = encodePng(board);
+        if (encoded.length > MAX_REFERENCE_BYTES) {
+            throw new IllegalArgumentException("Grok 参考图板过大");
+        }
+        return new ImageReference("grok-reference-board.png", "image/png", encoded);
+    }
+
+    private Dimensions dimensions(String size) {
+        try {
+            int separator = size.indexOf('x');
+            int width = Integer.parseInt(size.substring(0, separator));
+            int height = Integer.parseInt(size.substring(separator + 1));
+            if (width <= 0 || height <= 0 || (long) width * height > MAX_IMAGE_PIXELS) {
+                throw new IllegalArgumentException();
+            }
+            return new Dimensions(width, height);
+        } catch (RuntimeException exception) {
+            throw new IllegalArgumentException("图片尺寸配置无效");
+        }
+    }
+
+    private BufferedImage decodeReferenceImage(ImageReference reference) {
+        try {
+            return decodeImage(reference.bytes()).image();
+        } catch (IllegalArgumentException exception) {
+            throw exception;
+        } catch (IOException exception) {
+            throw new IllegalArgumentException("参考图数据无效");
+        }
+    }
+
+    private void drawLetterboxed(Graphics2D graphics, BufferedImage source, int column, int row,
+                                 int columns, int rows, int boardWidth, int boardHeight) {
+        int left = column * boardWidth / columns;
+        int right = (column + 1) * boardWidth / columns;
+        int top = row * boardHeight / rows;
+        int bottom = (row + 1) * boardHeight / rows;
+        double scale = Math.min((double) (right - left) / source.getWidth(),
+                (double) (bottom - top) / source.getHeight());
+        int width = Math.max(1, (int) Math.floor(source.getWidth() * scale));
+        int height = Math.max(1, (int) Math.floor(source.getHeight() * scale));
+        int x = left + (right - left - width) / 2;
+        int y = top + (bottom - top - height) / 2;
+        graphics.drawImage(source, x, y, width, height, null);
+    }
+
+    private byte[] encodePng(BufferedImage image) {
+        try {
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            if (!ImageIO.write(image, "png", output) || output.size() > MAX_DECODED_BYTES) {
+                throw new IllegalArgumentException("Grok 参考图板生成失败");
+            }
+            return output.toByteArray();
+        } catch (IOException exception) {
+            throw new IllegalArgumentException("Grok 参考图板生成失败");
+        }
+    }
+
     private HttpRequest.Builder requestBuilder(AiProviderConfigItem provider, URI endpoint) {
         HttpRequest.Builder request = HttpRequest.newBuilder(endpoint).timeout(REQUEST_TIMEOUT);
         if (StringUtils.hasText(provider.getApiKey())) {
@@ -122,16 +305,57 @@ public class AiImageGenerationService {
 
     private Map<String, Object> commonFields(AiProviderConfigItem provider, String prompt, String negativePrompt,
                                              ImageOptions options) {
+        boolean grokImagine = isGrokImagine(provider);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", provider.getModel());
-        body.put("prompt", prompt == null ? "" : prompt);
-        if (StringUtils.hasText(negativePrompt)) {
+        String effectivePrompt = prompt == null ? "" : prompt;
+        if (grokImagine && StringUtils.hasText(negativePrompt)) {
+            effectivePrompt += "\n\nAvoid: " + negativePrompt.trim();
+        }
+        body.put("prompt", effectivePrompt);
+        if (!grokImagine && StringUtils.hasText(negativePrompt)) {
             body.put("negative_prompt", negativePrompt);
         }
         body.put("response_format", options.responseFormat());
-        body.put("quality", options.quality());
-        body.put("size", options.size());
+        if (grokImagine) {
+            body.put("aspect_ratio", aspectRatio(options.size()));
+        } else {
+            body.put("quality", options.quality());
+            body.put("size", options.size());
+        }
         return body;
+    }
+
+    private boolean isGrokImagine(AiProviderConfigItem provider) {
+        return provider != null
+                && StringUtils.hasText(provider.getModel())
+                && provider.getModel().trim().toLowerCase(Locale.ROOT).startsWith("grok-imagine-image");
+    }
+
+    private String aspectRatio(String size) {
+        try {
+            int separator = size.indexOf('x');
+            int width = Integer.parseInt(size.substring(0, separator));
+            int height = Integer.parseInt(size.substring(separator + 1));
+            if (width <= 0 || height <= 0) {
+                throw new IllegalArgumentException();
+            }
+            int divisor = greatestCommonDivisor(width, height);
+            return width / divisor + ":" + height / divisor;
+        } catch (RuntimeException exception) {
+            throw new IllegalArgumentException("图片尺寸配置无效");
+        }
+    }
+
+    private int greatestCommonDivisor(int first, int second) {
+        int left = first;
+        int right = second;
+        while (right != 0) {
+            int remainder = left % right;
+            left = right;
+            right = remainder;
+        }
+        return left;
     }
 
     private ImageResult imageResult(HttpResponse<?> response, byte[] responseBody, ImageOptions options) throws Exception {
@@ -377,6 +601,9 @@ public class AiImageGenerationService {
     }
 
     private record ImageOptions(String responseFormat, String quality, String size) {
+    }
+
+    private record Dimensions(int width, int height) {
     }
 
     private record DecodedImage(String mimeType, int width, int height, BufferedImage image) {
