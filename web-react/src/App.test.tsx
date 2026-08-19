@@ -67,6 +67,10 @@ vi.mock('./ImageModelConfigPage', () => ({
   ),
 }));
 
+vi.mock('./AgentGeneratedResultsPage', () => ({
+  default: () => <section aria-label="Agent 生成结果">结果归档</section>,
+}));
+
 interface ConfirmLifecycle {
   title?: unknown;
   onCancel?: () => void;
@@ -144,11 +148,41 @@ describe('App primary navigation', () => {
 
     const navigation = await screen.findByRole('menu', { name: '主导航' });
     expect(within(navigation).getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
+      expect.stringContaining('英语素材项目'),
       expect.stringContaining('配置管理'),
       expect.stringContaining('去重单词表'),
       expect.stringContaining('Agent 工作台'),
       expect.stringContaining('图片工作台'),
     ]);
+  });
+
+  it('opens Agent generated results from the expandable English material project', async () => {
+    const user = userEvent.setup();
+    render(<AntApp><App /></AntApp>);
+
+    const navigation = await screen.findByRole('menu', { name: '主导航' });
+    expect(screen.queryByRole('menuitem', { name: 'Agent 生成结果' })).not.toBeInTheDocument();
+    await user.click(within(navigation).getByRole('menuitem', { name: /英语素材项目/ }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Agent 生成结果' }));
+
+    expect(await screen.findByRole('region', { name: 'Agent 生成结果' })).toBeInTheDocument();
+  });
+
+  it('uses the existing unsaved guard before opening Agent generated results', async () => {
+    const user = userEvent.setup();
+    const modal = installConfirmHarness();
+    render(<AntApp><App /></AntApp>);
+
+    const navigation = await screen.findByRole('menu', { name: '主导航' });
+    await user.click(within(navigation).getByRole('menuitem', { name: /Agent 工作台/ }));
+    await user.click(await screen.findByRole('button', { name: '标记 Agent 修改' }));
+    await user.click(within(navigation).getByRole('menuitem', { name: /英语素材项目/ }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Agent 生成结果' }));
+
+    expect(modal.confirm).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('region', { name: 'Agent 流程工作台' })).toBeInTheDocument();
+    modal.confirms[0]?.onOk?.();
+    expect(await screen.findByRole('region', { name: 'Agent 生成结果' })).toBeInTheDocument();
   });
 
   it('opens the Agent flow workbench from primary navigation', async () => {

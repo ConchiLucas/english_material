@@ -7,6 +7,7 @@ import {
   DatabaseOutlined,
   DeleteOutlined,
   EditOutlined,
+  FolderOpenOutlined,
   PlusOutlined,
   PictureOutlined,
   ReloadOutlined,
@@ -61,13 +62,14 @@ import ImageAgentFlowPage from './ImageAgentFlowPage';
 import ImageModelConfigPage from './ImageModelConfigPage';
 import MinioConfigPage from './MinioConfigPage';
 import WordCleanPage from './WordCleanPage';
+import AgentGeneratedResultsPage from './AgentGeneratedResultsPage';
 import { isExecutableImageProvider } from './image-provider-policy';
 
 const { Header, Sider, Content } = Layout;
 const { Title, Text } = Typography;
 
 type ConfigTab = 'database' | 'ai' | 'cli' | 'minio' | 'image-model';
-type WorkspaceSection = 'config' | 'word-clean' | 'agents' | 'image-agents';
+type WorkspaceSection = 'config' | 'word-clean' | 'agents' | 'image-agents' | 'results';
 type BusyAction = 'connection-save' | 'connection-test' | 'ai-save' | 'cli-save' | 'image-model-save' | 'image-model-bootstrap' | `delete-${number}` | null;
 
 const newProvider = (index: number): AIProviderConfigItem => ({
@@ -102,6 +104,12 @@ const configNavigationItems = [
 ];
 
 const workspaceNavigationItems = [
+  {
+    key: 'english-material-project',
+    icon: <FolderOpenOutlined />,
+    label: <><span className="nav-label-full">英语素材项目</span><span className="nav-label-short">项目</span></>,
+    children: [{ key: 'results', label: 'Agent 生成结果' }],
+  },
   { key: 'config', icon: <SettingOutlined />, label: <><span className="nav-label-full">配置管理</span><span className="nav-label-short">配置</span></> },
   { key: 'word-clean', icon: <BookOutlined />, label: <><span className="nav-label-full">去重单词表</span><span className="nav-label-short">词表</span></> },
   { key: 'agents', icon: <ApartmentOutlined />, label: <><span className="nav-label-full">Agent 工作台</span><span className="nav-label-short">Agent</span></> },
@@ -799,6 +807,8 @@ export default function App() {
     ? <StoryAgentFlowPage providers={ai.providers} connections={connections} onDirtyChange={setAgentDirty} />
     : section === 'image-agents'
       ? <ImageAgentFlowPage providers={ai.providers} onDirtyChange={setImageAgentDirty} />
+    : section === 'results'
+      ? <AgentGeneratedResultsPage />
     : section === 'config' && tab === 'minio'
       ? <MinioConfigPage />
     : loading ? (
@@ -862,7 +872,7 @@ export default function App() {
           />
         </nav>
       )}
-      <Layout className={`workspace-layout ${section === 'config' ? 'config-workspace' : section === 'agents' ? 'story-workspace' : section === 'image-agents' ? 'image-workspace' : 'word-workspace'}`}>
+      <Layout className={`workspace-layout ${section === 'config' ? 'config-workspace' : section === 'agents' ? 'story-workspace' : section === 'image-agents' ? 'image-workspace' : section === 'results' ? 'results-workspace' : 'word-workspace'}`}>
         {section === 'config' && (
           <Sider width={264} className="app-sider" aria-label="配置管理导航">
             <div className="sidebar-copy">
@@ -878,7 +888,7 @@ export default function App() {
             />
           </Sider>
         )}
-        <Content className={`app-content ${section === 'word-clean' ? 'word-workspace-content' : section === 'agents' ? 'story-workspace-content' : section === 'image-agents' ? 'image-workspace-content' : ''}`} role="main">{content}</Content>
+        <Content className={`app-content ${section === 'word-clean' ? 'word-workspace-content' : section === 'agents' ? 'story-workspace-content' : section === 'image-agents' ? 'image-workspace-content' : section === 'results' ? 'results-workspace-content' : ''}`} role="main">{content}</Content>
       </Layout>
 
       <Modal
