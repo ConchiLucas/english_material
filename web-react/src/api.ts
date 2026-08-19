@@ -21,6 +21,8 @@ import type {
   ImageFlowConfig,
   ImageFlowUpdate,
   ImagePromptVersion,
+  ImageResultPage,
+  ImageResultPageSize,
   ImageRunDetail,
   ImageRunStart,
   ImageRunSummary,
@@ -188,6 +190,8 @@ export const getImageSourceStories = () =>
   request.get<ApiResponse<ImageSourceStory[]>>('/image-runs/source-stories').then(unwrap);
 export const getImageRuns = () =>
   request.get<ApiResponse<ImageRunSummary[]>>('/image-runs').then(unwrap);
+export const getImageResults = (page: number, pageSize: ImageResultPageSize) =>
+  request.get<ApiResponse<ImageResultPage>>('/image-runs/results', { params: { page, pageSize } }).then(unwrap);
 export const getImageRun = (runId: string) =>
   request.get<ApiResponse<ImageRunDetail>>(`/image-runs/${encodeURIComponent(runId)}`).then(unwrap);
 export const createImageRun = (value: ImageRunStart) =>

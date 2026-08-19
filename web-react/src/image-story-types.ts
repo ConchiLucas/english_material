@@ -239,3 +239,34 @@ export interface ImageRunDetail {
   shots: ImageShot[];
   assets: ImageAsset[];
 }
+
+export type ImageResultPageSize = 10 | 20 | 100;
+
+export interface ImageResultShot {
+  assetId: number;
+  shotKey: string;
+  sceneIndex: number;
+  shotIndex: number;
+  sequence: number;
+  sourceExcerpt: string | null;
+  dialogue: string | null;
+  caption: string | null;
+}
+
+export interface ImageResultItem {
+  runId: string;
+  title: string;
+  stylePresetName: string | null;
+  targetGrade: string;
+  imageCount: number;
+  completedAt: string;
+  shots: ImageResultShot[];
+}
+
+export interface ImageResultPage {
+  items: ImageResultItem[];
+  page: number;
+  pageSize: ImageResultPageSize;
+  totalItems: number;
+  totalPages: number;
+}
