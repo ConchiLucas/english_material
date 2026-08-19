@@ -21,6 +21,7 @@ summary: 提供配置管理、故事与图片 Agent 编排和运行审计，以�
 - 工作台页头提供“开始运行”和“运行记录”。开始运行支持逐行输入单词，或从已保存的外部词库随机预览后创建正式批次。
 - 运行记录是覆盖整个浏览器视口的独立界面：上方约四分之三依次展示批次、按实际调用顺序保存的 Agent（同一 Agent 多轮调用保留多行）和所选 Agent 的完整输入/输出；右侧顶部将当前批次全部单词保持在一行；底部约四分之一独立滚动展示经过后端校验的纯英文故事，只包含 `Scene N: Plain English Title` 场景标题和英文段落，不展示 Markdown、中文说明、清单或修订记录。
 - 批次列表仅显示运行时间和单词数，主审计界面不展示评分、预算停止、是否通过或 Token 等辅助状态；切换批次会同时切换单词、Agent 调用和最终故事。
+- 顶部“英语素材项目”是可展开入口，第一版子菜单仅包含“Agent 生成结果”。结果页只展示 `COMPLETED` 且最终故事非空的故事批次，按创建时间倒序执行服务端分页；默认每页 10 条，可切换 20 或 100 条。每条结果占满内容区宽度，上层单行显示首个 Scene 标题、年级、单词数和生成时间，下层按自然高度完整展示故事并可复制全文；不展示图片结果、Agent 中间输出、评分、Token、筛选或删除操作。
 - 未保存的 Agent 配置/Prompt 编辑会在切换节点、离开 Agent 工作台和浏览器刷新/关闭时受到保护；质量预算弹窗的未保存草稿在关闭弹窗时丢弃，不属于该保护范围。窄屏下详情与画布改为纵向布局，节点和预算表单改单列。
 - 如果已保存的 Provider ID 因 AI 配置删除或停用而失效，工作台将其标为不可用，并要求选择当前已启用且支持文本生成的 Provider 后才能保存 Agent。
 - 去重单词表自动优先使用名称或数据库名匹配 `rob_english_word` 的已配置数据源，并支持关键词、教材难度、来源难度、综合难度、排序和分页。
@@ -38,7 +39,7 @@ summary: 提供配置管理、故事与图片 Agent 编排和运行审计，以�
 
 请求统一定义在 `web-react/src/api.ts`。开发环境默认访问 `http://127.0.0.1:18744/api`；容器生产环境使用同源 `/api`。
 
-主要请求包括 `/connection/*`、`/ai/config`、`POST /ai/config/image/bootstrap`、`/ai/cli/config`、`/minio-config*`、`/story-agents/*`、`/story-runs*`、`/image-agents/*`、`/image-style-presets*`、`/image-runs*`、`/image-assets/{id}/content` 和 `/word-clean*`。图片字节仍通过后端资产 ID 接口读取，浏览器不直接访问 MinIO。
+主要请求包括 `/connection/*`、`/ai/config`、`POST /ai/config/image/bootstrap`、`/ai/cli/config`、`/minio-config*`、`/story-agents/*`、`/story-runs*`（其中 `GET /story-runs/results` 只接受 10/20/100 的分页大小）、`/image-agents/*`、`/image-style-presets*`、`/image-runs*`、`/image-assets/{id}/content` 和 `/word-clean*`。图片字节仍通过后端资产 ID 接口读取，浏览器不直接访问 MinIO。
 
 ## 部署
 
