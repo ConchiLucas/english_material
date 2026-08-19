@@ -5,6 +5,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Page;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -13,6 +14,17 @@ public interface StoryRunRepository extends JpaRepository<StoryRun, Long> {
     Optional<StoryRun> findByRunId(String runId);
 
     List<StoryRun> findAllByOrderByCreatedAtDesc();
+
+    @Query("""
+            select storyRun from StoryRun storyRun
+            where storyRun.status = :status
+              and storyRun.finalStory is not null
+              and trim(storyRun.finalStory) <> ''
+            order by storyRun.createdAt desc, storyRun.id desc
+            """)
+    Page<StoryRun> findCompletedStoryResults(
+            @Param("status") String status,
+            Pageable pageable);
 
     @Query("""
             select storyRun from StoryRun storyRun

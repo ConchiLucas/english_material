@@ -3,6 +3,7 @@ package com.aitaskcenter.controller;
 import com.aitaskcenter.dto.ApiResponse;
 import com.aitaskcenter.dto.StoryRunDtos.RunDetail;
 import com.aitaskcenter.dto.StoryRunDtos.RunSummary;
+import com.aitaskcenter.dto.StoryRunDtos.StoryResultPage;
 import com.aitaskcenter.dto.StoryRunDtos.RandomWordsRequest;
 import com.aitaskcenter.dto.StoryRunDtos.StoryWord;
 import com.aitaskcenter.dto.StoryRunDtos.StartRunRequest;
@@ -38,6 +39,13 @@ public class StoryRunController {
     @GetMapping
     public ApiResponse<List<RunSummary>> listRuns() {
         return ApiResponse.ok(queryService.listRuns());
+    }
+
+    @GetMapping("/results")
+    public ApiResponse<StoryResultPage> listResults(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "10") int pageSize) {
+        return ApiResponse.ok(queryService.listResults(page, pageSize));
     }
 
     @GetMapping("/{runId}")

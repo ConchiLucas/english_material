@@ -12,6 +12,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.aitaskcenter.dto.StoryRunDtos.RunDetail;
 import com.aitaskcenter.dto.StoryRunDtos.RunStepView;
 import com.aitaskcenter.dto.StoryRunDtos.RunSummary;
+import com.aitaskcenter.dto.StoryRunDtos.StoryResultItem;
+import com.aitaskcenter.dto.StoryRunDtos.StoryResultPage;
 import com.aitaskcenter.dto.StoryRunDtos.StoryWord;
 import com.aitaskcenter.service.StoryRunQueryService;
 import com.aitaskcenter.service.StoryRunExecutionService;
@@ -84,6 +86,26 @@ class StoryRunControllerTest {
                 .andExpect(jsonPath("$.data[0].words[0].word").value("book"));
 
         verify(service).listRuns();
+    }
+
+    @Test
+    void listsCompletedStoryResultsWithExplicitPagination() throws Exception {
+        OffsetDateTime time = OffsetDateTime.parse("2026-08-16T08:08:00+08:00");
+        when(service.listResults(2, 20)).thenReturn(new StoryResultPage(
+                List.of(new StoryResultItem(
+                        "run-2", "The Wrong Recipe", "三年级上册", 20,
+                        "Scene 1: The Wrong Recipe\n\nMimi opens a book.", time)),
+                2, 20, 21, 2));
+
+        mockMvc.perform(get("/api/story-runs/results?page=2&pageSize=20"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.page").value(2))
+                .andExpect(jsonPath("$.data.pageSize").value(20))
+                .andExpect(jsonPath("$.data.items[0].title").value("The Wrong Recipe"))
+                .andExpect(jsonPath("$.data.items[0].wordCount").value(20));
+
+        verify(service).listResults(2, 20);
     }
 
     @Test

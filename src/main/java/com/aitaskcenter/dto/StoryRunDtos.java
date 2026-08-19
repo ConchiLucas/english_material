@@ -30,6 +30,23 @@ public final class StoryRunDtos {
             OffsetDateTime finishedAt) {
     }
 
+    public record StoryResultItem(
+            String runId,
+            String title,
+            String targetGrade,
+            int wordCount,
+            String finalStory,
+            OffsetDateTime createdAt) {
+    }
+
+    public record StoryResultPage(
+            List<StoryResultItem> items,
+            int page,
+            int pageSize,
+            long totalItems,
+            int totalPages) {
+    }
+
     public record RunStepView(
             Long id,
             int sequence,
