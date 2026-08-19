@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.aitaskcenter.config.ImageAgentSnapshotContract;
+import com.aitaskcenter.dto.ImageRunDtos.ImageResultPage;
 import com.aitaskcenter.dto.ImageRunDtos.RunDetail;
 import com.aitaskcenter.dto.ImageRunDtos.SourceStoryView;
 import com.aitaskcenter.model.ImageAsset;
@@ -31,6 +32,8 @@ import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -344,6 +347,68 @@ class ImageRunQueryServiceTest {
         assertThatThrownBy(() -> service.getRun("image-corrupt-assets"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("图片运行历史资产数量超限");
+    }
+
+    @Test
+    void pagesCompletedFinalImagesAndBulkJoinsShotsWithoutLoadingSteps() {
+        ImageRun newer = imageRun("image-new", "[]", "2026-08-16T10:00:00+08:00");
+        newer.setStorySnapshot("Scene 1: The Moon Picnic\n\nMimi opens a book.");
+        newer.setFinishedAt(OffsetDateTime.parse("2026-08-16T10:05:00+08:00"));
+        ImageRun older = imageRun("image-old", "[]", "2026-08-15T10:00:00+08:00");
+        older.setStorySnapshot("Story without a scene heading.");
+        older.setFinishedAt(OffsetDateTime.parse("2026-08-15T10:05:00+08:00"));
+        PageRequest requested = PageRequest.of(0, 10);
+        when(runs.findCompletedImageResults("COMPLETED", requested))
+                .thenReturn(new PageImpl<>(List.of(newer, older), requested, 12));
+
+        ImageShot second = shot(2, "scene-1-shot-2");
+        second.setRunId("image-new");
+        second.setShotIndex(2);
+        ImageShot first = shot(1, "scene-1-shot-1");
+        first.setRunId("image-new");
+        ImageShot orphanShot = shot(1, "scene-9-shot-1");
+        orphanShot.setRunId("image-old");
+        when(shots.findAllByRunIdInOrderByRunIdAscSequenceAsc(List.of("image-new", "image-old")))
+                .thenReturn(List.of(second, orphanShot, first));
+
+        ImageAsset secondAsset = asset(42L, "FINAL", "scene-1-shot-2", "safe/second.png");
+        secondAsset.setRunId("image-new");
+        secondAsset.setShotKey("scene-1-shot-2");
+        ImageAsset firstAsset = asset(41L, "FINAL", "scene-1-shot-1", "safe/first.png");
+        firstAsset.setRunId("image-new");
+        ImageAsset orphanAsset = asset(99L, "FINAL", "missing-shot", "safe/orphan.png");
+        orphanAsset.setRunId("image-old");
+        orphanAsset.setShotKey("missing-shot");
+        when(assets.findAllByRunIdInAndAssetTypeOrderByRunIdAscAssetKeyAsc(
+                List.of("image-new", "image-old"), "FINAL"))
+                .thenReturn(List.of(orphanAsset, secondAsset, firstAsset));
+
+        ImageResultPage result = service.listResults(1, 10);
+
+        assertThat(result.page()).isEqualTo(1);
+        assertThat(result.pageSize()).isEqualTo(10);
+        assertThat(result.totalItems()).isEqualTo(12);
+        assertThat(result.totalPages()).isEqualTo(2);
+        assertThat(result.items()).hasSize(2);
+        assertThat(result.items().get(0).title()).isEqualTo("The Moon Picnic");
+        assertThat(result.items().get(0).stylePresetName()).isEqualTo("Paper Cut");
+        assertThat(result.items().get(0).completedAt()).isEqualTo(newer.getFinishedAt());
+        assertThat(result.items().get(0).shots()).extracting(item -> item.assetId())
+                .containsExactly(41L, 42L);
+        assertThat(result.items().get(1).title()).isEqualTo("未命名图片故事");
+        assertThat(result.items().get(1).shots()).isEmpty();
+        verifyNoInteractions(steps);
+    }
+
+    @Test
+    void rejectsUnsupportedImageResultPaginationBeforeQueryingRepositories() {
+        assertThatThrownBy(() -> service.listResults(0, 10))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("页码必须从 1 开始");
+        assertThatThrownBy(() -> service.listResults(1, 25))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("每页数量只支持 10、20 或 100");
+        verifyNoInteractions(runs, shots, assets, steps, stories);
     }
 
     @Test

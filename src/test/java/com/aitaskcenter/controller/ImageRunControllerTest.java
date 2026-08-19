@@ -10,6 +10,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.aitaskcenter.dto.ImageRunDtos.RunDetail;
+import com.aitaskcenter.dto.ImageRunDtos.ImageResultItem;
+import com.aitaskcenter.dto.ImageRunDtos.ImageResultPage;
+import com.aitaskcenter.dto.ImageRunDtos.ImageResultShot;
 import com.aitaskcenter.dto.ImageRunDtos.RunSummary;
 import com.aitaskcenter.dto.ImageRunDtos.SourceStoryView;
 import com.aitaskcenter.dto.ImageRunDtos.StartImageRunRequest;
@@ -80,6 +83,29 @@ class ImageRunControllerTest {
 
         verify(executionService).createRun(request);
         verifyNoMoreInteractions(executionService);
+    }
+
+    @Test
+    void exposesPaginatedFinalImageResults() throws Exception {
+        OffsetDateTime now = OffsetDateTime.parse("2026-08-15T10:00:00+08:00");
+        ImageResultShot shot = new ImageResultShot(
+                41L, "scene-1-shot-1", 1, 1, 1, "Mimi opens a book.", "Hello!", "A new day.");
+        ImageResultItem item = new ImageResultItem(
+                "image-1", "The Moon Picnic", "Paper Cut", "小学三年级上册", 1, now, List.of(shot));
+        when(queryService.listResults(2, 20))
+                .thenReturn(new ImageResultPage(List.of(item), 2, 20, 21, 2));
+
+        mockMvc.perform(get("/api/image-runs/results")
+                        .param("page", "2")
+                        .param("pageSize", "20"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.page").value(2))
+                .andExpect(jsonPath("$.data.pageSize").value(20))
+                .andExpect(jsonPath("$.data.totalItems").value(21))
+                .andExpect(jsonPath("$.data.items[0].title").value("The Moon Picnic"))
+                .andExpect(jsonPath("$.data.items[0].shots[0].assetId").value(41));
+
+        verify(queryService).listResults(2, 20);
     }
 
     private RunSummary summary(String runId, OffsetDateTime now) {

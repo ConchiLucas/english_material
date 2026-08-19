@@ -56,6 +56,35 @@ public final class ImageRunDtos {
             OffsetDateTime finishedAt) {
     }
 
+    public record ImageResultShot(
+            Long assetId,
+            String shotKey,
+            int sceneIndex,
+            int shotIndex,
+            int sequence,
+            String sourceExcerpt,
+            String dialogue,
+            String caption) {
+    }
+
+    public record ImageResultItem(
+            String runId,
+            String title,
+            String stylePresetName,
+            String targetGrade,
+            int imageCount,
+            OffsetDateTime completedAt,
+            List<ImageResultShot> shots) {
+    }
+
+    public record ImageResultPage(
+            List<ImageResultItem> items,
+            int page,
+            int pageSize,
+            long totalItems,
+            int totalPages) {
+    }
+
     public record RunStepView(
             Long id,
             int sequence,

@@ -4,6 +4,9 @@ import com.aitaskcenter.config.ImageAgentSnapshotContract;
 import com.aitaskcenter.config.StorySnapshotLimits;
 import com.aitaskcenter.dto.ImageRunDtos.AssetView;
 import com.aitaskcenter.dto.ImageRunDtos.AgentSnapshotView;
+import com.aitaskcenter.dto.ImageRunDtos.ImageResultItem;
+import com.aitaskcenter.dto.ImageRunDtos.ImageResultPage;
+import com.aitaskcenter.dto.ImageRunDtos.ImageResultShot;
 import com.aitaskcenter.dto.ImageRunDtos.RunDetail;
 import com.aitaskcenter.dto.ImageRunDtos.RunStepView;
 import com.aitaskcenter.dto.ImageRunDtos.RunSummary;
@@ -28,10 +31,15 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -46,6 +54,9 @@ public class ImageRunQueryService {
     private static final int MAX_RUN_ASSETS = 60;
     private static final int MAX_AGENT_SNAPSHOT_LENGTH = 256_000;
     private static final int MAX_AGENT_PROMPT_LENGTH = 20_000;
+    private static final Set<Integer> RESULT_PAGE_SIZES = Set.of(10, 20, 100);
+    private static final Pattern FIRST_SCENE_TITLE = Pattern.compile(
+            "(?m)^[\\t ]*Scene\\s+\\d+\\s*:\\s*([^\\r\\n]+)$");
     private static final Set<String> AGENT_SNAPSHOT_FIELDS = Set.of(
             "sequence", "stageKey", "key", "name", "systemPrompt", "promptVersion", "temperature", "provider");
     private static final Set<String> PROVIDER_SNAPSHOT_FIELDS = Set.of(
@@ -101,6 +112,55 @@ public class ImageRunQueryService {
                 .limit(MAX_HISTORY_ITEMS)
                 .map(this::toSummary)
                 .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public ImageResultPage listResults(int page, int pageSize) {
+        if (page < 1) throw new IllegalArgumentException("页码必须从 1 开始");
+        if (!RESULT_PAGE_SIZES.contains(pageSize)) {
+            throw new IllegalArgumentException("每页数量只支持 10、20 或 100");
+        }
+        Page<ImageRun> result = runRepository.findCompletedImageResults(
+                "COMPLETED", PageRequest.of(page - 1, pageSize));
+        List<ImageRun> runRows = result.getContent();
+        if (runRows.isEmpty()) {
+            return new ImageResultPage(List.of(), page, pageSize, result.getTotalElements(), result.getTotalPages());
+        }
+
+        List<String> runIds = runRows.stream().map(ImageRun::getRunId).toList();
+        List<ImageShot> shotRows = shotRepository.findAllByRunIdInOrderByRunIdAscSequenceAsc(runIds);
+        List<ImageAsset> assetRows = assetRepository
+                .findAllByRunIdInAndAssetTypeOrderByRunIdAscAssetKeyAsc(runIds, "FINAL");
+        Map<String, ImageShot> shotsByRunAndKey = new HashMap<>();
+        for (ImageShot shot : shotRows) {
+            if (shot.getRunId() != null && shot.getShotKey() != null) {
+                shotsByRunAndKey.putIfAbsent(resultKey(shot.getRunId(), shot.getShotKey()), shot);
+            }
+        }
+        Map<String, List<ImageResultShot>> resultsByRun = new HashMap<>();
+        for (ImageAsset asset : assetRows) {
+            ImageShot shot = shotsByRunAndKey.get(resultKey(asset.getRunId(), asset.getShotKey()));
+            if (asset.getId() == null || shot == null) continue;
+            resultsByRun.computeIfAbsent(asset.getRunId(), ignored -> new ArrayList<>())
+                    .add(new ImageResultShot(asset.getId(), shot.getShotKey(), shot.getSceneIndex(),
+                            shot.getShotIndex(), shot.getSequence(), cleanOrNull(shot.getSourceExcerpt()),
+                            cleanOrNull(shot.getDialogue()), cleanOrNull(shot.getCaption())));
+        }
+        resultsByRun.values().forEach(shots -> shots.sort(
+                Comparator.comparingInt(ImageResultShot::sequence).thenComparing(ImageResultShot::assetId)));
+        List<ImageResultItem> items = runRows.stream()
+                .map(run -> {
+                    List<ImageResultShot> resultShots = List.copyOf(
+                            resultsByRun.getOrDefault(run.getRunId(), List.of()));
+                    OffsetDateTime completedAt = run.getFinishedAt() == null ? run.getCreatedAt() : run.getFinishedAt();
+                    String targetGrade = clean(run.getTargetGrade());
+                    return new ImageResultItem(run.getRunId(), storyTitle(run.getStorySnapshot()),
+                            styleName(run.getStyleSnapshotJson()),
+                            targetGrade.isEmpty() ? "不限制" : targetGrade,
+                            resultShots.size(), completedAt, resultShots);
+                })
+                .toList();
+        return new ImageResultPage(items, page, pageSize, result.getTotalElements(), result.getTotalPages());
     }
 
     @Transactional(readOnly = true)
@@ -429,6 +489,20 @@ public class ImageRunQueryService {
         } catch (Exception exception) {
             return null;
         }
+    }
+
+    private static String resultKey(String runId, String shotKey) {
+        return clean(runId) + "\u0000" + clean(shotKey);
+    }
+
+    private static String storyTitle(String story) {
+        Matcher matcher = FIRST_SCENE_TITLE.matcher(story == null ? "" : story);
+        return matcher.find() ? matcher.group(1).trim() : "未命名图片故事";
+    }
+
+    private static String cleanOrNull(String value) {
+        String cleaned = clean(value);
+        return cleaned.isEmpty() ? null : cleaned;
     }
 
     private static Long styleId(String value) {
