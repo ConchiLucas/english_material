@@ -71,6 +71,10 @@ vi.mock('./AgentGeneratedResultsPage', () => ({
   default: () => <section aria-label="Agent 生成结果">结果归档</section>,
 }));
 
+vi.mock('./ImageGeneratedResultsPage', () => ({
+  default: () => <section aria-label="图片生成结果">最终图片归档</section>,
+}));
+
 interface ConfirmLifecycle {
   title?: unknown;
   onCancel?: () => void;
@@ -166,6 +170,38 @@ describe('App primary navigation', () => {
     await user.click(await screen.findByRole('menuitem', { name: 'Agent 生成结果' }));
 
     expect(await screen.findByRole('region', { name: 'Agent 生成结果' })).toBeInTheDocument();
+  });
+
+  it('lists image results after Agent results and opens the final image gallery', async () => {
+    const user = userEvent.setup();
+    render(<AntApp><App /></AntApp>);
+
+    const navigation = await screen.findByRole('menu', { name: '主导航' });
+    await user.click(within(navigation).getByRole('menuitem', { name: /英语素材项目/ }));
+    await screen.findByRole('menuitem', { name: '图片生成结果' });
+    const resultItems = await screen.findAllByRole('menuitem');
+    const projectItems = resultItems.filter((item) => /Agent 生成结果|图片生成结果/.test(item.textContent || ''));
+    expect(projectItems.map((item) => item.textContent)).toEqual(['Agent 生成结果', '图片生成结果']);
+    await user.click(screen.getByRole('menuitem', { name: '图片生成结果' }));
+
+    expect(await screen.findByRole('region', { name: '图片生成结果' })).toBeInTheDocument();
+  });
+
+  it('protects a dirty image workbench before opening final image results', async () => {
+    const user = userEvent.setup();
+    const modal = installConfirmHarness();
+    render(<AntApp><App /></AntApp>);
+
+    const navigation = await screen.findByRole('menu', { name: '主导航' });
+    await user.click(within(navigation).getByRole('menuitem', { name: /图片工作台/ }));
+    await user.click(await screen.findByRole('button', { name: '标记图片 Agent 修改' }));
+    await user.click(within(navigation).getByRole('menuitem', { name: /英语素材项目/ }));
+    await user.click(await screen.findByRole('menuitem', { name: '图片生成结果' }));
+
+    expect(modal.confirm).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('region', { name: '图片 Agent 工作台' })).toBeInTheDocument();
+    modal.confirms[0]?.onOk?.();
+    expect(await screen.findByRole('region', { name: '图片生成结果' })).toBeInTheDocument();
   });
 
   it('uses the existing unsaved guard before opening Agent generated results', async () => {
