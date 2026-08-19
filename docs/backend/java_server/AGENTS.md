@@ -72,6 +72,7 @@ summary: 维护数据库、AI、故事与图片 Agent 配置及有界执行，�
 | `GET /api/image-runs/source-stories` | 查询最终故事非空且可作为图片来源的已有故事批次 |
 | `POST /api/image-runs` | 接收 `storyRunId + stylePresetId`，保存快照并创建异步图片批次 |
 | `GET /api/image-runs` | 按创建时间倒序查询图片批次 |
+| `GET /api/image-runs/results` | 仅查询已完成且含最终图片的批次，支持 10、20、100 条服务端分页，并返回当前页最终分镜展示数据 |
 | `GET /api/image-runs/{runId}` | 查询故事/配置快照、全部步骤、分镜和资产元数据 |
 | `GET /api/image-assets/{assetId}/content` | 按资产 ID 校验持久化 Bucket/对象键与 SHA-256 后返回 PNG/JPEG 内容和长期缓存头 |
 | `/api/word-clean` | 分页查询去重单词 |

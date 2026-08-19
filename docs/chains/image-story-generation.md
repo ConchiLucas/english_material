@@ -88,6 +88,8 @@ QUEUED
 
 `tb_image_run_step` 最多形成 12 个按固定序号排列的记录：九个 `AGENT` 步骤保存完整输入、原始输出、解析输出、Provider/模型、Prompt 版本、Token、耗时和错误；三个 `PROGRAM` 步骤保存实际输入及生成资产 key/数量或完成分镜 key/数量。图片记录全屏页按批次联动单行输入单词、实际步骤、完整输入/输出，并在底部切换参考设定图和最终分镜图；活动批次轮询，终态停止。
 
+“英语素材项目 / 图片生成结果”是面向最终交付物的独立只读入口，不复用运行审计详情。后端只分页返回 `COMPLETED` 且至少有一项 `FINAL` 资产的批次，当前页批量读取分镜和最终资产后按 Scene/Shot 稳定排序；前端默认每页 10 条，可切换 20 或 100 条。每个批次以全宽容器展示单行摘要和响应式 16:9 最终图片卡片，只通过资产 ID API 加载并预览图片，不暴露 MinIO 地址，也不展示参考图、底图、中间步骤、Token、评分或失败批次。
+
 ## 数据表
 
 | 表 | 当前用途 |
@@ -117,6 +119,7 @@ QUEUED
 | `GET /api/image-runs/source-stories` | 查询可用的已有最终故事 |
 | `POST /api/image-runs` | 保存快照并创建异步图片批次 |
 | `GET /api/image-runs` | 查询最近图片批次 |
+| `GET /api/image-runs/results` | 分页查询已完成且含最终图片的批次；分页大小只允许 10、20、100 |
 | `GET /api/image-runs/{runId}` | 查询快照、步骤、分镜和资产元数据 |
 | `GET /api/image-assets/{assetId}/content` | 按资产 ID 返回校验后的图片内容 |
 | `GET /api/minio-config` | 查询脱敏 MinIO 配置 |
