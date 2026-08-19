@@ -101,3 +101,19 @@ export interface StoryRunDetail extends StoryRunSummary {
   errorMessage: string | null;
   steps: StoryRunStep[];
 }
+export type StoryResultPageSize = 10 | 20 | 100;
+export interface StoryResultItem {
+  runId: string;
+  title: string;
+  targetGrade: string;
+  wordCount: number;
+  finalStory: string;
+  createdAt: string;
+}
+export interface StoryResultPage {
+  items: StoryResultItem[];
+  page: number;
+  pageSize: StoryResultPageSize;
+  totalItems: number;
+  totalPages: number;
+}

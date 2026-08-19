@@ -7,6 +7,8 @@ import type {
   StoryFlowBudget,
   StoryPromptVersion,
   StoryRunDetail,
+  StoryResultPage,
+  StoryResultPageSize,
   StoryRunSummary,
   StoryWord,
   StoryWordLibrary,
@@ -155,6 +157,8 @@ export const updateStoryFlowBudget = (value: StoryFlowBudget) =>
   request.put<ApiResponse<StoryFlowBudget>>('/story-agents/flow/config', value).then(unwrap);
 export const getStoryRuns = () => request.get<ApiResponse<StoryRunSummary[]>>('/story-runs').then(unwrap);
 export const getStoryRun = (runId: string) => request.get<ApiResponse<StoryRunDetail>>(`/story-runs/${encodeURIComponent(runId)}`).then(unwrap);
+export const getStoryResults = (page: number, pageSize: StoryResultPageSize) =>
+  request.get<ApiResponse<StoryResultPage>>('/story-runs/results', { params: { page, pageSize } }).then(unwrap);
 export const createStoryRun = (value: { words: StoryWord[]; targetGrade: string }) =>
   request.post<ApiResponse<StoryRunSummary>>('/story-runs', value).then(unwrap);
 export const getStoryWordLibraries = (connectionId: number) =>
