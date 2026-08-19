@@ -63,15 +63,17 @@ class StoryAgentCatalogTest {
                         .map(StoryAgentCatalog.StageDefinition::order)
                         .toList());
         assertEquals(
-                List.of(
-                        "targeted-reviser",
-                        "story-writer",
-                        "story-director",
-                        "pitch-humor",
-                        "pitch-adventure",
-                        "pitch-wonder",
-                        "vocabulary-planner"),
+                List.of("targeted-reviser", "story-writer"),
                 StoryAgentCatalog.require("quality-decider").downstream());
+        assertEquals(
+                List.of("candidateStory", "targetGrade", "qualityRound"),
+                StoryAgentCatalog.require("review-fun").variables());
+        assertEquals(
+                List.of("candidateStory", "targetWords", "wordUsage", "targetGrade", "qualityRound"),
+                StoryAgentCatalog.require("review-language").variables());
+        assertEquals(
+                List.of("candidateStory", "storyBlueprint", "qualityRound"),
+                StoryAgentCatalog.require("review-continuity").variables());
     }
 
     @Test
@@ -80,8 +82,20 @@ class StoryAgentCatalogTest {
         String reviserPrompt = StoryAgentCatalog.require("targeted-reviser").defaultPrompt();
 
         assertTrue(writerPrompt.contains("只输出完整英文故事正文"));
+        assertTrue(writerPrompt.contains("可见冲突"));
+        assertTrue(writerPrompt.contains("The cat"));
+        assertTrue(writerPrompt.contains("高中"));
+        assertTrue(writerPrompt.contains("未指定学段"));
+        assertTrue(writerPrompt.contains("8 到 16"));
+        assertTrue(StoryAgentCatalog.require("story-scorer").defaultPrompt().contains("未指定学段"));
+        assertTrue(StoryAgentCatalog.require("story-scorer").defaultPrompt().contains("初中及以后"));
         assertFalse(writerPrompt.contains("位置清单"));
+        assertTrue(StoryAgentCatalog.require("story-director").defaultPrompt().contains("BEAT_COUNTS"));
+        assertTrue(StoryAgentCatalog.require("vocabulary-planner").defaultPrompt().contains("8 到 16 个画面"));
+        assertTrue(StoryAgentCatalog.require("pitch-humor").defaultPrompt().contains("8 到 16 个可入画动作"));
+        assertTrue(StoryAgentCatalog.require("pitch-adventure").defaultPrompt().contains("8 和 9"));
         assertTrue(reviserPrompt.contains("只输出修订后的完整英文故事正文"));
+        assertTrue(reviserPrompt.contains("不够 8 个可画动作"));
         assertFalse(reviserPrompt.contains("变更记录"));
     }
 }

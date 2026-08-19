@@ -71,7 +71,7 @@ describe('ImageModelConfigPage', () => {
     await user.click(screen.getAllByRole('button', { name: '添加图片模型' })[0]);
 
     expect(screen.getByRole('textbox', { name: '配置 ID' })).toHaveValue('antigravity-gemini-image');
-    expect(screen.getByRole('textbox', { name: '模型名称' })).toHaveValue('gemini-3-pro-image');
+    expect(screen.getByRole('textbox', { name: '模型名称' })).toHaveValue('gemini-3.1-flash-image');
     expect(screen.getByText('IMAGE_GENERATION')).toBeInTheDocument();
     expect(screen.getByText('IMAGE_REFERENCE')).toBeInTheDocument();
     expect(screen.getByText('b64_json')).toBeInTheDocument();

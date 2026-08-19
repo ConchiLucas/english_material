@@ -19,21 +19,6 @@ interface StyleDraft { id: number | null; name: string; positivePrompt: string; 
 interface ModelDraft { providerId: string; updatedAt: string | null; }
 type TabKey = 'agents' | 'styles' | 'model';
 
-const upstreamByNode: Record<string, string[]> = {
-  'image-story-analyst': [],
-  'image-continuity-designer': [],
-  'image-art-director': [],
-  'image-action-storyboarder': ['image-story-analyst', 'image-continuity-designer', 'image-art-director'],
-  'image-learning-storyboarder': ['image-story-analyst', 'image-continuity-designer', 'image-art-director'],
-  'image-storyboard-director': ['image-story-analyst', 'image-continuity-designer', 'image-art-director', 'image-action-storyboarder', 'image-learning-storyboarder'],
-  'image-reference-planner': ['image-story-analyst', 'image-continuity-designer', 'image-art-director', 'image-storyboard-director'],
-  'image-shot-prompt-engineer': ['image-continuity-designer', 'image-art-director', 'image-storyboard-director', 'image-reference-planner'],
-  'image-prompt-preflight': ['image-story-analyst', 'image-continuity-designer', 'image-art-director', 'image-storyboard-director', 'image-reference-planner', 'image-shot-prompt-engineer'],
-  'reference-image-generator': ['image-prompt-preflight'],
-  'shot-image-generator': ['image-prompt-preflight', 'reference-image-generator'],
-  'text-compositor': ['image-prompt-preflight', 'shot-image-generator'],
-};
-
 const fromNode = (node: ImageAgentNode): AgentDraft => ({ systemPrompt: node.systemPrompt ?? '', aiProviderId: node.aiProviderId ?? '', temperature: node.temperature ?? 0.7, enabled: node.enabled !== false, updatedAt: node.updatedAt });
 const sameDraft = (a: AgentDraft, b: AgentDraft) => a.systemPrompt === b.systemPrompt && a.aiProviderId === b.aiProviderId && a.temperature === b.temperature && a.enabled === b.enabled && a.updatedAt === b.updatedAt;
 const sameModelDraft = (a: ModelDraft, b: ModelDraft) => a.providerId === b.providerId && a.updatedAt === b.updatedAt;
@@ -83,9 +68,9 @@ export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAg
   const nodeNames = useMemo(() => new Map(nodes.map((item) => [item.key, item.name])), [nodes]);
   const downstreamByNode = useMemo(() => {
     const result = new Map<string, string[]>();
-    Object.entries(upstreamByNode).forEach(([key, upstream]) => upstream.forEach((source) => result.set(source, [...(result.get(source) ?? []), key])));
+    nodes.forEach((item) => (item.upstream ?? []).forEach((source) => result.set(source, [...(result.get(source) ?? []), item.key])));
     return result;
-  }, []);
+  }, [nodes]);
   const requiredAgentProblems = useMemo(() => {
     const agents = nodes.filter((item) => item.editable);
     const problems: string[] = [];
@@ -242,7 +227,7 @@ export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAg
     </div>
     <aside ref={detailRef} className="image-story-editor" aria-label="图片节点详情">{selected ? <>
       <header><Tag>{selected.roleType}</Tag><h3>{selected.name}</h3><p>{selected.description}</p></header>
-      <dl className="image-story-relations"><div><dt>上游</dt><dd>{relationNames(upstreamByNode[selected.key] ?? [])}</dd></div><div><dt>下游</dt><dd>{relationNames(downstreamByNode.get(selected.key) ?? [])}</dd></div></dl>
+      <dl className="image-story-relations"><div><dt>上游</dt><dd>{relationNames(selected.upstream ?? [])}</dd></div><div><dt>下游</dt><dd>{relationNames(downstreamByNode.get(selected.key) ?? [])}</dd></div></dl>
       {selected.editable && draft ? <Form layout="vertical">
         <div className="image-story-status"><Form.Item label="启用"><Switch aria-label="启用 Agent" checked={draft.enabled} onChange={(value) => updateDraft('enabled', value)} /></Form.Item><span>{`Prompt v${selected.promptVersion ?? 0} · ${formatDate(selected.updatedAt)}`}</span></div>
         <Form.Item label="System Prompt" required><Input.TextArea aria-label="System Prompt" rows={13} maxLength={20000} showCount value={draft.systemPrompt} onChange={(event) => updateDraft('systemPrompt', event.target.value)} /></Form.Item>
@@ -278,9 +263,9 @@ export default function ImageAgentFlowPage({ providers, onDirtyChange }: ImageAg
     <p>选择已有最终故事和启用画风。九个 Agent 完成规划后，每个分镜只调用一次图片模型。</p>
     {sourcesError && <Alert type="error" showIcon message="故事批次加载失败" description={sourcesError} />}
     {sourcesLoading ? <Spin /> : <Form layout="vertical">
-      <Form.Item label="故事批次"><Select aria-label="故事批次" value={storyRunId || undefined} placeholder="选择已有故事批次" onChange={setStoryRunId} options={sources.map((item) => ({ value: item.runId, label: `${formatDate(item.createdAt)} · ${item.targetGrade} · ${item.runId}` }))} /></Form.Item>
+      <Form.Item label="故事批次"><Select aria-label="故事批次" value={storyRunId || undefined} placeholder="选择已有故事批次" onChange={setStoryRunId} options={sources.map((item) => ({ value: item.runId, label: `${formatDate(item.createdAt)} · ${item.targetGrade || '不限制'} · ${item.runId}` }))} /></Form.Item>
       <Form.Item label="画风预设"><Select aria-label="画风预设" value={stylePresetId ?? undefined} placeholder="选择启用的画风" onChange={setStylePresetId} options={enabledStyles.map((item) => ({ value: item.id, label: item.name }))} /></Form.Item>
-      {selectedStory && <div className="image-story-source-preview"><div><strong>{selectedStory.targetGrade}</strong>{selectedStory.words.map((word) => <Tag key={`${word.word}-${word.meaning}`}>{word.word}</Tag>)}</div><pre>{selectedStory.finalStory}</pre></div>}
+      {selectedStory && <div className="image-story-source-preview"><div><strong>{selectedStory.targetGrade || '不限制'}</strong>{selectedStory.words.map((word) => <Tag key={`${word.word}-${word.meaning}`}>{word.word}</Tag>)}</div><pre>{selectedStory.finalStory}</pre></div>}
       <Alert type="info" showIcon message="16:9 · 每个 Scene 1–5 张 · 最多 20 张" description="根据故事含义动态拆成多张图片，生成后由人工审核；第一版不自动重绘。" />
       {sources.length === 0 && <Alert type="warning" showIcon message="没有可用的故事批次，请先完成英文故事生成。" />}
       {enabledStyles.length === 0 && <Alert type="warning" showIcon message="没有启用的画风预设，请先启用或新增画风。" />}

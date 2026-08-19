@@ -29,8 +29,8 @@ public final class ImageAgentDtos {
 
     public record AgentView(String key, String name, String nodeKind, String roleType, String stageKey,
                             int order, String parallelGroup, String description, List<String> variables,
-                            String systemPrompt, String aiProviderId, Double temperature, Boolean enabled,
-                            Integer promptVersion, OffsetDateTime updatedAt, boolean editable) {
+                            List<String> upstream, String systemPrompt, String aiProviderId, Double temperature,
+                            Boolean enabled, Integer promptVersion, OffsetDateTime updatedAt, boolean editable) {
     }
 
     public record StageView(String key, String name, String note, int order, List<AgentView> nodes) {

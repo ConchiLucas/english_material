@@ -218,30 +218,32 @@ public class ImageRunExecutionService {
             run.setStartedAt(now());
             run = runRepository.saveAndFlush(run);
             JsonNode targetWords = readTree(prepared.targetWordsJson(), "故事单词快照无效");
-            Map<String, AgentCall> foundationCalls = new LinkedHashMap<>();
-            foundationCalls.put(FOUNDATION_KEYS.get(0), new AgentCall(
+            StepResult analysisStep = call(runId, state, FOUNDATION_KEYS.get(0),
                     input("storySnapshot", prepared.run().storySnapshot(),
                             "targetGrade", prepared.run().targetGrade(),
                             "targetWords", targetWords,
                             "imageSettings", prepared.flow()),
-                    parser::storyAnalysis));
-            foundationCalls.put(FOUNDATION_KEYS.get(1), new AgentCall(
+                    parser::storyAnalysis);
+            StoryAnalysis analysis = analysisStep.parsed(StoryAnalysis.class);
+            Map<String, AgentCall> visualFoundationCalls = new LinkedHashMap<>();
+            visualFoundationCalls.put(FOUNDATION_KEYS.get(1), new AgentCall(
                     input("storySnapshot", prepared.run().storySnapshot(),
                             "targetGrade", prepared.run().targetGrade(),
                             "targetWords", targetWords,
+                            "storyAnalysis", analysis,
                             "imageSettings", prepared.flow()),
                     parser::continuityBible));
-            foundationCalls.put(FOUNDATION_KEYS.get(2), new AgentCall(
+            visualFoundationCalls.put(FOUNDATION_KEYS.get(2), new AgentCall(
                     input("storySnapshot", prepared.run().storySnapshot(),
                             "targetGrade", prepared.run().targetGrade(),
                             "stylePreset", prepared.styleSnapshot(),
+                            "storyAnalysis", analysis,
                             "imageSettings", prepared.flow()),
                     parser::styleBible));
-            Map<String, StepResult> foundation = callParallel(runId, state, foundationCalls);
-            StoryAnalysis analysis = foundation.get(FOUNDATION_KEYS.get(0)).parsed(StoryAnalysis.class);
-            ContinuityBible continuity = foundation.get(FOUNDATION_KEYS.get(1)).parsed(ContinuityBible.class);
-            StyleBible styleBible = foundation.get(FOUNDATION_KEYS.get(2)).parsed(StyleBible.class);
-            validateStep(foundation.get(FOUNDATION_KEYS.get(1)),
+            Map<String, StepResult> visualFoundation = callParallel(runId, state, visualFoundationCalls);
+            ContinuityBible continuity = visualFoundation.get(FOUNDATION_KEYS.get(1)).parsed(ContinuityBible.class);
+            StyleBible styleBible = visualFoundation.get(FOUNDATION_KEYS.get(2)).parsed(StyleBible.class);
+            validateStep(visualFoundation.get(FOUNDATION_KEYS.get(1)),
                     () -> parser.validateContinuityReferences(analysis, continuity));
 
             Map<String, AgentCall> storyboardCalls = new LinkedHashMap<>();
@@ -254,8 +256,7 @@ public class ImageRunExecutionService {
                                 "imageSettings", prepared.flow()),
                         raw -> {
                             StoryboardProposal proposal = parser.storyboardProposal(raw);
-                            parser.validateProposalReferences(analysis, proposal);
-                            return proposal;
+                            return parser.validateProposalReferences(analysis, proposal);
                         }));
             }
             Map<String, StepResult> storyboards = callParallel(runId, state, storyboardCalls);
@@ -272,8 +273,7 @@ public class ImageRunExecutionService {
                             "imageSettings", prepared.flow()),
                     raw -> {
                         FinalStoryboard value = parser.finalStoryboard(raw);
-                        parser.validateCoverage(analysis, actionProposal, learningProposal, value);
-                        return value;
+                        return parser.validateCoverage(analysis, actionProposal, learningProposal, value);
                     });
             FinalStoryboard finalStoryboard = director.parsed(FinalStoryboard.class);
 
@@ -285,8 +285,7 @@ public class ImageRunExecutionService {
                             "imageSettings", prepared.flow()),
                     raw -> {
                         ReferencePlan value = parser.referencePlan(raw);
-                        parser.validateReferenceTargets(value, analysis, continuity);
-                        return value;
+                        return parser.validateReferenceTargets(value, analysis, continuity);
                     });
             ReferencePlan referencePlan = reference.parsed(ReferencePlan.class);
 
@@ -316,26 +315,42 @@ public class ImageRunExecutionService {
                             "imageSettings", prepared.flow()),
                     raw -> {
                         PreflightPlan value = parser.preflight(raw);
-                        parser.validatePreflight(value, finalStoryboard, analysis, continuity);
-                        validateImageLayouts(value);
+                        value = parser.validatePreflight(value, finalStoryboard, analysis, continuity);
+                        validateImageLayouts(value, analysis);
                         return value;
                     });
             PreflightPlan finalPlan = preflight.parsed(PreflightPlan.class);
             run.setExpectedImageCount(finalPlan.referenceAssets().size() + finalPlan.shots().size());
             run.setTotalTextTokens(state.totalTokens());
             run = runRepository.saveAndFlush(run);
-            executeImages(run, prepared, finalPlan, finalStoryboard, state.totalTokens());
+            executeImages(run, prepared, finalPlan, finalStoryboard, analysis, state.totalTokens());
         } catch (Exception exception) {
-            failRun(runId, redact(bounded(exception.getMessage()), prepared.imageProvider().apiKey()), state.totalTokens());
+            failRun(runId, redactPlanningError(exception, prepared), state.totalTokens());
         }
     }
 
     private void executeImages(ImageRun run, PreparedRun prepared, PreflightPlan plan,
-                               FinalStoryboard storyboard, long totalTokens) {
+                               FinalStoryboard storyboard, StoryAnalysis analysis, long totalTokens) {
+        ProviderExecution imageProvider = resolveLiveImageProvider();
+        FlowSnapshot flow = new FlowSnapshot(
+                prepared.flow().width(), prepared.flow().height(),
+                prepared.flow().maxShotsPerScene(), prepared.flow().maxShotsPerStory(),
+                imageProviderSnapshot(imageProvider));
+        try {
+            generateImages(run, plan, storyboard, analysis, totalTokens, imageProvider, flow);
+        } catch (Exception exception) {
+            throw new IllegalArgumentException(
+                    redact(bounded(exception.getMessage()), imageProvider.apiKey()), exception);
+        }
+    }
+
+    private void generateImages(ImageRun run, PreflightPlan plan,
+                                FinalStoryboard storyboard, StoryAnalysis analysis, long totalTokens,
+                                ProviderExecution imageProvider, FlowSnapshot flow) {
         run = transition(run, "GENERATING_REFERENCES", totalTokens);
         ImageRunStep referenceStep = startProgram(run.getRunId(), 10, "reference-image-generator",
-                input("referenceAssets", plan.referenceAssets(), "imageSettings", prepared.flow()),
-                prepared.imageProvider());
+                input("referenceAssets", plan.referenceAssets(), "imageSettings", flow),
+                imageProvider);
         Map<String, PersistedReference> references = new LinkedHashMap<>();
         List<ReferenceAsset> orderedReferences = plan.referenceAssets().stream()
                 .sorted(Comparator.comparingInt((ReferenceAsset value) -> referenceOrder(value.type()))
@@ -344,13 +359,13 @@ public class ImageRunExecutionService {
         try {
             for (ReferenceAsset reference : orderedReferences) {
                 AiImageGenerationService.ImageResult generated = imageGenerationService.generate(
-                        prepared.imageProvider().toConfig(), reference.prompt(), reference.negativePrompt(),
-                        prepared.flow().width(), prepared.flow().height(), List.of());
+                        imageProvider.toConfig(), reference.prompt(), reference.negativePrompt(),
+                        flow.width(), flow.height(), List.of());
                 ImageAsset persisted = persistGeneratedAsset(run.getRunId(), "REFERENCE", reference.assetKey(), null,
                         "reference-" + reference.assetKey(), reference.prompt(), reference.negativePrompt(),
-                        generated, prepared.imageProvider(),
+                        generated, imageProvider,
                         Map.of("referenceType", reference.type(), "target", reference.target()),
-                        prepared.flow().width(), prepared.flow().height());
+                        flow.width(), flow.height());
                 references.put(reference.assetKey(), new PersistedReference(persisted.getRelativePath(),
                         persisted.getMime(), persisted.getSha256()));
                 run.setGeneratedImageCount(run.getGeneratedImageCount() + 1);
@@ -359,7 +374,7 @@ public class ImageRunExecutionService {
             completeProgram(referenceStep, Map.of("generatedAssetKeys", List.copyOf(references.keySet()),
                     "generatedCount", references.size()));
         } catch (Exception exception) {
-            failProgram(referenceStep, exception, prepared.imageProvider().apiKey());
+            failProgram(referenceStep, exception, imageProvider.apiKey());
             throw exception;
         }
 
@@ -371,7 +386,7 @@ public class ImageRunExecutionService {
                 .toList();
         run = transition(run, "GENERATING_SHOTS", totalTokens);
         ImageRunStep shotStep = startProgram(run.getRunId(), 11, "shot-image-generator",
-                input("shots", orderedShots, "imageSettings", prepared.flow()), prepared.imageProvider());
+                input("shots", orderedShots, "imageSettings", flow), imageProvider);
         Map<String, ImageShot> persistedShots = new LinkedHashMap<>();
         Map<String, PersistedReference> bases = new LinkedHashMap<>();
         try {
@@ -385,12 +400,12 @@ public class ImageRunExecutionService {
             for (PreflightShot shot : orderedShots) {
                 List<AiImageGenerationService.ImageReference> inputs = resolveReferences(shot, references);
                 AiImageGenerationService.ImageResult generated = imageGenerationService.generate(
-                        prepared.imageProvider().toConfig(), shot.prompt(), shot.negativePrompt(),
-                        prepared.flow().width(), prepared.flow().height(), inputs);
+                        imageProvider.toConfig(), shot.prompt(), shot.negativePrompt(),
+                        flow.width(), flow.height(), inputs);
                 ImageAsset persisted = persistGeneratedAsset(run.getRunId(), "BASE", shot.shotKey(), shot.shotKey(),
                         "base-" + shot.shotKey(), shot.prompt(), shot.negativePrompt(), generated,
-                        prepared.imageProvider(), Map.of("referenceAssetKeys", shot.referenceAssetKeys()),
-                        prepared.flow().width(), prepared.flow().height());
+                        imageProvider, Map.of("referenceAssetKeys", shot.referenceAssetKeys()),
+                        flow.width(), flow.height());
                 ImageShot entity = persistedShots.get(shot.shotKey());
                 entity.setStatus("GENERATED");
                 persistedShots.put(shot.shotKey(), shotRepository.saveAndFlush(entity));
@@ -402,14 +417,14 @@ public class ImageRunExecutionService {
             completeProgram(shotStep, Map.of("generatedShotKeys", List.copyOf(bases.keySet()),
                     "generatedCount", bases.size()));
         } catch (Exception exception) {
-            failProgram(shotStep, exception, prepared.imageProvider().apiKey());
+            failProgram(shotStep, exception, imageProvider.apiKey());
             throw exception;
         }
 
         run = transition(run, "COMPOSITING", totalTokens);
         ImageRunStep compositorStep = startProgram(run.getRunId(), 12, "text-compositor",
                 input("shots", orderedShots, "layout", Map.of("font", "SansSerif",
-                        "minimumFontSize", 28, "width", prepared.flow().width(), "height", prepared.flow().height())),
+                        "minimumFontSize", 28, "width", flow.width(), "height", flow.height())),
                 null);
         List<String> completedShots = new ArrayList<>();
         try {
@@ -417,13 +432,13 @@ public class ImageRunExecutionService {
                 PersistedReference base = bases.get(shot.shotKey());
                 if (base == null) throw new IllegalArgumentException("分镜底图不存在");
                 byte[] composed = compositor.compose(
-                        assetStore.read(base.relativePath(), base.sha256()), textOverlays(shot));
+                        assetStore.read(base.relativePath(), base.sha256()), textOverlays(shot, analysis));
                 AiImageGenerationService.ImageResult finalImage = new AiImageGenerationService.ImageResult(
-                        composed, "image/png", prepared.flow().width(), prepared.flow().height(), "", Map.of());
+                        composed, "image/png", flow.width(), flow.height(), "", Map.of());
                 persistGeneratedAsset(run.getRunId(), "FINAL", shot.shotKey(), shot.shotKey(),
                         "final-" + shot.shotKey(), shot.prompt(), shot.negativePrompt(), finalImage,
                         null, Map.of("compositor", "java2d"),
-                        prepared.flow().width(), prepared.flow().height());
+                        flow.width(), flow.height());
                 ImageShot entity = persistedShots.get(shot.shotKey());
                 entity.setStatus("COMPLETED");
                 persistedShots.put(shot.shotKey(), shotRepository.saveAndFlush(entity));
@@ -441,9 +456,9 @@ public class ImageRunExecutionService {
         run = runRepository.saveAndFlush(run);
     }
 
-    private void validateImageLayouts(PreflightPlan plan) {
+    private void validateImageLayouts(PreflightPlan plan, StoryAnalysis analysis) {
         for (PreflightShot shot : plan.shots()) {
-            compositor.validateLayout(textOverlays(shot));
+            compositor.validateLayout(textOverlays(shot, analysis));
         }
     }
 
@@ -496,12 +511,15 @@ public class ImageRunExecutionService {
         return List.copyOf(values);
     }
 
-    private List<ImageTextCompositor.TextOverlay> textOverlays(PreflightShot shot) {
+    private List<ImageTextCompositor.TextOverlay> textOverlays(PreflightShot shot, StoryAnalysis analysis) {
         List<ImageTextCompositor.TextOverlay> overlays = new ArrayList<>();
         if (StringUtils.hasText(shot.dialogue())) {
             if (shot.textAnchor() == null) throw new IllegalArgumentException("对白分镜缺少文字锚点");
-            overlays.add(ImageTextCompositor.TextOverlay.dialogue(shot.speaker(), shot.dialogue(),
-                    shot.textAnchor().x(), shot.textAnchor().y()));
+            overlays.add(ImageTextCompositor.TextOverlay.dialogue(
+                    parser.characterDisplayName(analysis, shot.speaker()),
+                    shot.dialogue(),
+                    shot.textAnchor().x(),
+                    shot.textAnchor().y()));
         }
         if (StringUtils.hasText(shot.narration())) {
             overlays.add(ImageTextCompositor.TextOverlay.narration(shot.narration()));
@@ -725,6 +743,13 @@ public class ImageRunExecutionService {
         }
     }
 
+    private ProviderExecution resolveLiveImageProvider() {
+        ImageFlowConfig flow = flowRepository.findByFlowKey(ImageFlowConfig.DEFAULT_FLOW_KEY)
+                .orElseThrow(() -> new IllegalArgumentException("图片流程配置不存在"));
+        validateFlow(flow);
+        return requireImageProviderExecution(flow.getImageProviderId());
+    }
+
     private ProviderExecution requireImageProviderExecution(String id) {
         AiConfigRequest config = aiConfigService.getConfig();
         List<AiProviderConfigItem> providers = config == null || config.getProviders() == null
@@ -883,8 +908,25 @@ public class ImageRunExecutionService {
         return message.length() <= MAX_ERROR_LENGTH ? message : message.substring(0, MAX_ERROR_LENGTH) + "…";
     }
 
-    private static String redact(String value, String secret) {
-        return StringUtils.hasText(secret) ? value.replace(secret, "[REDACTED]") : value;
+    private String redactPlanningError(Exception exception, PreparedRun prepared) {
+        String message = bounded(exception.getMessage());
+        message = redact(message, prepared.imageProvider().apiKey());
+        try {
+            message = redact(message, resolveLiveImageProvider().apiKey());
+        } catch (RuntimeException ignored) {
+            // Live provider may be missing after a config change.
+        }
+        return message;
+    }
+
+    private static String redact(String value, String... secrets) {
+        String result = value;
+        for (String secret : secrets) {
+            if (StringUtils.hasText(secret)) {
+                result = result.replace(secret, "[REDACTED]");
+            }
+        }
+        return result;
     }
 
     private record PreparedRun(

@@ -161,7 +161,7 @@ export const getStoryRuns = () => request.get<ApiResponse<StoryRunSummary[]>>('/
 export const getStoryRun = (runId: string) => request.get<ApiResponse<StoryRunDetail>>(`/story-runs/${encodeURIComponent(runId)}`).then(unwrap);
 export const getStoryResults = (page: number, pageSize: StoryResultPageSize) =>
   request.get<ApiResponse<StoryResultPage>>('/story-runs/results', { params: { page, pageSize } }).then(unwrap);
-export const createStoryRun = (value: { words: StoryWord[]; targetGrade: string }) =>
+export const createStoryRun = (value: { words: StoryWord[]; targetGrade?: string }) =>
   request.post<ApiResponse<StoryRunSummary>>('/story-runs', value).then(unwrap);
 export const getStoryWordLibraries = (connectionId: number) =>
   request.get<ApiResponse<StoryWordLibrary[]>>('/story-runs/word-libraries', { params: { connectionId } }).then(unwrap);

@@ -37,7 +37,7 @@ const newImageProvider = (providers: AIProviderConfigItem[]): AIProviderConfigIt
   type: 'openai-compatible',
   base_url: '',
   api_key: '',
-  model: 'gemini-3-pro-image',
+  model: 'gemini-3.1-flash-image',
   max_tokens: 4096,
   capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'],
   options: fixedOptions('hd'),

@@ -10,6 +10,7 @@ export interface ImageAgentNode {
   parallelGroup: string | null;
   description: string;
   variables: string[];
+  upstream: string[];
   systemPrompt: string | null;
   aiProviderId: string | null;
   temperature: number | null;

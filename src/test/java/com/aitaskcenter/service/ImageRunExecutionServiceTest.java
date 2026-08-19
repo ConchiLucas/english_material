@@ -60,6 +60,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.springframework.core.task.SyncTaskExecutor;
 import org.springframework.core.task.TaskExecutor;
@@ -552,6 +553,59 @@ class ImageRunExecutionServiceTest {
     }
 
     @Test
+    void regeneratesWithLiveImageProviderModelInsteadOfStartSnapshot() {
+        org.mockito.Mockito.doAnswer(invocation -> {
+            String systemPrompt = invocation.getArgument(1);
+            // After planning begins, switch the live AI config model before image generation.
+            if (systemPrompt != null
+                    && systemPrompt.contains("IMAGE_AGENT_RUNTIME_CONTRACT_V2::image-prompt-preflight")) {
+                imageProvider.setModel("gemini-3.1-flash-image");
+            }
+            return generationResult(systemPrompt);
+        }).when(textGeneration).generateWithUsage(any(), anyString(), anyString(), anyDouble(), anyInt());
+        ArgumentCaptor<AiProviderConfigItem> providerCaptor = ArgumentCaptor.forClass(AiProviderConfigItem.class);
+
+        service(new SyncTaskExecutor(), new SyncTaskExecutor())
+                .createRun(new StartImageRunRequest("story-run-1", 7L));
+
+        verify(imageGeneration, org.mockito.Mockito.atLeastOnce())
+                .generate(providerCaptor.capture(), anyString(), anyString(), anyInt(), anyInt(), any());
+        assertTrue(providerCaptor.getAllValues().stream()
+                .allMatch(provider -> "gemini-3.1-flash-image".equals(provider.getModel())));
+        ImageRunStep referenceStep = savedSteps.stream()
+                .filter(step -> "reference-image-generator".equals(step.getNodeKey()))
+                .findFirst()
+                .orElseThrow();
+        assertEquals("gemini-3.1-flash-image", referenceStep.getProviderModel());
+        assertTrue(referenceStep.getInputJson().contains("gemini-3.1-flash-image"));
+        assertTrue(currentRun.get().getFlowSnapshotJson().contains("image-model"));
+        assertFalse(currentRun.get().getFlowSnapshotJson().contains("gemini-3.1-flash-image"));
+    }
+
+    @Test
+    void redactsLiveImageProviderKeyWhenGenerationFailsAfterPlanning() {
+        org.mockito.Mockito.doAnswer(invocation -> {
+            String systemPrompt = invocation.getArgument(1);
+            if (systemPrompt != null
+                    && systemPrompt.contains("IMAGE_AGENT_RUNTIME_CONTRACT_V2::image-prompt-preflight")) {
+                imageProvider.setApiKey("live-secret-key");
+            }
+            return generationResult(systemPrompt);
+        }).when(textGeneration).generateWithUsage(any(), anyString(), anyString(), anyDouble(), anyInt());
+        when(imageGeneration.generate(any(), anyString(), anyString(), anyInt(), anyInt(), any()))
+                .thenThrow(new IllegalArgumentException("provider rejected live-secret-key"));
+
+        service(new SyncTaskExecutor(), new SyncTaskExecutor())
+                .createRun(new StartImageRunRequest("story-run-1", 7L));
+
+        assertEquals("FAILED", currentRun.get().getStatus());
+        assertNotNull(currentRun.get().getErrorMessage());
+        assertFalse(currentRun.get().getErrorMessage().contains("live-secret-key"));
+        assertFalse(currentRun.get().getErrorMessage().contains("secret-key"));
+        assertTrue(currentRun.get().getFlowSnapshotJson().contains("image-model"));
+    }
+
+    @Test
     void persistsTheThreeGenerationProgramsAfterTheNineAgentsInActualOrder() {
         service(new SyncTaskExecutor(), new SyncTaskExecutor())
                 .createRun(new StartImageRunRequest("story-run-1", 7L));
@@ -619,6 +673,28 @@ class ImageRunExecutionServiceTest {
                 "\"locations\":[]")));
 
         assertPlanningAgentFailsBeforeImages("image-story-analyst");
+        assertTrue(savedSteps.stream().noneMatch(step ->
+                List.of("image-continuity-designer", "image-art-director").contains(step.getNodeKey())));
+    }
+
+    @Test
+    void passesCompletedStoryAnalysisToContinuityDesigner() {
+        service(new SyncTaskExecutor(), new SyncTaskExecutor())
+                .createRun(new StartImageRunRequest("story-run-1", 7L));
+
+        ImageRunStep continuity = savedSteps.stream()
+                .filter(step -> "image-continuity-designer".equals(step.getNodeKey()))
+                .findFirst()
+                .orElseThrow();
+        assertTrue(continuity.getInputJson().contains("\"storyAnalysis\""));
+        assertTrue(continuity.getInputJson().contains("\"characterKey\":\"amy\""));
+        assertTrue(continuity.getInputJson().contains("\"propKey\":\"ball\""));
+        ImageRunStep artDirector = savedSteps.stream()
+                .filter(step -> "image-art-director".equals(step.getNodeKey()))
+                .findFirst()
+                .orElseThrow();
+        assertTrue(artDirector.getInputJson().contains("\"storyAnalysis\""));
+        assertTrue(artDirector.getInputJson().contains("\"characterKey\":\"amy\""));
     }
 
     @Test
@@ -666,18 +742,26 @@ class ImageRunExecutionServiceTest {
     }
 
     @Test
-    void rejectsProposalAndFinalSemanticDriftBeforeAnyImageOrProgramStep() {
+    void restoresProposalAndFinalLockedFieldsFromAnalysisBeforeImages() {
         generationOutputs.put("image-action-storyboarder", wrap(
                 "STORYBOARD_PROPOSAL", storyboardProposalJson().replace(
                         "Amy walks before lunch", "Amy waves after lunch")));
-        assertPlanningAgentFailsBeforeImages("image-action-storyboarder");
+        service(new SyncTaskExecutor(), new SyncTaskExecutor())
+                .createRun(new StartImageRunRequest("story-run-1", 7L));
+        assertTrue(inputFor("image-storyboard-director").contains("Amy walks before lunch"));
+        assertFalse(inputFor("image-storyboard-director").contains("Amy waves after lunch"));
+        assertEquals("COMPLETED", currentRun.get().getStatus());
 
         resetExecutionObservations();
         generationOutputs = validOutputs();
         generationOutputs.put("image-storyboard-director", wrap(
                 "FINAL_STORYBOARD", finalStoryboardJson().replace(
                         "Amy walks before lunch", "Amy waves after lunch")));
-        assertPlanningAgentFailsBeforeImages("image-storyboard-director");
+        service(new SyncTaskExecutor(), new SyncTaskExecutor())
+                .createRun(new StartImageRunRequest("story-run-1", 7L));
+        assertTrue(inputFor("image-reference-planner").contains("Amy walks before lunch"));
+        assertFalse(inputFor("image-reference-planner").contains("Amy waves after lunch"));
+        assertEquals("COMPLETED", currentRun.get().getStatus());
     }
 
     @Test
@@ -813,15 +897,15 @@ class ImageRunExecutionServiceTest {
 
     @Test
     void runsBothDeclaredParallelLayersConcurrentlyAndKeepsLaterAgentsSequential() throws Exception {
-        CountDownLatch foundation = new CountDownLatch(3);
+        CountDownLatch visualFoundation = new CountDownLatch(2);
         CountDownLatch storyboards = new CountDownLatch(2);
         List<String> callStarts = Collections.synchronizedList(new ArrayList<>());
         org.mockito.Mockito.doAnswer(invocation -> {
                     String key = keyFromPrompt(invocation.getArgument(1));
                     callStarts.add(key);
-                    if (List.of("image-story-analyst", "image-continuity-designer", "image-art-director").contains(key)) {
-                        foundation.countDown();
-                        assertTrue(foundation.await(2, TimeUnit.SECONDS), "Agents 1-3 did not overlap");
+                    if (List.of("image-continuity-designer", "image-art-director").contains(key)) {
+                        visualFoundation.countDown();
+                        assertTrue(visualFoundation.await(2, TimeUnit.SECONDS), "Agents 2-3 did not overlap");
                     }
                     if (List.of("image-action-storyboarder", "image-learning-storyboarder").contains(key)) {
                         storyboards.countDown();
@@ -835,8 +919,9 @@ class ImageRunExecutionServiceTest {
         service(new SyncTaskExecutor(), realPool)
                 .createRun(new StartImageRunRequest("story-run-1", 7L));
 
-        assertEquals(0, foundation.getCount());
+        assertEquals(0, visualFoundation.getCount());
         assertEquals(0, storyboards.getCount());
+        assertEquals("image-story-analyst", callStarts.get(0));
         List<String> tail = callStarts.subList(callStarts.size() - 4, callStarts.size());
         assertEquals(List.of("image-storyboard-director", "image-reference-planner",
                 "image-shot-prompt-engineer", "image-prompt-preflight"), tail);

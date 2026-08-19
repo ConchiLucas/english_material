@@ -141,7 +141,7 @@ export default function StoryAgentFlowPage({ providers, connections = [], onDirt
   const [budgetSaving, setBudgetSaving] = useState(false);
   const [startOpen, setStartOpen] = useState(false);
   const [startMode, setStartMode] = useState<'manual' | 'random'>('manual');
-  const [targetGrade, setTargetGrade] = useState('三年级上册');
+  const [targetGrade, setTargetGrade] = useState('');
   const [manualWords, setManualWords] = useState('');
   const [connectionId, setConnectionId] = useState<number | null>(null);
   const [libraryId, setLibraryId] = useState<number | null>(null);
@@ -885,7 +885,20 @@ export default function StoryAgentFlowPage({ providers, connections = [], onDirt
         ]}
       >
         <Form layout="vertical">
-          <Form.Item label="目标年级"><Input aria-label="目标年级" value={targetGrade} onChange={(event) => setTargetGrade(event.target.value)} /></Form.Item>
+          <Form.Item label="目标学段">
+            <Select
+              aria-label="目标学段"
+              value={targetGrade}
+              onChange={setTargetGrade}
+              options={[
+                { value: '', label: '不限制（不考虑超纲）' },
+                { value: '小学', label: '小学' },
+                { value: '初中', label: '初中' },
+                { value: '高中', label: '高中' },
+                { value: '大学', label: '大学' },
+              ]}
+            />
+          </Form.Item>
           <Form.Item label="单词来源">
             <Select aria-label="单词来源" value={startMode} onChange={(value) => {
               setStartMode(value);

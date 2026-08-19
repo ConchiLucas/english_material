@@ -57,7 +57,7 @@ class AiConfigServiceTest {
         assertEquals("openai-compatible", target.getType());
         assertEquals(BASE_URL, target.getBaseUrl());
         assertEquals(SECRET, target.getApiKey());
-        assertEquals("gemini-3-pro-image", target.getModel());
+        assertEquals("gemini-3.1-flash-image", target.getModel());
         assertEquals(List.of("IMAGE_GENERATION", "IMAGE_REFERENCE"), target.getCapabilities());
         assertEquals(Map.of("responseFormat", "b64_json", "quality", "hd", "size", "1536x864"),
                 target.getOptions());

@@ -28,7 +28,7 @@ public class AiConfigService {
     private static final String MIMO_TTS = "mimo-tts";
     private static final String ANTIGRAVITY_IMAGE_ID = "antigravity-gemini-image";
     private static final String ANTIGRAVITY_IMAGE_LABEL = "Antigravity Gemini Image";
-    private static final String ANTIGRAVITY_IMAGE_MODEL = "gemini-3-pro-image";
+    private static final String ANTIGRAVITY_IMAGE_MODEL = "gemini-3.1-flash-image";
 
     private final AiConfigRepository repository;
     private final ObjectMapper objectMapper;

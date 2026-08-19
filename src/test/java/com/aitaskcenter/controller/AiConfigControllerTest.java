@@ -43,7 +43,7 @@ class AiConfigControllerTest {
         image.setType("openai-compatible");
         image.setBaseUrl("http://antigravity.internal/v1");
         image.setApiKey(null);
-        image.setModel("gemini-3-pro-image");
+        image.setModel("gemini-3.1-flash-image");
         image.setCapabilities(List.of("IMAGE_GENERATION", "IMAGE_REFERENCE"));
         response.setProviders(List.of(image));
         when(service.bootstrapAntigravityImageProvider(any())).thenReturn(response);

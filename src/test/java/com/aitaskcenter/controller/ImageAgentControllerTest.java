@@ -90,5 +90,5 @@ class ImageAgentControllerTest {
     }
 
     private FlowConfigView flow() { return new FlowConfigView("image", 1536, 864, 5, 20, UPDATED); }
-    private AgentView agent() { return new AgentView("image-story-analyst", "分析", "AGENT", "ANALYST", "understanding", 1, null, "d", List.of(), "p", "provider", .2, true, 1, UPDATED, true); }
+    private AgentView agent() { return new AgentView("image-story-analyst", "分析", "AGENT", "ANALYST", "understanding", 1, null, "d", List.of(), List.of(), "p", "provider", .2, true, 1, UPDATED, true); }
 }

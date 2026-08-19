@@ -133,7 +133,7 @@ describe('App primary navigation', () => {
         type: 'openai-compatible',
         base_url: 'https://antigravity.example/v1',
         api_key: '',
-        model: 'gemini-3-pro-image',
+        model: 'gemini-3.1-flash-image',
         max_tokens: 4096,
         capabilities: ['IMAGE_GENERATION', 'IMAGE_REFERENCE'],
         options: { responseFormat: 'b64_json', quality: 'hd', size: '1536x864' },
@@ -314,7 +314,7 @@ describe('App primary navigation', () => {
         ...existing,
         id: 'antigravity-gemini-image',
         label: 'Antigravity Gemini Image',
-        model: 'gemini-3-pro-image',
+        model: 'gemini-3.1-flash-image',
       }],
     });
     render(<AntApp><App /></AntApp>);

@@ -116,7 +116,7 @@ public final class ImageAgentCatalog {
             new StageDefinition(
                     "understanding",
                     "故事理解与视觉约束",
-                    "并行理解故事、连续性与画风约束。",
+                    "先完成故事分析，再并行生成连续性与画风约束。",
                     1,
                     List.of(
                             agent(
@@ -124,29 +124,29 @@ public final class ImageAgentCatalog {
                                     "故事结构分析 Agent",
                                     "ANALYST",
                                     10,
-                                    "image-foundation",
+                                    null,
                                     "分析故事场景、节拍、动作、角色、地点、道具、对白和旁白。",
                                     List.of("storySnapshot", "targetGrade", "targetWords", "imageSettings"),
                                     STORY_ANALYSIS_CONTRACT,
-                                    "从故事中拆出可追踪的场景、节拍和原始文本，不增写剧情。每个 Scene 必须拆出 1 到 5 个连续节拍；characters 和 locations 都不得为空，且两者总数不得超过 20。每个 beat 必须明确非空 action、该动作中实际出场的 characters 集合和唯一 location。"),
+                                    "从故事中拆出可追踪的场景、节拍和原始文本，不增写剧情。每个 Scene 必须拆出 1 到 5 个连续节拍；characters 和 locations 都不得为空，且两者总数不得超过 20。每个 beat 必须明确非空 action、该动作中实际出场的 characters 集合和唯一 location。dialogues.speaker 必须填写已有 characterKey，禁止填写角色名或自造 speaker。"),
                             agent(
                                     "image-continuity-designer",
                                     "角色连续性设计 Agent",
                                     "CONTINUITY_DESIGNER",
                                     20,
-                                    "image-foundation",
+                                    "image-visual-foundation",
                                     "建立角色和关键道具的不可变视觉说明书。",
-                                    List.of("storySnapshot", "targetGrade", "targetWords", "imageSettings"),
+                                    List.of("storySnapshot", "targetGrade", "targetWords", "storyAnalysis", "imageSettings"),
                                     CONTINUITY_BIBLE_CONTRACT,
-                                    "为角色和道具定义稳定外貌、比例、服装、颜色与表情边界。"),
+                                    "输入里的 storyAnalysis 已给出角色和道具清单。characterKey、propKey 必须原样复制，禁止自造、改写或新增。只给 storyAnalysis 里已有的角色和道具写稳定外貌、比例、服装、颜色与表情边界。地点连续性由参考资产规划处理，本 Agent 不要输出 locationKey。props.invariants 必须是单个 string，禁止输出数组或对象。"),
                             agent(
                                     "image-art-director",
                                     "美术导演 Agent",
                                     "ART_DIRECTOR",
                                     30,
-                                    "image-foundation",
+                                    "image-visual-foundation",
                                     "将选定画风预设扩展为可执行的美术规则。",
-                                    List.of("storySnapshot", "targetGrade", "stylePreset", "imageSettings"),
+                                    List.of("storySnapshot", "targetGrade", "stylePreset", "storyAnalysis", "imageSettings"),
                                     STYLE_BIBLE_CONTRACT,
                                     "定义色板、线条、材质、光线、镜头语言、环境与禁止元素。"))),
             new StageDefinition(
@@ -164,7 +164,7 @@ public final class ImageAgentCatalog {
                                     "按动作、视点和时间推进提出互不冲突的画面。",
                                     List.of("storySnapshot", "storyAnalysis", "continuityBible", "styleBible", "imageSettings"),
                                     STORYBOARD_PROPOSAL_CONTRACT,
-                                    "按动作变化、视点变化和时间推进拆镜，禁止单镜包含互斥时间点。每个 beatKey 至少对应一个独立分镜，不得跨 Scene；每个提案分镜给出安全且稳定的 shotKey，并原样保留源 beat 的 action、characters 集合和 location。"),
+                                    "按动作变化、视点变化和时间推进拆镜，禁止单镜包含互斥时间点。每个 beatKey 至少对应一个独立分镜，不得跨 Scene；每个提案分镜给出安全且稳定的 shotKey，并原样保留源 beat 的 action、characters 集合和 location。这些锁定字段以 StoryAnalysis 对应 beat 为准，不得改写。"),
                             agent(
                                     "image-learning-storyboarder",
                                     "儿童叙事分镜 Agent",
@@ -174,7 +174,7 @@ public final class ImageAgentCatalog {
                                     "按三年级儿童理解顺序提出带短文本的画面。",
                                     List.of("storySnapshot", "storyAnalysis", "continuityBible", "styleBible", "imageSettings"),
                                     STORYBOARD_PROPOSAL_CONTRACT,
-                                    "按儿童可理解的因果顺序拆镜，并分配短对白或一到两句旁白。每个 beatKey 至少对应一个独立分镜，不得跨 Scene；每个提案分镜给出安全且稳定的 shotKey，并原样保留源 beat 的 action、characters 集合和 location。"),
+                                    "按儿童可理解的因果顺序拆镜，并分配短对白或一到两句旁白。每个 beatKey 至少对应一个独立分镜，不得跨 Scene；每个提案分镜给出安全且稳定的 shotKey，并原样保留源 beat 的 action、characters 集合和 location。这些锁定字段以 StoryAnalysis 对应 beat 为准，不得改写。"),
                             agent(
                                     "image-storyboard-director",
                                     "分镜总监 Agent",
@@ -191,7 +191,7 @@ public final class ImageAgentCatalog {
                                             "learningStoryboardProposal",
                                             "imageSettings"),
                                     FINAL_STORYBOARD_CONTRACT,
-                                    "确保每个 Scene 一到五镜、全篇最多二十镜，不得合并或遗漏 beat；shotKey 必须来自输入提案，并保留对应 Scene、beat、action、characters 和 location。"))),
+                                    "确保每个 Scene 一到五镜、全篇最多二十镜，不得合并或遗漏 beat；shotKey 必须来自输入提案，并保留对应 Scene、beat、action、characters 和 location。这些锁定字段以 StoryAnalysis 对应 beat 为准，不得改写。"))),
             new StageDefinition(
                     "prompting",
                     "出图提示词准备",
@@ -207,7 +207,7 @@ public final class ImageAgentCatalog {
                                     "规划角色设定图与主要场景设定图的参考资产。",
                                     List.of("storyAnalysis", "continuityBible", "styleBible", "finalStoryboard", "imageSettings"),
                                     REFERENCE_PLAN_CONTRACT,
-                                    "定义稳定 assetKey、资产类型、目标、无字提示词与负向约束。为 StoryAnalysis 的每个角色和每个地点各生成且仅生成一个参考资产。"),
+                                    "定义稳定 assetKey、资产类型、目标、无字提示词与负向约束。为 StoryAnalysis 的每个角色和每个地点各生成且仅生成一个参考资产。CHARACTER target 必须填写已有 characterKey，LOCATION target 必须填写已有 locationKey，禁止填写角色名、地点名或自造 target。"),
                             agent(
                                     "image-shot-prompt-engineer",
                                     "分镜提示词工程 Agent",
@@ -278,6 +278,30 @@ public final class ImageAgentCatalog {
     private static final Map<String, NodeDefinition> NODES_BY_KEY = NODES.stream()
             .collect(Collectors.toUnmodifiableMap(NodeDefinition::key, Function.identity()));
 
+    private static final Map<String, List<String>> UPSTREAM = Map.ofEntries(
+            Map.entry("image-story-analyst", List.of()),
+            Map.entry("image-continuity-designer", List.of("image-story-analyst")),
+            Map.entry("image-art-director", List.of("image-story-analyst")),
+            Map.entry("image-action-storyboarder", List.of(
+                    "image-story-analyst", "image-continuity-designer", "image-art-director")),
+            Map.entry("image-learning-storyboarder", List.of(
+                    "image-story-analyst", "image-continuity-designer", "image-art-director")),
+            Map.entry("image-storyboard-director", List.of(
+                    "image-story-analyst", "image-continuity-designer", "image-art-director",
+                    "image-action-storyboarder", "image-learning-storyboarder")),
+            Map.entry("image-reference-planner", List.of(
+                    "image-story-analyst", "image-continuity-designer", "image-art-director",
+                    "image-storyboard-director")),
+            Map.entry("image-shot-prompt-engineer", List.of(
+                    "image-continuity-designer", "image-art-director", "image-storyboard-director",
+                    "image-reference-planner")),
+            Map.entry("image-prompt-preflight", List.of(
+                    "image-story-analyst", "image-continuity-designer", "image-art-director",
+                    "image-storyboard-director", "image-reference-planner", "image-shot-prompt-engineer")),
+            Map.entry("reference-image-generator", List.of("image-prompt-preflight")),
+            Map.entry("shot-image-generator", List.of("image-prompt-preflight", "reference-image-generator")),
+            Map.entry("text-compositor", List.of("image-prompt-preflight", "shot-image-generator")));
+
     private ImageAgentCatalog() {
     }
 
@@ -299,6 +323,11 @@ public final class ImageAgentCatalog {
             throw new IllegalArgumentException("Unknown image flow node: " + key);
         }
         return node;
+    }
+
+    public static List<String> upstream(String key) {
+        require(key);
+        return UPSTREAM.getOrDefault(key, List.of());
     }
 
     public static String runtimeContract(String key) {

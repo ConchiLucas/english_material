@@ -22,18 +22,19 @@ summary: 维护数据库、AI、故事与图片 Agent 配置及有界执行，�
 - `StoryAgentCatalog` 固定定义 4 个阶段、12 个可编辑 Agent 和 5 个只读程序/人工节点；`StoryAgentInitializer` 启动时只在某个 Agent 配置缺失时创建该配置及其 v1 快照，已有 Agent 即使缺少历史快照也不补建；默认流程预算缺失时才创建，且不覆盖已有配置。
 - `StoryRunController`、`StoryRunExecutionService` 与 `StoryRunQueryService` 创建异步故事运行批次，按固定 Agent 链路执行创作、审核、评分和决策，保存每次实际模型调用的完整输入/输出，并提供批次与详情查询。
 - `StoryRunExecutionService` 为 `story-writer` 和 `targeted-reviser` 追加不可编辑的运行时输出协议：步骤表保留模型原始响应，但只有唯一边界内通过纯文本校验的英文场景故事会进入后续审核及 `tb_story_run.final_story`。模型在结束边界外追加的清单或修订说明仅留在原始步骤详情；边界缺失/歧义或故事块内部出现 Markdown、中文说明或清单会使该步骤和批次失败，不会把完整报告冒充最终故事。
-- 质量决策支持 `REVISE`、`REWRITE`、`REDIRECT`、`REPITCH`、`REPLAN` 和 `PASS`；每种回退次数、质量轮次和总 Token 都受 `tb_story_flow_config` 的确定性预算限制。Provider 未返回用量时，以输入输出长度估算用量，预算仍然生效。
+- 故事篇幅由运行时协议约束策划、提案、导演、作家和修订：每一个 Scene 必须有 8 到 16 个可入画动作。不超过 16 个只写 1 场；超过 16 个必须拆场，每场仍是 8 到 16 个，例如 8 和 9。导演必须输出 `SCENE_COUNT` 和 `BEAT_COUNTS`，缺行或单场画面数越界则该步骤失败。本版不改图片工作台。
+- 年级可选。未指定或初中及以后不考虑超纲。小学目标用词不超过高中即可，`cardboard`/`paw`/`sigh` 不算超纲；只有大学学术词或专业术语才算离谱超纲。执行器在未指定学段时忽略 grade 分；指定小学时只把语言低于 3 或年级为 1 视为阻断。质量决策只接受首行 `ACTION: PASS|REVISE|REWRITE`。语言低于 3 或年级为 1 时先 `REVISE`，只有已经修订过一轮仍阻断、或同时缺目标词才 `REWRITE`。趣味低分不会重写。词已覆盖且语言不低于 3 时：决策 `PASS` 且连续性也不低于 3 立即完成；若已经改过且连续性不低于 3，即使决策还要继续改也直接完成；连续性仍低于 3 时再允许一轮修订。`replaceWith` 必须保留可见动作，不得只加 `happily` 等空情绪词，也不得把 `jumps`/`slides` 收成 `moves`，但可以换成另一个画面动词。不合规条目会被忽略；若全部不合规则交付当前最好一稿，不把批次判失败。修订或重写后若趣味或连续性下降，丢弃该稿并回到上一稿。问题清单最多 4 条，且不得要求加从句。作家第一段必须是可见冲突，猫用 `The cat`/`It`。最后一轮若仍有对应额度且尚未过线停，必须先执行回退再结束。质量轮次、局部修订、正文重写和总 Token 仍受 `tb_story_flow_config` 限制。Provider 未返回用量时，以输入输出长度估算用量，预算仍然生效。
 - `WordCleanController` 根据已保存的连接 ID 查询去重单词、筛选项和例句。
 - `StoryWordSourceService` 可从已保存连接中的 `word_library`/`word` 参数化随机读取 1—50 个单词；外部材料库始终只读。
 - `ImageAgentController` 与 `ImageAgentService` 维护固定 4 阶段的 9 个文本 Agent、追加式 Prompt 版本、固定图片流程配置和画风预设；`ImageAgentCatalog` 另定义参考图生成、分镜图生成和文字合成 3 个只读程序节点。
 - `ImageRunController`、`ImageRunExecutionService` 与 `ImageRunQueryService` 从已有故事的最终故事创建异步图片批次，保存故事、单词、年级、画风、流程、Agent 和 Provider 的安全快照，并提供 9 个 Agent 与 3 个程序步骤的完整审计。
-- 图片规划先并行执行故事分析/连续性/美术导演，再并行执行双分镜提案，随后顺序完成分镜决策、参考资产规划、分镜提示词和预检。结构化输出逐步校验；任何失败都会停止后续图片调用。
-- 故事分析的每个 beat 都明确 `action`、实际出场 `characters` 和唯一 `location`。两个分镜提案必须以稳定 `shotKey` 覆盖全部 beat，并与来源 beat 的 Scene、action、characters 集合和 location 严格一致；最终分镜只能继承提案 `shotKey`，继续完整保留这五项语义。故事分析另限定每 Scene 1—5 个连续 beat、全篇最多 20 个，并要求角色和地点各至少一个、合计不超过 20。
+- 图片规划先执行故事分析，再并行执行连续性与美术导演，随后并行双分镜提案，再顺序完成分镜决策、参考资产规划、分镜提示词和预检。结构化输出逐步校验；任何失败都会停止后续图片调用。
+- 故事分析的每个 beat 都明确 `action`、实际出场 `characters` 和唯一 `location`。两个分镜提案必须以稳定 `shotKey` 覆盖全部 beat；Scene、action、characters 集合和 location 以分析 beat 为准，解析器会回写漂移字段。最终分镜只能继承提案 `shotKey`，并按同一规则回写这五项语义。故事分析另限定每 Scene 1—5 个连续 beat、全篇最多 20 个，并要求角色和地点各至少一个、合计不超过 20。
 - 参考资产规划必须为每个角色和地点各生成且仅生成一份参考；分镜提示词与最终预检的 `referenceAssetKeys` 必须精确等于该镜头所属地点和全部出场角色的参考 key 集合，不允许缺少、多余或重复引用。所有这些结构约束都在 `PLANNING` 内完成校验，失败的 Agent 步骤和批次会在任何图片调用或 `PROGRAM` 步骤创建前终止。
 - `ImageAgentCatalog` 为 9 个文本 Agent 提供不可编辑的 `IMAGE_AGENT_RUNTIME_CONTRACT_V2`。它在 effective system prompt 中具有最终最高优先级，但覆盖范围只限于与其冲突的 JSON marker、schema、字段、beat 覆盖和精确 reference 要求；前文不冲突的业务创作要求继续生效。运行时将该合同附加到数据库中现有或自定义 Prompt（已包含相同合同则不重复），包括真实已持久化的旧版默认 Prompt 在内都无需由初始化覆盖或迁移；批次 Agent 快照保存实际送给模型的 effective system prompt，供历史审计。
 - `ImageProviderPolicy` 是图片流程配置、固定 Antigravity 引导与运行创建共用的后端资格策略；只有 ID、模型、Base URL 完整，已启用、类型为 `openai-compatible` 且同时声明 `IMAGE_GENERATION`、`IMAGE_REFERENCE` 的 Provider 才可用。`AiImageGenerationService` 无参考图调用 `/v1/images/generations`，携带参考图调用 `/v1/images/edits`，multipart 图片字段按 `image`、`image1`、`image2` 递增，只接受 `b64_json` 图片结果。
 - 图片执行固定输出 `1536×864`，每个 Scene 1—5 张、全篇最多 20 张；先生成角色和地点参考图，再按 Scene/Shot 顺序为每个分镜调用一次图片模型，最后由 `ImageTextCompositor` 以 Java2D 合成角色对话气泡和底部叙事字幕。
-- 故事与图片运行都使用进程内有界线程池，不包含 Python Worker、分布式队列、暂停、删除、跨重启续跑或图片重试。第一版也没有视觉评审、自动/手工重绘或审核写入能力。
+- 故事与图片运行都使用进程内有界线程池，不包含 Python Worker、分布式队列、暂停、删除或跨重启续跑。图片瞬时失败会自动重试最多 3 次，但第一版没有用户侧重试、视觉评审、自动/手工重绘或审核写入能力。
 
 ## HTTP 入口
 
@@ -46,7 +47,7 @@ summary: 维护数据库、AI、故事与图片 Agent 配置及有界执行，�
 | `/api/connection/testConnectionPayload` | 测试尚未保存的连接配置 |
 | `/api/connection/listTables` | 列出已配置连接中的表 |
 | `/api/ai/config` | 读取或保存 AI Provider 配置 |
-| `POST /api/ai/config/image/bootstrap` | 按来源 Provider ID 在服务端复用 Antigravity 凭据并创建固定 `gemini-3-pro-image` 图片 Provider；不回传密钥或调用模型 |
+| `POST /api/ai/config/image/bootstrap` | 按来源 Provider ID 在服务端复用 Antigravity 凭据并创建固定 `gemini-3.1-flash-image` 图片 Provider；不回传密钥或调用模型 |
 | `/api/ai/cli/config` | 读取或保存本地 CLI 配置 |
 | `GET /api/minio-config` | 查询脱敏 MinIO 配置 |
 | `PUT /api/minio-config` | 验证并保存 MinIO 配置；Secret Key 留空时保留已有值 |
@@ -93,7 +94,7 @@ summary: 维护数据库、AI、故事与图片 Agent 配置及有界执行，�
 - 图片 Agent 只引用现有 `tb_ai_config` Provider ID；图片业务表、运行快照、步骤、资产元数据、错误信息和日志都不复制 API Key。执行所需密钥只从既有 Provider 配置装入当前进程内存，并对可见错误做脱敏。
 - 图片 Provider Base URL 必须是带 host 的绝对 HTTP(S) URI，不得包含用户信息、query、fragment，也不得直接以 `/images/generations` 或 `/images/edits` 结尾。可选 `options` 只能使用长度不超过 64 的字符串 `responseFormat`、`quality`、`size`：格式固定 `b64_json`，尺寸固定 `1536x864`，quality 只接受受控枚举。前端使用同一组资格规则过滤下拉项。
 - 图片画风的名称、正向提示词、负向提示词和说明四个文本字段在前后端都必填；创建或更新时任一字段为空都会被拒绝，启用状态仍独立保存。
-- 图片批次创建边界会复制已校验的 `finalStory`、输入单词、目标年级、画风、固定流程和 9 个 Agent/Provider 的安全快照；之后修改原故事、Prompt、画风或 Provider 不改变历史批次含义。Provider 快照不含 API Key 或 Base URL。
+- 图片批次创建边界会复制已校验的 `finalStory`、输入单词、目标年级、画风、固定流程和 9 个 Agent/Provider 的安全快照。之后修改原故事、Prompt 或画风不改变历史批次含义；出图阶段会用当前 AI 配置的图片 Provider 发起 HTTP 调用并写入 program-step，但不改写创建时的 `flowSnapshotJson`。Provider 快照不含 API Key 或 Base URL。
 - `ImageAssetStore` 将 PNG/JPEG 写入私有 MinIO Bucket 的 `<basePath>/<runId>/<assetKey>.<ext>` 对象；创建使用 `If-None-Match: *` 原子拒绝覆盖。数据库保存创建时的 Bucket、完整对象键、MIME、尺寸和 SHA-256；读取和补偿删除使用该固定位置并重新有界读取、校验哈希，修改默认 Bucket/基础路径不会切断历史资产，客户端不能提交对象键。
 - 图片状态按 `QUEUED → PLANNING → GENERATING_REFERENCES → GENERATING_SHOTS → COMPOSITING → COMPLETED` 前进；任一步骤失败进入 `FAILED` 并保留已完成审计/文件。应用启动时会为每个残留活动批次开启独立新事务，把该批次所有 `RUNNING` 步骤与批次本身以同一错误和完成时间一起标为 `FAILED`；已完成步骤保持不变，批次不会续跑。
 - 纯故事协议不新增模型调用、数据库表或 HTTP 接口；现有数据库中的用户 Prompt 不被初始化覆盖，运行时协议独立保证交付格式。

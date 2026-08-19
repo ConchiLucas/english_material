@@ -162,18 +162,21 @@ const makeFlow = (): StoryAgentFlow => ({
         agent('review-fun', '趣味审核员', 'quality', 10, {
           parallelGroup: 'quality-reviewers',
           roleType: 'REVIEWER',
+          variables: ['candidateStory', 'targetGrade', 'qualityRound'],
           upstream: ['candidate-snapshot'],
           downstream: ['story-scorer'],
         }),
         agent('review-language', '语言用词审核员', 'quality', 11, {
           parallelGroup: 'quality-reviewers',
           roleType: 'REVIEWER',
+          variables: ['candidateStory', 'targetWords', 'wordUsage', 'targetGrade', 'qualityRound'],
           upstream: ['candidate-snapshot'],
           downstream: ['story-scorer'],
         }),
         agent('review-continuity', '剧情连续性审核员', 'quality', 12, {
           parallelGroup: 'quality-reviewers',
           roleType: 'REVIEWER',
+          variables: ['candidateStory', 'storyBlueprint', 'qualityRound'],
           upstream: ['candidate-snapshot'],
           downstream: ['story-scorer'],
         }),
@@ -791,10 +794,38 @@ describe('StoryAgentFlowPage', () => {
     await user.click(screen.getByRole('button', { name: '创建并运行' }));
 
     await waitFor(() => expect(apiMocks.createStoryRun).toHaveBeenCalledWith({
-      targetGrade: '三年级上册',
+      targetGrade: '',
       words: [{ word: 'book', meaning: '书' }, { word: 'green', meaning: '绿色' }],
     }));
     expect(await screen.findByRole('dialog', { name: '故事运行记录' })).toBeInTheDocument();
+  });
+
+  it('creates a run with the selected grade band', async () => {
+    const user = userEvent.setup();
+    apiMocks.createStoryRun.mockResolvedValue({
+      runId: 'run-created', words: [{ word: 'book', meaning: '书' }], targetGrade: '小学',
+      status: 'QUEUED', totalTokens: 0, createdAt: '2026-08-13T20:00:00Z', startedAt: null, finishedAt: null,
+    });
+    apiMocks.getStoryRuns.mockResolvedValue([]);
+    apiMocks.getStoryRun.mockResolvedValue({
+      runId: 'run-created', words: [{ word: 'book', meaning: '书' }], targetGrade: '小学',
+      status: 'QUEUED', totalTokens: 0, createdAt: '2026-08-13T20:00:00Z', startedAt: null, finishedAt: null,
+      finalStory: null, errorMessage: null, steps: [],
+    });
+    renderPage();
+    await screen.findByRole('heading', { name: '策划与创意' });
+
+    await user.click(screen.getByRole('button', { name: '开始运行' }));
+    await user.click(screen.getByRole('combobox', { name: '目标学段' }));
+    const primaryChoices = await screen.findAllByText('小学');
+    await user.click(primaryChoices.at(-1)!);
+    await user.type(screen.getByRole('textbox', { name: '目标单词' }), 'book 书');
+    await user.click(screen.getByRole('button', { name: '创建并运行' }));
+
+    await waitFor(() => expect(apiMocks.createStoryRun).toHaveBeenCalledWith({
+      targetGrade: '小学',
+      words: [{ word: 'book', meaning: '书' }],
+    }));
   });
 
   it('previews random words from a selected saved library', async () => {

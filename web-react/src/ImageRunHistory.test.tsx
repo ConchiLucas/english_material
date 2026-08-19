@@ -97,6 +97,7 @@ describe('ImageRunHistory', () => {
     render(<AntApp><ImageRunHistory open onClose={vi.fn()} /></AntApp>);
 
     const batchList = await screen.findByRole('list', { name: '图片批次列表' });
+    expect(batchList).toHaveClass('image-story-history-batches');
     const batchButtons = within(batchList).getAllByRole('button');
     expect(batchButtons[0]).toHaveAccessibleName(/run-new/);
     expect(batchButtons[0].querySelector('.image-story-history-batch-words')).toHaveTextContent('book green cake');
@@ -346,6 +347,7 @@ describe('ImageRunHistory', () => {
     const finalTab = screen.getByRole('tab', { name: '最终分镜图' });
     const finalPanel = screen.getByRole('tabpanel', { name: '最终分镜图' });
     expect(finalTab).toHaveAttribute('aria-controls', finalPanel.id);
+    expect(finalPanel).toHaveClass('image-story-history-gallery-scroll');
     fireEvent.keyDown(finalTab, { key: 'ArrowRight' });
     const referenceTab = screen.getByRole('tab', { name: '参考设定图' });
     expect(referenceTab).toHaveFocus();

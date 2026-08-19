@@ -32,9 +32,23 @@ const installConfirmHarness = () => {
   vi.spyOn(AntApp, 'useApp').mockReturnValue({ message: { error: vi.fn(), success: vi.fn() }, notification: {}, modal: { confirm } } as never);
   return { confirms, confirm };
 };
+const upstreamByNode: Record<string, string[]> = {
+  'image-story-analyst': [],
+  'image-continuity-designer': ['image-story-analyst'],
+  'image-art-director': ['image-story-analyst'],
+  'image-action-storyboarder': ['image-story-analyst', 'image-continuity-designer', 'image-art-director'],
+  'image-learning-storyboarder': ['image-story-analyst', 'image-continuity-designer', 'image-art-director'],
+  'image-storyboard-director': ['image-story-analyst', 'image-continuity-designer', 'image-art-director', 'image-action-storyboarder', 'image-learning-storyboarder'],
+  'image-reference-planner': ['image-story-analyst', 'image-continuity-designer', 'image-art-director', 'image-storyboard-director'],
+  'image-shot-prompt-engineer': ['image-continuity-designer', 'image-art-director', 'image-storyboard-director', 'image-reference-planner'],
+  'image-prompt-preflight': ['image-story-analyst', 'image-continuity-designer', 'image-art-director', 'image-storyboard-director', 'image-reference-planner', 'image-shot-prompt-engineer'],
+  'reference-image-generator': ['image-prompt-preflight'],
+  'shot-image-generator': ['image-prompt-preflight', 'reference-image-generator'],
+  'text-compositor': ['image-prompt-preflight', 'shot-image-generator'],
+};
 const node = (key: string, name: string, stageKey: string, order: number, overrides: Partial<ImageAgentNode> = {}): ImageAgentNode => ({
   key, name, stageKey, order, nodeKind: 'AGENT', roleType: 'PLANNER', parallelGroup: null,
-  description: `${name} description`, variables: ['storySnapshot'], systemPrompt: `${key} prompt`, aiProviderId: 'text-ok',
+  description: `${name} description`, variables: ['storySnapshot'], upstream: upstreamByNode[key] ?? [], systemPrompt: `${key} prompt`, aiProviderId: 'text-ok',
   temperature: 0.7, enabled: true, promptVersion: 1, updatedAt: '2026-08-15T01:00:00Z', editable: true, ...overrides,
 });
 const program = (key: string, name: string, stageKey: string, order: number): ImageAgentNode => node(key, name, stageKey, order, {
@@ -47,7 +61,7 @@ const style = (overrides: Partial<ImageStylePreset> = {}): ImageStylePreset => (
 });
 const makeFlow = (): ImageAgentFlow => ({
   stages: [
-    { key: 'understanding', name: '故事理解', note: '并行理解', order: 1, nodes: [node('image-story-analyst', '故事分析 Agent', 'understanding', 10, { parallelGroup: 'image-foundation' }), node('image-continuity-designer', '连续性 Agent', 'understanding', 20, { parallelGroup: 'image-foundation' }), node('image-art-director', '美术导演 Agent', 'understanding', 30, { parallelGroup: 'image-foundation' })] },
+    { key: 'understanding', name: '故事理解', note: '先分析再并行视觉约束', order: 1, nodes: [node('image-story-analyst', '故事分析 Agent', 'understanding', 10), node('image-continuity-designer', '连续性 Agent', 'understanding', 20, { parallelGroup: 'image-visual-foundation' }), node('image-art-director', '美术导演 Agent', 'understanding', 30, { parallelGroup: 'image-visual-foundation' })] },
     { key: 'storyboarding', name: '分镜决策', note: '双提案', order: 2, nodes: [node('image-action-storyboarder', '动作分镜 Agent', 'storyboarding', 10, { parallelGroup: 'image-storyboards' }), node('image-learning-storyboarder', '学习分镜 Agent', 'storyboarding', 20, { parallelGroup: 'image-storyboards' }), node('image-storyboard-director', '分镜总监 Agent', 'storyboarding', 30)] },
     { key: 'prompting', name: '提示词准备', note: '准备计划', order: 3, nodes: [node('image-reference-planner', '参考图规划 Agent', 'prompting', 10), node('image-shot-prompt-engineer', '镜头提示词 Agent', 'prompting', 20), node('image-prompt-preflight', '出图校对 Agent', 'prompting', 30)] },
     { key: 'generation', name: '图片生成', note: '确定性程序', order: 4, nodes: [program('reference-image-generator', '参考图生成', 'generation', 10), program('shot-image-generator', '分镜图生成', 'generation', 20), program('text-compositor', '文字合成', 'generation', 30)] },

@@ -180,7 +180,7 @@ export default function ImageRunHistory({ open, onClose, initialRunId, afterClos
       <div className="image-story-history">
     <section className="image-story-history-upper">
       <header className="image-story-history-controls">
-        <span>{detail ? `${detail.targetGrade} · ${detail.stylePresetName ?? '未命名画风'}` : '图片批次'}</span>
+        <span>{detail ? `${detail.targetGrade || '不限制'} · ${detail.stylePresetName ?? '未命名画风'}` : '图片批次'}</span>
         <div><Button onClick={() => void load()}>刷新</Button><Button ref={historyCloseRef} onClick={onClose}>关闭图片记录</Button></div>
       </header>
       {error && <Alert className="image-story-history-error" type="error" showIcon message={error} />}

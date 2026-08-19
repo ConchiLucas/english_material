@@ -17,7 +17,7 @@ React 一级导航中的“图片工作台”紧邻“Agent 工作台”。它�
 
 | 阶段 | 节点 | 执行关系 |
 | --- | --- | --- |
-| 故事理解与视觉约束 | `image-story-analyst`、`image-continuity-designer`、`image-art-director` | 三个文本 Agent 并行读取同一故事/配置快照 |
+| 故事理解与视觉约束 | `image-story-analyst`、`image-continuity-designer`、`image-art-director` | 先跑故事分析，再并行生成连续性与画风；后两者读取分析快照 |
 | 双分镜提案与决策 | `image-action-storyboarder`、`image-learning-storyboarder`、`image-storyboard-director` | 两个提案 Agent 并行，总监随后生成唯一分镜表 |
 | 出图提示词准备 | `image-reference-planner`、`image-shot-prompt-engineer`、`image-prompt-preflight` | 三个文本 Agent 顺序规划参考资产、分镜提示词并执行一次预检 |
 | 图片生成与文字合成 | `reference-image-generator`、`shot-image-generator`、`text-compositor` | 三个程序节点顺序生成参考图、分镜底图和最终文字图层 |
@@ -29,8 +29,8 @@ React 一级导航中的“图片工作台”紧邻“Agent 工作台”。它�
 连续性与覆盖约束在规划阶段逐层收紧：
 
 - `StoryAnalysis` 的每个 Scene 必须有 1—5 个从 1 连续编号的 beat，全篇 beat 总数不超过 20；角色和地点都不能为空，两者合计不超过 20。每个 beat 明确非空 `action`、实际出场 `characters` 集合和唯一 `location`，角色/地点 key 必须来自本次故事分析目录。
-- 两份 `StoryboardProposal` 的每个镜头都必须提供安全且稳定的 `shotKey`，各自覆盖全部 beat；其 Scene、beat、action、characters 集合和 location 必须与来源 beat 严格一致。
-- `FinalStoryboard` 的 `shotKey` 必须来自任一提案，并继续原样保留来源提案的 Scene、beat、action、characters 集合和 location；镜头按 Scene/Shot 严格升序且每个 Scene 的 `shotIndex` 从 1 连续递增，每 Scene 最多 5 镜、全篇最多 20 镜并覆盖全部 beat。
+- 两份 `StoryboardProposal` 的每个镜头都必须提供安全且稳定的 `shotKey`，各自覆盖全部 beat。Scene、beat、action、characters 集合和 location 以 StoryAnalysis 对应 beat 为准；解析器会把漂移的锁定字段回写为来源 beat，而不是直接失败。
+- `FinalStoryboard` 的 `shotKey` 必须来自任一提案，并继续按同一规则回写锁定字段；镜头按 Scene/Shot 严格升序且每个 Scene 的 `shotIndex` 从 1 连续递增，每 Scene 最多 5 镜、全篇最多 20 镜并覆盖全部 beat。
 - `ReferencePlan` 只接受 `CHARACTER` 和 `LOCATION`，必须为故事分析中的每个角色和每个地点各生成且仅生成一个参考资产，总数最多 20。
 - `ShotPromptPlan` 和 `PreflightPlan` 的每个镜头，其 `referenceAssetKeys` 必须精确等于该镜头所属地点与全部出场角色的参考 key 集合：不能缺少、不能重复，也不能加入未出场角色或其他地点；单镜仍最多 8 个。预检还必须与最终分镜的 key、Scene 和 Shot 完全一致。
 
@@ -50,7 +50,7 @@ React 一级导航中的“图片工作台”紧邻“Agent 工作台”。它�
 
 画风配置 API 在创建和更新时都要求名称、正向提示词、负向提示词和说明四个文本字段非空；前端也在提交前执行同样的必填校验。
 
-批次持久化最终故事、单词、年级、画风、流程、图片 Provider 安全描述，以及九个 Agent 的 effective system prompt、版本、温度和文本 Provider 安全描述。Provider 快照不保存 API Key 或 Base URL；图片业务表、步骤、资产、错误和日志也不复制密钥。执行所需的 Provider 地址和密钥只由现有 `tb_ai_config` 配置装入当前执行内存，创建后修改原故事、Prompt、画风或 Provider 不会改变已保存的历史快照。
+批次持久化最终故事、单词、年级、画风、流程、图片 Provider 安全描述，以及九个 Agent 的 effective system prompt、版本、温度和文本 Provider 安全描述。Provider 快照不保存 API Key 或 Base URL；图片业务表、步骤、资产、错误和日志也不复制密钥。执行所需的 Provider 地址和密钥只由现有 `tb_ai_config` 配置装入当前执行内存。创建后修改原故事、Prompt 或画风不会改变已保存的历史快照。出图阶段会重新读取当前流程绑定的图片 Provider 用于 HTTP 调用和 program-step 字段，但不会改写批次创建时的 `flowSnapshotJson`。
 
 ## Provider 与图片文件
 
@@ -59,11 +59,11 @@ React 一级导航中的“图片工作台”紧邻“Agent 工作台”。它�
 - 没有参考图时请求 Provider Base URL 下的 `/v1/images/generations`；
 - 分镜携带已生成参考图时请求 `/v1/images/edits` multipart 接口，图片字段依次命名为 `image`、`image1`、`image2`，兼容 Antigravity 多参考图协议；
 - 响应必须包含 `b64_json`，返回图片会被解码并校验类型、像素和大小；尺寸已精确匹配时保留原字节，否则中心裁剪并以高质量插值归一为请求的 `1536×864` PNG；
-- 角色参考图先于地点参考图生成；每个分镜只调用一次图片接口，并最多携带 8 张已声明参考图；任何图片调用失败都不自动重试。
+- 角色参考图先于地点参考图生成；每个分镜只调用一次图片接口，并最多携带 8 张已声明参考图。单张图片调用对瞬时失败（HTTP 429/502/503/504 与连接中断）最多自动重试 3 次，仍串行生成；没有用户侧重试或重绘。
 
 后端 `ImageProviderPolicy` 同时供流程配置保存和运行创建使用，避免“可保存但不可执行”的资格差异。Provider 必须具有非空 ID、模型和 Base URL；Base URL 是带 host 的绝对 HTTP(S) URI，不含用户信息、query 或 fragment，也不能直接指向 generations/edits 端点。可选 `options` 只允许不超过 64 字符的字符串 `responseFormat`、`quality`、`size`；分别限制为 `b64_json`、`auto|low|medium|high|standard|hd` 和 `1536x864`。前端用同一规则决定下拉项和失效状态。
 
-配置管理的“图片模型配置”仍保存到共享 `tb_ai_config`，可维护多个图片 Provider。`POST /api/ai/config/image/bootstrap` 只提交已有 Antigravity 来源 Provider ID，后端在持久化边界内复制地址和密钥，固定创建 `antigravity-gemini-image` / `gemini-3-pro-image` 以及双图片能力和固定 options；返回配置不含密钥。该引导和普通配置保存都不调用图片 Provider，也不消耗图片额度；若当前图片流程没有可执行 Provider，前端再以 `updatedAt` 将新配置选为流程图片模型。
+配置管理的“图片模型配置”仍保存到共享 `tb_ai_config`，可维护多个图片 Provider。`POST /api/ai/config/image/bootstrap` 只提交已有 Antigravity 来源 Provider ID，后端在持久化边界内复制地址和密钥，固定创建 `antigravity-gemini-image` / `gemini-3.1-flash-image` 以及双图片能力和固定 options；返回配置不含密钥。该引导和普通配置保存都不调用图片 Provider，也不消耗图片额度；若当前图片流程没有可执行 Provider，前端再以 `updatedAt` 将新配置选为流程图片模型。出图阶段会重新读取当前流程绑定的图片 Provider，因此以当前 AI 配置中的模型为准，而不是仅使用批次启动时的旧快照。单张图片调用对瞬时失败（HTTP 429/502/503/504 与连接中断）最多自动重试 3 次，仍串行生成。
 
 图片模型只接收无字画面提示词。`ImageTextCompositor` 读取分镜底图，在 Java2D 中将带说话人和锚点的对白排成气泡，将叙事排成底部安全区字幕，并输出最终 PNG。
 

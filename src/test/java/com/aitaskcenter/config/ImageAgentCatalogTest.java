@@ -57,6 +57,11 @@ class ImageAgentCatalogTest {
                         .map(ImageAgentCatalog.NodeDefinition::key).toList());
         assertEquals(9, ImageAgentCatalog.agents().size());
         assertEquals("image-story-analyst", ImageAgentCatalog.require("image-story-analyst").key());
+        assertEquals(List.of(), ImageAgentCatalog.upstream("image-story-analyst"));
+        assertEquals(List.of("image-story-analyst"), ImageAgentCatalog.upstream("image-art-director"));
+        assertEquals(
+                List.of("image-prompt-preflight", "reference-image-generator"),
+                ImageAgentCatalog.upstream("shot-image-generator"));
     }
 
     @Test
@@ -65,8 +70,9 @@ class ImageAgentCatalogTest {
                 List.of("image-story-analyst", "image-continuity-designer", "image-art-director"),
                 ImageAgentCatalog.stages().get(0).nodes().stream()
                         .map(ImageAgentCatalog.NodeDefinition::key).toList());
-        assertTrue(ImageAgentCatalog.stages().get(0).nodes().stream()
-                .allMatch(node -> "image-foundation".equals(node.parallelGroup())));
+        assertNull(ImageAgentCatalog.stages().get(0).nodes().get(0).parallelGroup());
+        assertEquals("image-visual-foundation", ImageAgentCatalog.stages().get(0).nodes().get(1).parallelGroup());
+        assertEquals("image-visual-foundation", ImageAgentCatalog.stages().get(0).nodes().get(2).parallelGroup());
         assertEquals(
                 List.of("image-action-storyboarder", "image-learning-storyboarder"),
                 ImageAgentCatalog.stages().get(1).nodes().stream().limit(2)
@@ -108,10 +114,10 @@ class ImageAgentCatalogTest {
                         List.of("storySnapshot", "targetGrade", "targetWords", "imageSettings")),
                 Map.entry(
                         "image-continuity-designer",
-                        List.of("storySnapshot", "targetGrade", "targetWords", "imageSettings")),
+                        List.of("storySnapshot", "targetGrade", "targetWords", "storyAnalysis", "imageSettings")),
                 Map.entry(
                         "image-art-director",
-                        List.of("storySnapshot", "targetGrade", "stylePreset", "imageSettings")),
+                        List.of("storySnapshot", "targetGrade", "stylePreset", "storyAnalysis", "imageSettings")),
                 Map.entry(
                         "image-action-storyboarder",
                         List.of("storySnapshot", "storyAnalysis", "continuityBible", "styleBible", "imageSettings")),
@@ -309,19 +315,28 @@ class ImageAgentCatalogTest {
                 assertTrue(prompt.contains("characters 和 locations 都不得为空"), agent.key());
                 assertTrue(prompt.contains("每个 beat 必须明确非空 action"), agent.key());
                 assertTrue(prompt.contains("实际出场的 characters 集合和唯一 location"), agent.key());
+                assertTrue(prompt.contains("dialogues.speaker 必须填写已有 characterKey"), agent.key());
+            }
+            if ("image-continuity-designer".equals(agent.key())) {
+                assertTrue(prompt.contains("原样复制"), agent.key());
+                assertTrue(prompt.contains("{{storyAnalysis}}"), agent.key());
+                assertTrue(prompt.contains("props.invariants 必须是单个 string"), agent.key());
             }
             if ("image-action-storyboarder".equals(agent.key())
                     || "image-learning-storyboarder".equals(agent.key())) {
                 assertTrue(prompt.contains("每个 beatKey 至少对应一个独立分镜"), agent.key());
                 assertTrue(prompt.contains("不得跨 Scene"), agent.key());
                 assertTrue(prompt.contains("原样保留源 beat 的 action、characters 集合和 location"), agent.key());
+                assertTrue(prompt.contains("这些锁定字段以 StoryAnalysis 对应 beat 为准"), agent.key());
             }
             if ("image-storyboard-director".equals(agent.key())) {
                 assertTrue(prompt.contains("不得合并或遗漏 beat"), agent.key());
                 assertTrue(prompt.contains("shotKey 必须来自输入提案"), agent.key());
+                assertTrue(prompt.contains("这些锁定字段以 StoryAnalysis 对应 beat 为准"), agent.key());
             }
             if ("image-reference-planner".equals(agent.key())) {
                 assertTrue(prompt.contains("每个角色和每个地点各生成且仅生成一个参考资产"), agent.key());
+                assertTrue(prompt.contains("CHARACTER target 必须填写已有 characterKey"), agent.key());
             }
             if ("image-shot-prompt-engineer".equals(agent.key())
                     || "image-prompt-preflight".equals(agent.key())) {

@@ -14,6 +14,7 @@ import com.aitaskcenter.service.ImageStructuredOutputParser.ShotPromptPlan;
 import com.aitaskcenter.service.ImageStructuredOutputParser.StoryAnalysis;
 import com.aitaskcenter.service.ImageStructuredOutputParser.StoryboardProposal;
 import com.aitaskcenter.service.ImageStructuredOutputParser.StyleBible;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class ImageStructuredOutputParserTest {
@@ -97,16 +98,31 @@ class ImageStructuredOutputParserTest {
     }
 
     @Test
-    void validatesProposalCharactersAndLocationsAgainstAnalysis() {
-        StoryboardProposal proposal = parser.storyboardProposal(wrap("STORYBOARD_PROPOSAL", storyboardProposalJson()
-                .replace("[\"amy\"]", "[\"ben\"]")));
-        assertMessage("StoryboardProposal characterKey 必须引用 StoryAnalysis", () ->
-                parser.validateProposalReferences(storyAnalysis(), proposal));
+    void coercesContinuityPropInvariantsArrayToString() {
+        ContinuityBible bible = parser.continuityBible(wrap(
+                "CONTINUITY_BIBLE",
+                continuityBibleJson().replace(
+                        "\"invariants\":\"round\"",
+                        "\"invariants\":[\"always round\",\"keep red\"]")));
+        assertEquals("always round; keep red", bible.props().get(0).invariants());
+        assertMessage("CONTINUITY_BIBLE.props.invariants 必须是 string", () -> parser.continuityBible(wrap(
+                "CONTINUITY_BIBLE",
+                continuityBibleJson().replace("\"invariants\":\"round\"", "\"invariants\":{\"keep\":\"round\"}"))));
+    }
 
-        StoryboardProposal unknownLocation = parser.storyboardProposal(wrap("STORYBOARD_PROPOSAL", storyboardProposalJson()
-                .replace("\"park\"", "\"beach\"")));
-        assertMessage("StoryboardProposal locationKey 必须引用 StoryAnalysis", () ->
-                parser.validateProposalReferences(storyAnalysis(), unknownLocation));
+    @Test
+    void restoresProposalLockedFieldsFromAnalysisBeat() {
+        StoryboardProposal rewrittenCharacters = parser.validateProposalReferences(
+                storyAnalysis(),
+                parser.storyboardProposal(wrap("STORYBOARD_PROPOSAL", storyboardProposalJson()
+                        .replace("[\"amy\"]", "[\"ben\"]"))));
+        assertEquals(List.of("amy"), rewrittenCharacters.shots().get(0).characters());
+
+        StoryboardProposal rewrittenLocation = parser.validateProposalReferences(
+                storyAnalysis(),
+                parser.storyboardProposal(wrap("STORYBOARD_PROPOSAL", storyboardProposalJson()
+                        .replace("\"park\"", "\"beach\""))));
+        assertEquals("park", rewrittenLocation.shots().get(0).location());
     }
 
     @Test
@@ -296,6 +312,41 @@ class ImageStructuredOutputParserTest {
                 "STORY_ANALYSIS", storyAnalysisJson().replace("\"order\":1", "\"order\":2"))));
         assertMessage("StoryAnalysis dialogue speaker 必须引用已有 characterKey", () -> parser.storyAnalysis(wrap(
                 "STORY_ANALYSIS", storyAnalysisJson().replace("\"speaker\":\"amy\"", "\"speaker\":\"ben\""))));
+        StoryAnalysis namedSpeaker = parser.storyAnalysis(wrap(
+                "STORY_ANALYSIS", storyAnalysisJson().replace("\"speaker\":\"amy\"", "\"speaker\":\"Amy\"")));
+        assertEquals("amy", namedSpeaker.dialogues().get(0).speaker());
+        StoryAnalysis namedBeatRefs = parser.storyAnalysis(wrap(
+                "STORY_ANALYSIS", storyAnalysisJson()
+                        .replace("\"characters\":[\"amy\"]", "\"characters\":[\"Amy\"]")
+                        .replace("\"location\":\"park\"", "\"location\":\"Park\"")));
+        assertEquals(List.of("amy"), namedBeatRefs.beats().get(0).characters());
+        assertEquals("park", namedBeatRefs.beats().get(0).location());
+        assertEquals("Amy", parser.characterDisplayName(namedSpeaker, "amy"));
+        StoryAnalysis prefixed = parser.storyAnalysis(wrap(
+                "STORY_ANALYSIS",
+                storyAnalysisJson()
+                        .replace("\"characterKey\":\"amy\"", "\"characterKey\":\"char_mimi\"")
+                        .replace("\"name\":\"Amy\"", "\"name\":\"Mimi\"")
+                        .replace("\"characters\":[\"amy\"]", "\"characters\":[\"char_mimi\"]")
+                        .replace("\"speaker\":\"amy\"", "\"speaker\":\"Mimi\"")));
+        assertEquals("char_mimi", prefixed.dialogues().get(0).speaker());
+        assertEquals("Mimi", parser.characterDisplayName(prefixed, "char_mimi"));
+        assertMessage("StoryAnalysis dialogue speaker 必须引用已有 characterKey", () -> parser.storyAnalysis(wrap(
+                "STORY_ANALYSIS", storyAnalysisJson().replace("\"speaker\":\"amy\"", "\"speaker\":\"Amy's mom\""))));
+        assertMessage("StoryAnalysis dialogue speaker 必须引用已有 characterKey", () -> parser.storyAnalysis(wrap(
+                "STORY_ANALYSIS",
+                storyAnalysisJson()
+                        .replace("\"characterKey\":\"amy\"", "\"characterKey\":\"tom\"")
+                        .replace("\"name\":\"Amy\"", "\"name\":\"Tom\"")
+                        .replace("\"characters\":[\"amy\"]", "\"characters\":[\"tom\"]")
+                        .replace("\"speaker\":\"amy\"", "\"speaker\":\"Tommy\""))));
+        assertMessage("StoryAnalysis dialogue speaker 必须引用已有 characterKey", () -> parser.storyAnalysis(wrap(
+                "STORY_ANALYSIS",
+                storyAnalysisJson()
+                        .replace("\"characterKey\":\"amy\"", "\"characterKey\":\"char_mimi\"")
+                        .replace("\"name\":\"Amy\"", "\"name\":\"Mimi\"")
+                        .replace("\"characters\":[\"amy\"]", "\"characters\":[\"char_mimi\"]")
+                        .replace("\"speaker\":\"amy\"", "\"speaker\":\"Mimi the monkey\""))));
 
         StoryboardProposal unknownScene = parser.storyboardProposal(wrap("STORYBOARD_PROPOSAL", storyboardProposalJson()
                 .replace("\"sceneIndex\":1", "\"sceneIndex\":2")));
@@ -456,43 +507,58 @@ class ImageStructuredOutputParserTest {
                 "STORY_ANALYSIS", storyAnalysisJson().replace(
                         "\"location\":\"park\"", "\"location\":\"missing\""))));
 
-        assertMessage("StoryboardProposal action 必须与 StoryAnalysis beat.action 一致", () ->
-                parser.validateProposalReferences(storyAnalysis(), parser.storyboardProposal(wrap(
+        StoryboardProposal restoredAction = parser.validateProposalReferences(
+                storyAnalysis(),
+                parser.storyboardProposal(wrap(
                         "STORYBOARD_PROPOSAL", storyboardProposalJson().replace(
-                                "Amy walks before lunch", "Amy waves after lunch")))));
-        assertMessage("StoryboardProposal characters 必须与 StoryAnalysis beat.characters 一致", () ->
-                parser.validateProposalReferences(storyAnalysis(), parser.storyboardProposal(wrap(
+                                "Amy walks before lunch", "Amy waves after lunch"))));
+        assertEquals("Amy walks before lunch", restoredAction.shots().get(0).action());
+
+        StoryboardProposal restoredEmptyCharacters = parser.validateProposalReferences(
+                storyAnalysis(),
+                parser.storyboardProposal(wrap(
                         "STORYBOARD_PROPOSAL", storyboardProposalJson().replace(
-                                "\"characters\":[\"amy\"]", "\"characters\":[]")))));
-        assertMessage("StoryboardProposal characters 必须与 StoryAnalysis beat.characters 一致", () ->
-                parser.validateProposalReferences(richStoryAnalysis(), parser.storyboardProposal(wrap(
+                                "\"characters\":[\"amy\"]", "\"characters\":[]"))));
+        assertEquals(List.of("amy"), restoredEmptyCharacters.shots().get(0).characters());
+
+        StoryboardProposal restoredExtraCharacters = parser.validateProposalReferences(
+                richStoryAnalysis(),
+                parser.storyboardProposal(wrap(
                         "STORYBOARD_PROPOSAL", storyboardProposalJson().replace(
-                                "\"characters\":[\"amy\"]", "\"characters\":[\"amy\",\"ben\"]")))));
-        assertMessage("StoryboardProposal location 必须与 StoryAnalysis beat.location 一致", () ->
-                parser.validateProposalReferences(richStoryAnalysis(), parser.storyboardProposal(wrap(
+                                "\"characters\":[\"amy\"]", "\"characters\":[\"amy\",\"ben\"]"))));
+        assertEquals(List.of("amy"), restoredExtraCharacters.shots().get(0).characters());
+
+        StoryboardProposal restoredLocation = parser.validateProposalReferences(
+                richStoryAnalysis(),
+                parser.storyboardProposal(wrap(
                         "STORYBOARD_PROPOSAL", storyboardProposalJson().replace(
-                                "\"location\":\"park\"", "\"location\":\"home\"")))));
+                                "\"location\":\"park\"", "\"location\":\"home\""))));
+        assertEquals("park", restoredLocation.shots().get(0).location());
     }
 
     @Test
     void requiresFinalShotsToPreserveAllProposalVisualSemantics() {
         StoryboardProposal proposal = storyboardProposal();
-        assertMessage("FinalStoryboard 必须保留 StoryboardProposal 的 action、characters 和 location", () ->
-                parser.validateCoverage(storyAnalysis(), proposal, proposal, parser.finalStoryboard(wrap(
+        FinalStoryboard restoredAction = parser.validateCoverage(
+                storyAnalysis(), proposal, proposal, parser.finalStoryboard(wrap(
                         "FINAL_STORYBOARD", finalStoryboardJson().replace(
-                                "Amy walks before lunch", "Amy waves after lunch")))));
-        assertMessage("FinalStoryboard 必须保留 StoryboardProposal 的 action、characters 和 location", () ->
-                parser.validateCoverage(richStoryAnalysis(), proposal, proposal, parser.finalStoryboard(wrap(
+                                "Amy walks before lunch", "Amy waves after lunch"))));
+        assertEquals("Amy walks before lunch", restoredAction.shots().get(0).action());
+        FinalStoryboard restoredExtraCharacters = parser.validateCoverage(
+                richStoryAnalysis(), proposal, proposal, parser.finalStoryboard(wrap(
                         "FINAL_STORYBOARD", finalStoryboardJson().replace(
-                                "\"characters\":[\"amy\"]", "\"characters\":[\"amy\",\"ben\"]")))));
-        assertMessage("FinalStoryboard 必须保留 StoryboardProposal 的 action、characters 和 location", () ->
-                parser.validateCoverage(storyAnalysis(), proposal, proposal, parser.finalStoryboard(wrap(
+                                "\"characters\":[\"amy\"]", "\"characters\":[\"amy\",\"ben\"]"))));
+        assertEquals(List.of("amy"), restoredExtraCharacters.shots().get(0).characters());
+        FinalStoryboard restoredEmptyCharacters = parser.validateCoverage(
+                storyAnalysis(), proposal, proposal, parser.finalStoryboard(wrap(
                         "FINAL_STORYBOARD", finalStoryboardJson().replace(
-                                "\"characters\":[\"amy\"]", "\"characters\":[]")))));
-        assertMessage("FinalStoryboard 必须保留 StoryboardProposal 的 action、characters 和 location", () ->
-                parser.validateCoverage(richStoryAnalysis(), proposal, proposal, parser.finalStoryboard(wrap(
+                                "\"characters\":[\"amy\"]", "\"characters\":[]"))));
+        assertEquals(List.of("amy"), restoredEmptyCharacters.shots().get(0).characters());
+        FinalStoryboard restoredLocation = parser.validateCoverage(
+                richStoryAnalysis(), proposal, proposal, parser.finalStoryboard(wrap(
                         "FINAL_STORYBOARD", finalStoryboardJson().replace(
-                                "\"location\":\"park\"", "\"location\":\"home\"")))));
+                                "\"location\":\"park\"", "\"location\":\"home\""))));
+        assertEquals("park", restoredLocation.shots().get(0).location());
         assertDoesNotThrow(() -> parser.validateCoverage(
                 storyAnalysis(), proposal, proposal, finalStoryboard()));
     }
@@ -507,12 +573,43 @@ class ImageStructuredOutputParserTest {
         assertMessage("ReferencePlan CHARACTER target 必须引用角色", () -> parser.validateReferenceTargets(
                 parser.referencePlan(wrap("REFERENCE_PLAN", referencePlanJson().replace("\"target\":\"amy\"", "\"target\":\"ben\""))),
                 storyAnalysis(), continuityBible()));
+        ReferencePlan namedTargets = parser.validateReferenceTargets(
+                parser.referencePlan(wrap("REFERENCE_PLAN", referencePlanJson()
+                        .replace("\"target\":\"amy\"", "\"target\":\"Amy\"")
+                        .replace("\"target\":\"park\"", "\"target\":\"Park\""))),
+                storyAnalysis(), continuityBible());
+        assertEquals("amy", namedTargets.referenceAssets().get(0).target());
+        assertEquals("park", namedTargets.referenceAssets().get(1).target());
+        StoryAnalysis prefixedAnalysis = parser.storyAnalysis(wrap(
+                "STORY_ANALYSIS",
+                storyAnalysisJson()
+                        .replace("\"characterKey\":\"amy\"", "\"characterKey\":\"char_mimi\"")
+                        .replace("\"name\":\"Amy\"", "\"name\":\"Mimi\"")
+                        .replace("\"characters\":[\"amy\"]", "\"characters\":[\"char_mimi\"]")
+                        .replace("\"speaker\":\"amy\"", "\"speaker\":\"char_mimi\"")
+                        .replace("\"locationKey\":\"park\"", "\"locationKey\":\"loc_school\"")
+                        .replace("\"name\":\"Park\"", "\"name\":\"School\"")
+                        .replace("\"location\":\"park\"", "\"location\":\"loc_school\"")));
+        ReferencePlan prefixedTargets = parser.validateReferenceTargets(
+                parser.referencePlan(wrap("REFERENCE_PLAN", referencePlanJson()
+                        .replace("\"target\":\"amy\"", "\"target\":\"Mimi\"")
+                        .replace("\"target\":\"park\"", "\"target\":\"School\""))),
+                prefixedAnalysis, continuityBible());
+        assertEquals("char_mimi", prefixedTargets.referenceAssets().get(0).target());
+        assertEquals("loc_school", prefixedTargets.referenceAssets().get(1).target());
+        assertMessage("ReferencePlan CHARACTER target 必须引用角色", () -> parser.validateReferenceTargets(
+                parser.referencePlan(wrap("REFERENCE_PLAN", referencePlanJson()
+                        .replace("\"target\":\"amy\"", "\"target\":\"Amy's mom\""))),
+                storyAnalysis(), continuityBible()));
         assertDoesNotThrow(() -> parser.validatePreflight(preflight(), finalStoryboard(), storyAnalysis(), continuityBible()));
         assertMessage("PreflightPlan 分镜必须与 FinalStoryboard 完全一致", () -> parser.validatePreflight(
                 parser.preflight(wrap("PREFLIGHT_PLAN", preflightJson().replace("\"shotKey\":\"shot-1\"", "\"shotKey\":\"shot-x\""))),
                 finalStoryboard(), storyAnalysis(), continuityBible()));
         assertMessage("PreflightPlan dialogue speaker 必须引用 StoryAnalysis", () -> parser.validatePreflight(
                 parser.preflight(wrap("PREFLIGHT_PLAN", preflightJson().replace("\"speaker\":\"amy\"", "\"speaker\":\"ben\""))),
+                finalStoryboard(), storyAnalysis(), continuityBible()));
+        assertDoesNotThrow(() -> parser.validatePreflight(
+                parser.preflight(wrap("PREFLIGHT_PLAN", preflightJson().replace("\"speaker\":\"amy\"", "\"speaker\":\"Amy\""))),
                 finalStoryboard(), storyAnalysis(), continuityBible()));
     }
 
